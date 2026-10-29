@@ -248,11 +248,13 @@ impl Hub {
                         )
                     })
                     .unwrap_or((0, 0.0));
+                let dur = nn_recorder::Reader::open(&p).map(|r| r.duration).unwrap_or(0.0);
                 runs.push(format!(
-                    "{{\"name\":\"{}\",\"size\":{},\"mtime\":{}}}",
+                    "{{\"name\":\"{}\",\"size\":{},\"mtime\":{},\"dur\":{}}}",
                     esc(&name),
                     size,
-                    fnum(mtime)
+                    fnum(mtime),
+                    fnum(dur)
                 ));
             }
         }
@@ -698,6 +700,8 @@ pub enum Switch {
     Replay(String),
     /// Change replay pacing.
     Speed(f64),
+    /// Jump to this many seconds into the current recording.
+    Seek(f64),
 }
 
 /// The outcome of one client command: alert events to log, a note for the
@@ -790,6 +794,14 @@ pub fn apply_command(m: &mut Monitor, text: &str) -> Result<CmdOut, String> {
                 switch: Some(Switch::Speed(x)),
             })
         }
+        "seek" => {
+            let to = jnum(text, "to").ok_or("missing \"to\"")?;
+            Ok(CmdOut {
+                events: vec![],
+                note: format!("seek to {to:.0} s"),
+                switch: Some(Switch::Seek(to)),
+            })
+        }
         other => Err(format!("unknown command '{other}'")),
     }
 }
@@ -843,6 +855,7 @@ pub fn delta_json(
     clients: usize,
     packs: &[String],
     prev: &mut std::collections::BTreeMap<String, String>,
+    replay: Option<(f64, f64)>,
 ) -> String {
     let mut s = top_json(m, uptime, clients, packs, "delta");
     let timeout = m.engine.config.timeout();
@@ -874,11 +887,21 @@ pub fn delta_json(
             s.push_str(&format!("\"{id}\""));
         }
     }
+    if let Some((pos, dur)) = replay {
+        s.push_str(&format!(",\"replay\":{{\"pos\":{},\"dur\":{}}}", fnum(pos), fnum(dur)));
+    }
     s.push_str("]}");
     s
 }
 
-pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], recent: &VecDeque<String>) -> String {
+pub fn state_json(
+    m: &Monitor,
+    uptime: f64,
+    clients: usize,
+    packs: &[String],
+    recent: &VecDeque<String>,
+    replay: Option<(f64, f64)>,
+) -> String {
     let mut s = String::with_capacity(8192);
     s.push_str(&top_json(m, uptime, clients, packs, "state"));
     s.push_str(",\"entities\":[");
@@ -893,7 +916,11 @@ pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], re
     }
     s.push_str("],\"recent\":[");
     s.push_str(&recent.iter().cloned().collect::<Vec<_>>().join(","));
-    s.push_str("]}");
+    s.push(']');
+    if let Some((pos, dur)) = replay {
+        s.push_str(&format!(",\"replay\":{{\"pos\":{},\"dur\":{}}}", fnum(pos), fnum(dur)));
+    }
+    s.push('}');
     s
 }
 

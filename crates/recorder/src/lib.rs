@@ -49,17 +49,24 @@ pub struct Reader {
     r: BufReader<File>,
     /// Timestamp of the first record — replay paces everything off this.
     pub first_at: Option<SystemTime>,
+    /// Recording length in seconds (first to last record).
+    pub duration: f64,
+    /// Total records in the file.
+    pub records: u64,
 }
 
 impl Reader {
     pub fn open(path: &Path) -> io::Result<Reader> {
+        let (duration, records) = scan(path)?;
         let mut r = BufReader::new(File::open(path)?);
         let mut magic = vec![0u8; MAGIC.len()];
         r.read_exact(&mut magic)?;
-        if magic != MAGIC {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "not an nn recording"));
-        }
-        Ok(Reader { r, first_at: None })
+        Ok(Reader {
+            r,
+            first_at: None,
+            duration,
+            records,
+        })
     }
 
     pub fn next_datagram(&mut self) -> io::Result<Option<Datagram>> {
@@ -94,4 +101,39 @@ impl Reader {
             payload,
         }))
     }
+}
+
+/// Check the magic and walk the file for its duration and record count.
+fn scan(path: &Path) -> io::Result<(f64, u64)> {
+    let mut r = BufReader::new(File::open(path)?);
+    let mut magic = vec![0u8; MAGIC.len()];
+    r.read_exact(&mut magic)?;
+    if magic != MAGIC {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "not an nn recording"));
+    }
+    let mut b = [0u8; 8];
+    let mut l = [0u8; 2];
+    let mut pl = [0u8; 4];
+    let mut first = None;
+    let mut last = 0u64;
+    let mut n = 0u64;
+    loop {
+        match r.read_exact(&mut b) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e),
+        }
+        let micros = u64::from_be_bytes(b);
+        first.get_or_insert(micros);
+        last = micros;
+        r.read_exact(&mut l)?;
+        let skip = u16::from_be_bytes(l) as u64;
+        r.read_exact(&mut pl)?;
+        let plen = u32::from_be_bytes(pl) as u64;
+        let mut sink = io::sink();
+        io::copy(&mut r.by_ref().take(skip + plen), &mut sink)?;
+        n += 1;
+    }
+    let dur = first.map(|f| (last - f) as f64 / 1e6).unwrap_or(0.0);
+    Ok((dur, n))
 }

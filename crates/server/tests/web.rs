@@ -263,25 +263,25 @@ fn delta_sends_only_changed_entities() {
     let packs = vec!["dis-base v1".to_string()];
 
     // First delta after an empty baseline carries the entity.
-    let d = delta_json(&m, 1.0, 0, &packs, &mut prev);
+    let d = delta_json(&m, 1.0, 0, &packs, &mut prev, None);
     assert!(d.contains("\"type\":\"delta\""), "{d}");
     assert!(d.contains("\"1:1:1\""), "{d}");
 
     // Same table — nothing changed.
-    let d = delta_json(&m, 2.0, 0, &packs, &mut prev);
+    let d = delta_json(&m, 2.0, 0, &packs, &mut prev, None);
     assert!(d.contains("\"ents\":[]"), "{d}");
 
     // A heartbeat bumps `seen` → the entity re-emits.
     m.ingest(&datagram(&entity_state(1), 5.0));
-    let d = delta_json(&m, 6.0, 0, &packs, &mut prev);
+    let d = delta_json(&m, 6.0, 0, &packs, &mut prev, None);
     assert!(d.contains("\"1:1:1\""), "{d}");
 
     // A second entity arrives; only it ships in the next delta.
     m.ingest(&datagram(&entity_state(2), 7.0));
-    let d = delta_json(&m, 8.0, 0, &packs, &mut prev);
+    let d = delta_json(&m, 8.0, 0, &packs, &mut prev, None);
     assert!(d.contains("\"1:1:2\"") && !d.contains("\"1:1:1\""), "{d}");
 
     // Full state still carries everything; `seen` replaces `age`.
-    let s = state_json(&m, 8.0, 0, &packs, &VecDeque::new());
+    let s = state_json(&m, 8.0, 0, &packs, &VecDeque::new(), None);
     assert!(s.contains("\"seen\":") && !s.contains("\"age\":"), "{s}");
 }
