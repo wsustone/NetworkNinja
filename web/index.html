@@ -21,7 +21,26 @@
   #sidelist li.sel { background:#1f6feb44; }
   #sidelist .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
   #sidelist .id { color:var(--dim); font-size:10px; float:right; }
-  @media (max-width:900px) { main { grid-template-columns:1fr; } #sidebar { grid-row:auto; } #map { grid-column:1/-1; } }
+  /* Tablet: sidebar becomes a horizontal strip; map spans the full width. */
+  @media (max-width:1100px) {
+    main { grid-template-columns:1fr 340px; }
+    #sidebar { grid-column:1/-1; grid-row:auto; }
+    #sidelist { display:flex; overflow-x:auto; gap:2px; }
+    #sidelist li { flex:none; }
+    #map { grid-column:1/-1; }
+  }
+  /* Phone: single column, capped panels, bigger tap targets. */
+  @media (max-width:700px) {
+    main { grid-template-columns:1fr; padding:.5em; gap:.5em; }
+    header { font-size:12px; padding:.4em .6em; gap:.4em 1em; }
+    #sidebar { grid-row:auto; }
+    .tablewrap { overflow-x:auto; max-height:55vh; }
+    #map { height:260px; }
+    #alerts { max-height:40vh; overflow-y:auto; }
+    .albtn { padding:.35em .7em; font-size:12px; }
+    th, td { padding:.3em .5em; }
+    #filter, #efilter { padding:.55em .9em; font-size:14px; }
+  }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   h2 { margin:0; padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); border-bottom:1px solid var(--line); }
   h2 span { float:right; font-weight:400; }
