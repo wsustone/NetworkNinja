@@ -3,3 +3,6 @@
 *.pcapng
 /recordings
 .DS_Store
+# runtime event data (serve --db/--log)
+events.db*
+events.jsonl
