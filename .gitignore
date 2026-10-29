@@ -6,3 +6,7 @@
 # runtime event data (serve --db/--log)
 events.db*
 events.jsonl
+# TLS certs and account files (serve --cert/--key/--users)
+*.crt
+*.key
+users.txt
