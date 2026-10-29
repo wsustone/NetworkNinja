@@ -35,8 +35,8 @@
   #alerts li.info { border-left:3px solid var(--line); color:var(--dim); }
   #alerts .t { color:var(--dim); font-size:11px; }
   #alerts .r { color:var(--dim); font-size:11px; float:right; }
-  #filter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
-  #filter::placeholder { color:var(--dim); }
+  #filter, #efilter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
+  #filter::placeholder, #efilter::placeholder { color:var(--dim); }
   .tablewrap { max-height:70vh; overflow:auto; }
   .empty { padding:1em; color:var(--dim); }
 </style>
@@ -56,6 +56,7 @@
 <main>
   <section>
     <h2>Entities <span id="eCount"></span></h2>
+    <input id="efilter" placeholder="search: id, marking, type, site…">
     <div class="tablewrap"><table>
       <thead><tr>
         <th data-k="id">ID</th><th data-k="marking">Marking</th><th data-k="etype">Type</th>
@@ -149,10 +150,10 @@ function render() {
   $("hPacks").textContent = state.packs.join(" + ");
   const anyFrozen = exIds.some(id => state.exercises[id].frozen);
   $("hFrozen").innerHTML = anyFrozen ? '<span class="frozen">FROZEN</span>' : "";
-  $("eCount").textContent = state.entities.length;
-  renderFeed();
-
-  const rows = [...state.entities].sort((a,b) => {
+  const ef = $("efilter").value.trim().toLowerCase();
+  const rows = [...state.entities]
+    .filter(e => !ef || [e.id, e.marking, e.etype, e.force, e.exercise].join(" ").toLowerCase().includes(ef))
+    .sort((a,b) => {
     let x = a[sortKey], y = b[sortKey];
     if (typeof x === "string") return sortAsc ? x.localeCompare(y) : y.localeCompare(x);
     return sortAsc ? x - y : y - x;
@@ -166,6 +167,8 @@ function render() {
       <td>${e.speed.toFixed(0)}</td><td>${fmtAge(e.age)}</td><td>${e.senders}</td>
       <td>${statusOf(e)}</td></tr>`;
   }).join("") || '<tr><td colspan="10" class="empty">waiting for traffic…</td></tr>';
+  $("eCount").textContent = ef ? `${rows.length} / ${state.entities.length}` : state.entities.length;
+  renderFeed();
 }
 
 function take(s) {
@@ -198,6 +201,7 @@ $("alerts").onclick = ev => {
   if (li) selectEntity(li.dataset.ent);
 };
 $("filter").oninput = renderFeed;
+$("efilter").oninput = render;
 fetch("/api/log?limit=500").then(r => r.json()).then(d => (d.entries || []).forEach(e => pushEntry(e, true))).catch(() => {});
 connect();
 </script>
