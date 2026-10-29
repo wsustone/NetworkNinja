@@ -265,10 +265,11 @@ fn replay(path: &str, speed: Option<f64>, common: &Common) -> Result<(), String>
         });
         let t = d.received_at.duration_since(t0).unwrap_or_default().as_secs_f64();
         if let Some(s) = speed.filter(|s| *s > 0.0) {
-            let due = wall_start + Duration::from_secs_f64(t / s);
-            let now = Instant::now();
-            if due > now {
-                std::thread::sleep(due - now);
+            if let Some(due) = wall_start.checked_add(Duration::from_secs_f64(t / s)) {
+                let now = Instant::now();
+                if due > now {
+                    std::thread::sleep(due - now);
+                }
             }
         }
         if t >= next_summary {

@@ -185,12 +185,17 @@ impl<R: Read> PcapReader<R> {
         Ok(())
     }
 
-    fn timestamp(&mut self, units: u64, units_per_sec: u64) -> SystemTime {
+    /// Convert pcapng timestamp units to a time. Out-of-range values (a
+    /// corrupt file) are an error, never a panic: `SystemTime`'s range is
+    /// platform-specific and smaller on Windows.
+    fn timestamp(&mut self, units: u64, units_per_sec: u64) -> Result<SystemTime, PcapError> {
         let secs = units / units_per_sec;
         let nanos = ((units % units_per_sec) as u128 * 1_000_000_000 / units_per_sec as u128) as u64;
-        let t = UNIX_EPOCH + Duration::from_secs(secs) + Duration::from_nanos(nanos);
+        let t = UNIX_EPOCH
+            .checked_add(Duration::from_secs(secs) + Duration::from_nanos(nanos))
+            .ok_or_else(|| PcapError::Corrupt(format!("timestamp {units} out of range")))?;
         self.last_ts = t;
-        t
+        Ok(t)
     }
 
     fn next_frame(&mut self) -> Result<Option<Frame>, PcapError> {
@@ -318,7 +323,7 @@ impl<R: Read> PcapReader<R> {
                         return Err(PcapError::Corrupt("packet data runs past its block".into()));
                     }
                     let data = body[20..20 + caplen].to_vec();
-                    let at = self.timestamp(units, ifc.units_per_sec);
+                    let at = self.timestamp(units, ifc.units_per_sec)?;
                     return Ok(Some(Frame {
                         at,
                         link_type: ifc.link_type,
