@@ -1,6 +1,8 @@
-//! The rule engine: three rules over the entity table.
+//! The rule engine: three behavioural rules over the entity table, plus
+//! per-PDU enumeration checks loaded from rule packs.
 
-use nn_decode::{EntityType, Pdu, PduBody};
+use crate::pack::{EnumCheck, Merged};
+use nn_decode::{EntityId, EntityType, Pdu, PduBody};
 use nn_state::{extrapolate, geo, EntityKey, EntityTable};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -10,6 +12,8 @@ pub enum Rule {
     EntityTimeout,
     IdConflict,
     PositionJump,
+    /// A pack `[[enum]]` check failed.
+    EnumViolation,
 }
 
 impl Rule {
@@ -18,6 +22,17 @@ impl Rule {
             Rule::EntityTimeout => "entity-timeout",
             Rule::IdConflict => "id-conflict",
             Rule::PositionJump => "position-jump",
+            Rule::EnumViolation => "enum-violation",
+        }
+    }
+
+    /// Rule section names in pack files.
+    pub fn from_name(name: &str) -> Option<Rule> {
+        match name {
+            "entity-timeout" => Some(Rule::EntityTimeout),
+            "id-conflict" => Some(Rule::IdConflict),
+            "position-jump" => Some(Rule::PositionJump),
+            _ => None,
         }
     }
 }
@@ -37,6 +52,10 @@ pub enum AlertState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Alert {
     pub rule: Rule,
+    /// Pack id that contributed this rule or check, and its name within
+    /// the pack (`entity-timeout`, or the enum field path).
+    pub pack: String,
+    pub rule_id: String,
     pub key: EntityKey,
     pub severity: Severity,
     /// When the alert started firing.
@@ -113,20 +132,61 @@ fn speed(v: &nn_decode::Vec3f) -> f64 {
     ((v.x * v.x + v.y * v.y + v.z * v.z) as f64).sqrt()
 }
 
+/// The entity a PDU is about, for keying alerts that don't track entity
+/// state. `0:0:0` for PDUs with no entity (e.g. an unknown type).
+fn primary_entity(pdu: &Pdu) -> EntityId {
+    match &pdu.body {
+        PduBody::EntityState(e) => e.entity_id,
+        PduBody::Fire(f) => f.firing_entity,
+        PduBody::Detonation(d) => d.firing_entity,
+        PduBody::StartResume(s) => s.originating,
+        PduBody::StopFreeze(s) => s.originating,
+        PduBody::RemoveEntity(r) => r.originating,
+        PduBody::Other(_) => EntityId::default(),
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Engine {
     pub config: RuleConfig,
+    enabled: BTreeMap<Rule, bool>,
+    severities: BTreeMap<Rule, Severity>,
+    /// Pack id that last configured each rule, for alert citation.
+    rule_pack: BTreeMap<Rule, String>,
+    enum_checks: Vec<EnumCheck>,
+    enum_repeat: f64,
+    /// Last time each (field, entity) violation fired.
+    enum_last: BTreeMap<(&'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
     last_tick: f64,
 }
 
 impl Engine {
+    /// Base-pack checks and toggles with an explicit threshold config.
     pub fn new(config: RuleConfig) -> Self {
+        let mut e = Engine::with_packs(crate::pack::builtin());
+        e.config = config;
+        e
+    }
+
+    /// Everything from the merged packs: thresholds, toggles, severities
+    /// and enum checks.
+    pub fn with_packs(p: &Merged) -> Self {
         Engine {
-            config,
+            config: p.config.clone(),
+            enabled: p.enabled.clone(),
+            severities: p.severities.clone(),
+            rule_pack: p.rule_pack.clone(),
+            enum_checks: p.enum_checks.clone(),
+            enum_repeat: p.enum_repeat_seconds,
+            enum_last: BTreeMap::new(),
             active: BTreeMap::new(),
             last_tick: f64::NEG_INFINITY,
         }
+    }
+
+    pub fn enabled(&self, rule: Rule) -> bool {
+        self.enabled.get(&rule).copied().unwrap_or(true)
     }
 
     pub fn active(&self) -> impl Iterator<Item = &Alert> {
@@ -137,22 +197,16 @@ impl Engine {
         self.active.contains_key(&(rule, *key))
     }
 
-    fn fire(
-        &mut self,
-        at: f64,
-        rule: Rule,
-        key: EntityKey,
-        severity: Severity,
-        message: String,
-        out: &mut Vec<AlertEvent>,
-    ) {
-        if self.active.contains_key(&(rule, key)) {
+    fn fire(&mut self, at: f64, rule: Rule, key: EntityKey, message: String, out: &mut Vec<AlertEvent>) {
+        if self.active.contains_key(&(rule, key)) || !self.enabled(rule) {
             return;
         }
         let alert = Alert {
             rule,
+            pack: self.rule_pack.get(&rule).cloned().unwrap_or_else(|| "builtin".into()),
+            rule_id: rule.name().to_string(),
             key,
-            severity,
+            severity: self.severities.get(&rule).copied().unwrap_or(Severity::Warning),
             since: at,
             message: message.clone(),
         };
@@ -163,6 +217,53 @@ impl Engine {
             alert,
             reason: message,
         });
+    }
+
+    /// Enum violations are point events, not states: they fire once and do
+    /// not stay open, and repeat at most every `enum_repeat` seconds.
+    fn fire_once(&mut self, at: f64, key: EntityKey, check: &EnumCheck, value: u64, out: &mut Vec<AlertEvent>) {
+        let dedup = (check.spec.name, key);
+        if self.enum_last.get(&dedup).is_some_and(|t| at - t < self.enum_repeat) {
+            return;
+        }
+        self.enum_last.insert(dedup, at);
+        let message = format!(
+            "{} {} = {} is outside the allowed set ({})",
+            key.id,
+            check.spec.name,
+            value,
+            check.allowed_str()
+        );
+        out.push(AlertEvent {
+            at,
+            state: AlertState::Firing,
+            alert: Alert {
+                rule: Rule::EnumViolation,
+                pack: check.pack.clone(),
+                rule_id: check.spec.name.to_string(),
+                key,
+                severity: check.severity,
+                since: at,
+                message: message.clone(),
+            },
+            reason: message,
+        });
+    }
+
+    /// The packs' enumeration checks on one decoded PDU.
+    pub fn check_enums(&mut self, now: f64, pdu: &Pdu) -> Vec<AlertEvent> {
+        let mut out = Vec::new();
+        let key = EntityKey {
+            exercise: pdu.header.exercise_id,
+            id: primary_entity(pdu),
+        };
+        for i in 0..self.enum_checks.len() {
+            if let Some(v) = self.enum_checks[i].violation(pdu) {
+                let check = self.enum_checks[i].clone();
+                self.fire_once(now, key, &check, v, &mut out);
+            }
+        }
+        out
     }
 
     fn resolve(&mut self, at: f64, rule: Rule, key: EntityKey, reason: String, out: &mut Vec<AlertEvent>) {
@@ -216,7 +317,7 @@ impl Engine {
                         "{} jumped {:.0} m from its dead-reckoned position after {:.1} s (tolerance {:.0} m)",
                         key.id, error, dt, tolerance
                     );
-                    self.fire(now, Rule::PositionJump, key, Severity::Warning, msg, &mut out);
+                    self.fire(now, Rule::PositionJump, key, msg, &mut out);
                 } else {
                     self.resolve(
                         now,
@@ -249,7 +350,7 @@ impl Engine {
                     "at the same time".to_string()
                 };
                 let msg = format!("{} is claimed by {} and {} {}", key.id, other, source, why);
-                self.fire(now, Rule::IdConflict, key, Severity::Critical, msg, &mut out);
+                self.fire(now, Rule::IdConflict, key, msg, &mut out);
                 break;
             }
         }
@@ -294,25 +395,27 @@ impl Engine {
         self.last_tick = now;
         let timeout = self.config.timeout();
 
-        let running = nn_state::ExerciseState::default();
-        for (key, rec) in &table.entities {
-            let ex = table.exercises.get(&key.exercise).unwrap_or(&running);
-            if rec.removed || rec.deactivated() {
-                continue;
-            }
-            if ex.frozen {
-                continue;
-            }
-            // Only running time counts towards the timeout, and senders get
-            // one heartbeat after a resume to start reporting again.
-            let silent = ex.running_between(rec.last_seen, now);
-            let resume_grace = ex.freezes > 0 && now - ex.last_change < self.config.heartbeat;
-            if silent > timeout && !resume_grace && !self.active.contains_key(&(Rule::EntityTimeout, *key)) {
-                let msg = format!(
-                    "{} ({}) sent no Entity State for {:.1} s of exercise time (timeout {:.1} s)",
-                    key.id, rec.marking, silent, timeout
-                );
-                self.fire(now, Rule::EntityTimeout, *key, Severity::Warning, msg, &mut out);
+        if self.enabled(Rule::EntityTimeout) {
+            let running = nn_state::ExerciseState::default();
+            for (key, rec) in &table.entities {
+                let ex = table.exercises.get(&key.exercise).unwrap_or(&running);
+                if rec.removed || rec.deactivated() {
+                    continue;
+                }
+                if ex.frozen {
+                    continue;
+                }
+                // Only running time counts towards the timeout, and senders get
+                // one heartbeat after a resume to start reporting again.
+                let silent = ex.running_between(rec.last_seen, now);
+                let resume_grace = ex.freezes > 0 && now - ex.last_change < self.config.heartbeat;
+                if silent > timeout && !resume_grace && !self.active.contains_key(&(Rule::EntityTimeout, *key)) {
+                    let msg = format!(
+                        "{} ({}) sent no Entity State for {:.1} s of exercise time (timeout {:.1} s)",
+                        key.id, rec.marking, silent, timeout
+                    );
+                    self.fire(now, Rule::EntityTimeout, *key, msg, &mut out);
+                }
             }
         }
 
@@ -339,6 +442,8 @@ impl Engine {
                         self.resolve(now, rule, key, "entity no longer reporting".into(), &mut out);
                     }
                 }
+                // One-shot events; never present in `active`.
+                Rule::EnumViolation => {}
             }
         }
         out

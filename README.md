@@ -12,7 +12,7 @@ The core loop works end to end on the console: synthetic or captured DIS traffic
 | --- | --- |
 | 1. Generator + capture + decoder | Mostly done: codec, UDP and multicast capture, pcap and pcapng import, generator with every fault and control. Still to do: live libpcap capture, kernel drop counters, cargo-fuzz harness, dis-rs comparison (ADR 0001). |
 | 2. Entity state, metrics and monitor health | Core done: entity table per exercise and sender, heartbeat statistics, rolling PDU/byte/error rates, freeze periods, dead reckoning (algorithms 1–9), ECEF ↔ lat/lon. Still to do: performance measurement against the targets, kernel drop counts. |
-| 3. Rule packs + three alert rules | Rules done and proven against the generator (below). Still to do: the rule-pack format and loader, SISO-REF-010 enumeration checks. |
+| 3. Rule packs + three alert rules | Done and proven against the generator (below): TOML packs validate, layer and load ([docs](docs/rule-packs.md)); enumeration checks run on every PDU; each alert cites its pack. Still to do: SISO-REF-010 tables generated rather than hand-authored, pack signing. |
 | 4–7 | Not started. |
 
 **What the tests prove** (`cargo test --workspace`):
@@ -27,6 +27,7 @@ The core loop works end to end on the console: synthetic or captured DIS traffic
 ## Docs
 
 - [MVP spec](docs/spec.md): scope, architecture, alert rules, rule packs, record and replay, security, business model, milestones
+- [Rule pack format](docs/rule-packs.md): thresholds, toggles and enumeration checks as data
 - [Architecture diagram](docs/architecture.svg)
 - [Architecture decision records](docs/adr/)
 
@@ -42,7 +43,7 @@ crates/
   server/     single binary: WebSocket API and embedded dashboard
   generator/  synthetic DIS traffic with fault injection
 web/          dashboard frontend (TypeScript, MapLibre) — not started
-rulepacks/    base DIS rule pack — not started
+rulepacks/    base DIS rule pack (dis-base.toml, compiled into nn-server)
 ```
 
 ## Platforms

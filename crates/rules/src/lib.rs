@@ -1,6 +1,7 @@
-//! Alert rules and the monitor that runs them.
+//! Alert rules, the rule packs that configure them, and the monitor that
+//! runs everything.
 //!
-//! The MVP's three rules, as defined in the spec:
+//! The MVP's three behavioural rules, as defined in the spec:
 //!
 //! | Rule | Fires when | Suppressed when |
 //! | --- | --- | --- |
@@ -8,11 +9,15 @@
 //! | Entity ID conflict | one Entity ID reported by two senders whose reports interleave, or with different entity types | a sender that restarts on a new port (no interleaving after a grace period) |
 //! | Position jump | a report lands further from the dead-reckoned prediction than the tolerance | first report from a sender; reappearing after a timeout; exercise frozen; first report after a freeze or resume |
 //!
-//! Thresholds live in [`RuleConfig`] for now; they move into rule packs in
-//! milestone 3 proper.
+//! Thresholds, per-rule enable switches and the enumeration checks that run
+//! on every PDU all come from layered rule packs ([`pack`], ADR 0003): the
+//! base DIS pack ships in the binary and site packs layer on top.
 
 mod engine;
+mod minitoml;
 mod monitor;
+pub mod pack;
 
 pub use engine::{Alert, AlertEvent, AlertState, Engine, Rule, RuleConfig, Severity};
 pub use monitor::Monitor;
+pub use pack::{builtin as builtin_packs, EnumCheck, FieldSpec, Merged, PackError, RulePack};

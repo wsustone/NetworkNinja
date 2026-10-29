@@ -18,5 +18,5 @@ Express rules as declarative, versioned, signed rule packs loaded at startup:
 
 - New rules and SISO updates ship as pack updates, not new builds.
 - Every alert can cite the pack and rule that fired, which also powers the conformance view.
-- Open: pack authoring format (YAML or TOML) and whether to adopt an existing schema.
+- Decided: packs are a small TOML subset parsed with no dependencies (docs/rule-packs.md). Still open: whether to adopt or extend an existing schema, and compiling packs to a binary form.
 - Open: whether SISO terms allow redistributing SISO-REF-010 data inside packs.
