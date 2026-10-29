@@ -4,6 +4,8 @@
 //! Later milestones replace the console output with entity state, rules and
 //! the dashboard; [`Tally`] stays as the cross-check against generator truth.
 
+pub mod web;
+
 use nn_capture::Datagram;
 use nn_decode::*;
 use std::collections::{BTreeMap, BTreeSet};

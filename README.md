@@ -13,7 +13,8 @@ The core loop works end to end on the console: synthetic or captured DIS traffic
 | 1. Generator + capture + decoder | Mostly done: codec, UDP and multicast capture, pcap and pcapng import, generator with every fault and control. Still to do: live libpcap capture, kernel drop counters, cargo-fuzz harness, dis-rs comparison (ADR 0001). |
 | 2. Entity state, metrics and monitor health | Core done: entity table per exercise and sender, heartbeat statistics, rolling PDU/byte/error rates, freeze periods, dead reckoning (algorithms 1–9), ECEF ↔ lat/lon. Still to do: performance measurement against the targets, kernel drop counts. |
 | 3. Rule packs + three alert rules | Done and proven against the generator (below): TOML packs validate, layer and load ([docs](docs/rule-packs.md)); enumeration checks run on every PDU; each alert cites its pack. Still to do: SISO-REF-010 tables generated rather than hand-authored, pack signing. |
-| 4–7 | Not started. |
+| 4. Dashboard + map | Started: `nn-server serve` streams entities, rates and alerts over WebSocket to an embedded page (see Try it). Still to do: MapLibre map, acknowledge/mute/notes, deltas above ~1,000 entities, TLS and local accounts. |
+| 5–7 | Not started. |
 
 **What the tests prove** (`cargo test --workspace`):
 
@@ -42,7 +43,7 @@ crates/
   recorder/   native recording format, pcap import/export, replay
   server/     single binary: WebSocket API and embedded dashboard
   generator/  synthetic DIS traffic with fault injection
-web/          dashboard frontend (TypeScript, MapLibre) — not started
+web/          embedded dashboard page (single-file today; TypeScript + MapLibre to come)
 rulepacks/    base DIS rule pack (dis-base.toml, compiled into nn-server)
 ```
 
@@ -95,6 +96,15 @@ Or generate a pcap and replay it without a network:
 ```
 
 Expected: an ID-conflict alert on 1:1:2, a position-jump on 1:1:3 (resolving a few seconds later), and an entity-timeout on 1:1:1, and nothing for the removed entity, the restarted site or the freeze.
+
+The same traffic into the dashboard instead of the console:
+
+```
+./target/release/nn-server serve --port 3000        # then open http://127.0.0.1:8080
+./target/release/nn-generator --target 127.0.0.1:3000 --all-faults --all-controls
+```
+
+The page shows live entities (positions converted to lat/lon), a one-second state feed and the alert stream, each alert citing its rule pack. `--http` changes the bind; it stays on localhost until configured.
 
 Both tools take `--help`. The generator prints ground truth (PDU counts by type, faults and their times) as JSON; the listener's final summary should match it. `replay` reads pcap and pcapng.
 

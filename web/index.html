@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetworkNinja</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --crit:#f85149; --warn:#d29922; --ok:#3fb950; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; }
+  header { display:flex; gap:1em; align-items:center; padding:.6em 1em; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header b { font-size:16px; letter-spacing:.5px; }
+  .stat { color:var(--dim); } .stat b { color:var(--fg); }
+  #conn.ws { color:var(--ok); } #conn.poll { color:var(--warn); } #conn.down { color:var(--crit); }
+  .frozen { color:var(--warn); font-weight:600; }
+  main { display:grid; grid-template-columns: 1fr 380px; gap:1em; padding:1em; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  h2 { margin:0; padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); border-bottom:1px solid var(--line); }
+  h2 span { float:right; font-weight:400; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:.35em .6em; white-space:nowrap; }
+  th { color:var(--dim); font-weight:500; font-size:11px; cursor:pointer; user-select:none; border-bottom:1px solid var(--line); }
+  td { border-bottom:1px solid #21262d; }
+  tbody tr.sel { background:#1f2d3d; }
+  tr.stale td { color:var(--dim); }
+  tr.removed td { color:var(--dim); text-decoration:line-through; }
+  tr.frozen td:last-child { color:var(--warn); }
+  ul#alerts { list-style:none; margin:0; padding:0; max-height:70vh; overflow-y:auto; }
+  #alerts li { padding:.5em .9em; border-bottom:1px solid #21262d; cursor:pointer; font-size:13px; }
+  #alerts li:hover { background:#1f2d3d; }
+  #alerts li.crit { border-left:3px solid var(--crit); }
+  #alerts li.warn { border-left:3px solid var(--warn); }
+  #alerts li.res { border-left:3px solid var(--ok); opacity:.65; }
+  #alerts .t { color:var(--dim); font-size:11px; }
+  #alerts .r { color:var(--dim); font-size:11px; float:right; }
+  .tablewrap { max-height:70vh; overflow:auto; }
+  .empty { padding:1em; color:var(--dim); }
+</style>
+
+<header>
+  <b>NetworkNinja</b>
+  <span id="conn" class="down">connecting…</span>
+  <span class="stat">exercise <b id="hEx">–</b></span>
+  <span class="stat">entities <b id="hEnt">0</b></span>
+  <span class="stat">PDU/s <b id="hRate">0</b></span>
+  <span class="stat">alerts <b id="hAlerts">0</b></span>
+  <span class="stat" id="hFrozen"></span>
+  <span class="stat" style="margin-left:auto" id="hPacks"></span>
+</header>
+
+<main>
+  <section>
+    <h2>Entities <span id="eCount"></span></h2>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th data-k="id">ID</th><th data-k="marking">Marking</th><th data-k="etype">Type</th>
+        <th data-k="force">Force</th><th data-k="lat">Lat</th><th data-k="lon">Lon</th>
+        <th data-k="speed">m/s</th><th data-k="age">Age</th><th data-k="senders">Src</th><th>Status</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+  </section>
+  <section>
+    <h2>Alerts <span id="aCount"></span></h2>
+    <ul id="alerts"></ul>
+  </section>
+</main>
+
+<script>
+"use strict";
+let state = null, sortKey = "id", sortAsc = true, selected = null;
+const $ = id => document.getElementById(id);
+const seen = new Set();
+const feed = [];
+
+function fmtAge(a) { return a < 60 ? a.toFixed(0)+"s" : (a/60).toFixed(1)+"m"; }
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+function pushAlert(a, silent) {
+  const k = a.state + "|" + a.rule + "|" + a.entity + "|" + a.at.toFixed(3);
+  if (seen.has(k)) return;
+  seen.add(k);
+  feed.push(a);
+  const li = document.createElement("li");
+  li.className = a.state === "resolved" ? "res" : (a.severity === "critical" ? "crit" : "warn");
+  li.innerHTML = `<span class="r">${esc(a.pack)}/${esc(a.rule)}</span><span class="t">${new Date(a.at*1000).toLocaleTimeString()} · ${a.state}</span><br><b>${esc(a.entity)}</b> ${esc(a.message)}`;
+  li.onclick = () => selectEntity(a.entity);
+  $("alerts").prepend(li);
+  while ($("alerts").children.length > 200) $("alerts").lastChild.remove();
+  if (!silent && a.state === "firing" && a.severity === "critical") li.style.background = "#3d1f22";
+}
+
+function selectEntity(id) {
+  selected = id;
+  render();
+  const row = document.querySelector(`tr[data-id="${CSS.escape(id)}"]`);
+  if (row) row.scrollIntoView({block:"center", behavior:"smooth"});
+}
+
+function statusOf(e) {
+  if (e.removed) return "removed";
+  if (e.deactivated) return "deactivated";
+  if (e.stale) return "silent";
+  if (e.frozen) return "frozen";
+  return "live";
+}
+
+function render() {
+  if (!state) return;
+  const exIds = Object.keys(state.exercises);
+  $("hEx").textContent = exIds.join(", ") || "–";
+  const live = state.entities.filter(e => !e.removed && !e.stale).length;
+  $("hEnt").textContent = live + " / " + state.entities.length;
+  $("hRate").textContent = state.rates.pdu_1s.toFixed(1);
+  $("hAlerts").textContent = state.alerts.length;
+  $("hPacks").textContent = state.packs.join(" + ");
+  const anyFrozen = exIds.some(id => state.exercises[id].frozen);
+  $("hFrozen").innerHTML = anyFrozen ? '<span class="frozen">FROZEN</span>' : "";
+  $("eCount").textContent = state.entities.length;
+  $("aCount").textContent = state.alerts.length + " open";
+
+  const rows = [...state.entities].sort((a,b) => {
+    let x = a[sortKey], y = b[sortKey];
+    if (typeof x === "string") return sortAsc ? x.localeCompare(y) : y.localeCompare(x);
+    return sortAsc ? x - y : y - x;
+  });
+  $("rows").innerHTML = rows.map(e => {
+    const cls = e.removed ? "removed" : (e.stale ? "stale" : (e.frozen ? "frozen" : ""));
+    const sel = selected === e.id ? " sel" : "";
+    return `<tr class="${cls}${sel}" data-id="${esc(e.id)}" onclick="selectEntity('${e.id}')">
+      <td>${e.id}</td><td>${esc(e.marking)}</td><td>${e.etype}</td><td>${e.force}</td>
+      <td>${e.lat.toFixed(4)}</td><td>${e.lon.toFixed(4)}</td>
+      <td>${e.speed.toFixed(0)}</td><td>${fmtAge(e.age)}</td><td>${e.senders}</td>
+      <td>${statusOf(e)}</td></tr>`;
+  }).join("") || '<tr><td colspan="10" class="empty">waiting for traffic…</td></tr>';
+}
+
+function take(s) {
+  if (s.type === "state") {
+    if (state === null) { for (const a of s.recent || []) pushAlert(a, true); }
+    state = s; render();
+  } else if (s.type === "alert") pushAlert(s);
+}
+
+let ws;
+function connect() {
+  try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"); }
+  catch(e) { return poll(); }
+  ws.onopen = () => { $("conn").className = "ws"; $("conn").textContent = "live"; };
+  ws.onmessage = ev => { try { take(JSON.parse(ev.data)); } catch(e) {} };
+  ws.onclose = () => { $("conn").className = "down"; $("conn").textContent = "reconnecting…"; setTimeout(connect, 2000); };
+  ws.onerror = () => ws.close();
+}
+function poll() {
+  $("conn").className = "poll"; $("conn").textContent = "polling";
+  setInterval(() => fetch("/api/state").then(r => r.json()).then(take).catch(() => {}), 2000);
+}
+document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
+  const k = th.dataset.k;
+  if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = true; }
+  render();
+});
+connect();
+</script>

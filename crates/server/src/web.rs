@@ -1,0 +1,528 @@
+//! The embedded dashboard server: HTTP/1.1 for the page and `/api/state`,
+//! RFC 6455 WebSocket for the live feed. Hand-rolled like the rest of the
+//! workspace — no dependencies, no TLS yet (milestone 4's later work adds
+//! TLS and accounts on the management interface; until then it binds to
+//! localhost by default).
+
+use nn_rules::{AlertEvent, AlertState, Monitor, Severity};
+use nn_state::{geo, secs};
+use std::collections::{BTreeMap, VecDeque};
+use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime};
+
+const INDEX_HTML: &str = include_str!("../../../web/index.html");
+/// Queued frames per client before it is dropped as too slow.
+const CLIENT_QUEUE: usize = 128;
+const MAX_HTTP_HEAD: usize = 16 * 1024;
+const MAX_WS_PAYLOAD: u64 = 1 << 20;
+
+/// The dashboard feed hub: WebSocket clients plus the latest state push.
+pub struct Hub {
+    clients: Mutex<BTreeMap<u64, SyncSender<Vec<u8>>>>,
+    next_id: AtomicU64,
+    /// Last state JSON, replayed to each new client and served at /api/state.
+    snapshot: Mutex<Option<String>>,
+}
+
+impl Default for Hub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Hub {
+    pub fn new() -> Self {
+        Hub {
+            clients: Mutex::new(BTreeMap::new()),
+            next_id: AtomicU64::new(1),
+            snapshot: Mutex::new(None),
+        }
+    }
+
+    /// Bind `addr`, spawn the accept thread, return the bound address and hub.
+    pub fn listen(addr: impl ToSocketAddrs) -> io::Result<(SocketAddr, Arc<Hub>)> {
+        let listener = TcpListener::bind(addr)?;
+        let local = listener.local_addr()?;
+        let hub = Arc::new(Hub::new());
+        let h = Arc::clone(&hub);
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let h = Arc::clone(&h);
+                thread::spawn(move || handle_conn(h, stream));
+            }
+        });
+        Ok((local, hub))
+    }
+
+    /// Queue a text message for every client; drop clients that fall behind.
+    pub fn broadcast(&self, text: &str) {
+        let frame = text_frame(text);
+        let mut clients = self.clients.lock().unwrap();
+        clients.retain(|_, tx| tx.try_send(frame.clone()).is_ok());
+    }
+
+    /// Store the state JSON served to new clients and `/api/state`.
+    pub fn set_snapshot(&self, json: String) {
+        *self.snapshot.lock().unwrap() = Some(json);
+    }
+
+    pub fn client_count(&self) -> usize {
+        self.clients.lock().unwrap().len()
+    }
+
+    fn add_client(&self) -> (u64, Receiver<Vec<u8>>) {
+        let (tx, rx) = sync_channel(CLIENT_QUEUE);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.clients.lock().unwrap().insert(id, tx);
+        (id, rx)
+    }
+
+    fn remove_client(&self, id: u64) {
+        self.clients.lock().unwrap().remove(&id);
+    }
+}
+
+// --- HTTP -----------------------------------------------------------------
+
+struct Request {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+}
+
+impl Request {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+fn read_request(r: &mut impl Read) -> io::Result<Request> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let head_end = loop {
+        let n = r.read(&mut chunk)?;
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "closed"));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(p) = find(&buf, b"\r\n\r\n") {
+            break p;
+        }
+        if buf.len() > MAX_HTTP_HEAD {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "headers too large"));
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..head_end]);
+    let mut lines = head.lines();
+    let mut parts = lines.next().unwrap_or_default().split_whitespace();
+    let (method, path) = (
+        parts.next().unwrap_or_default().to_string(),
+        parts.next().unwrap_or_default().to_string(),
+    );
+    if method.is_empty() || path.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "bad request line"));
+    }
+    let mut headers = Vec::new();
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            headers.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    Ok(Request { method, path, headers })
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+fn respond(mut s: TcpStream, status: &str, content_type: &str, body: &str) -> io::Result<()> {
+    write!(
+        s,
+        "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: {content_type}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )?;
+    s.flush()
+}
+
+fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
+    let _ = s.set_read_timeout(Some(Duration::from_secs(30)));
+    let req = match read_request(&mut s) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let path = req.path.split(['?', '#']).next().unwrap_or("/");
+    match (req.method.as_str(), path) {
+        ("GET", "/" | "/index.html") => {
+            let _ = respond(s, "200 OK", "text/html; charset=utf-8", INDEX_HTML);
+        }
+        ("GET", "/api/state") => {
+            let body = hub.snapshot.lock().unwrap().clone().unwrap_or_else(|| "{}".into());
+            let _ = respond(s, "200 OK", "application/json", &body);
+        }
+        ("GET", "/ws") if is_ws_upgrade(&req) => ws_serve(hub, s, &req),
+        ("GET", _) => {
+            let _ = respond(s, "404 Not Found", "text/plain", "not found\n");
+        }
+        _ => {
+            let _ = respond(s, "405 Method Not Allowed", "text/plain", "method not allowed\n");
+        }
+    }
+}
+
+fn is_ws_upgrade(req: &Request) -> bool {
+    req.header("upgrade")
+        .is_some_and(|u| u.eq_ignore_ascii_case("websocket"))
+        && req.header("sec-websocket-key").is_some()
+}
+
+// --- WebSocket ------------------------------------------------------------
+
+const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request) {
+    let key = req.header("sec-websocket-key").unwrap_or_default();
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {}\r\n\r\n",
+        base64(&sha1(format!("{key}{WS_GUID}").as_bytes()))
+    );
+    if s.write_all(response.as_bytes()).is_err() {
+        return;
+    }
+    let (id, rx) = hub.add_client();
+    // New clients see the current state immediately.
+    if let Some(snap) = hub.snapshot.lock().unwrap().clone() {
+        hub.broadcast_to(id, text_frame(&snap));
+    }
+    // Writer thread: drains the frame queue onto the socket.
+    let mut writer = match s.try_clone() {
+        Ok(w) => w,
+        Err(_) => {
+            hub.remove_client(id);
+            return;
+        }
+    };
+    let write_done = thread::spawn(move || {
+        while let Ok(frame) = rx.recv() {
+            if writer.write_all(&frame).is_err() {
+                break;
+            }
+        }
+    });
+
+    // Reader: pings, pongs, close. Text/binary frames are client commands
+    // (acknowledge, mute) — handled in milestone 4's operator actions.
+    loop {
+        match read_frame(&mut s) {
+            Ok(Some(f)) if f.opcode == 0x9 => hub.broadcast_to(id, frame(0xA, &f.payload)),
+            Ok(Some(f)) if f.opcode == 0x8 => break,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+    let _ = s.shutdown(std::net::Shutdown::Both);
+    hub.remove_client(id);
+    let _ = write_done.join();
+}
+
+pub struct WsFrame {
+    pub opcode: u8,
+    pub payload: Vec<u8>,
+}
+
+/// One frame; `Ok(None)` on clean or mid-read disconnect.
+pub fn read_frame(r: &mut impl Read) -> io::Result<Option<WsFrame>> {
+    let mut h = [0u8; 2];
+    if r.read_exact(&mut h).is_err() {
+        return Ok(None);
+    }
+    let opcode = h[0] & 0x0f;
+    let masked = h[1] & 0x80 != 0;
+    let mut len = (h[1] & 0x7f) as u64;
+    if len == 126 {
+        let mut b = [0u8; 2];
+        r.read_exact(&mut b)?;
+        len = u16::from_be_bytes(b) as u64;
+    } else if len == 127 {
+        let mut b = [0u8; 8];
+        r.read_exact(&mut b)?;
+        len = u64::from_be_bytes(b);
+    }
+    if len > MAX_WS_PAYLOAD {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+    }
+    let mut mask = [0u8; 4];
+    if masked {
+        r.read_exact(&mut mask)?;
+    }
+    let mut payload = vec![0u8; len as usize];
+    if r.read_exact(&mut payload).is_err() {
+        return Ok(None);
+    }
+    if masked {
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b ^= mask[i % 4];
+        }
+    }
+    Ok(Some(WsFrame { opcode, payload }))
+}
+
+fn frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    let mut v = vec![0x80 | opcode];
+    let n = payload.len();
+    if n < 126 {
+        v.push(n as u8);
+    } else if n <= 0xffff {
+        v.push(126);
+        v.extend_from_slice(&(n as u16).to_be_bytes());
+    } else {
+        v.push(127);
+        v.extend_from_slice(&(n as u64).to_be_bytes());
+    }
+    v.extend_from_slice(payload);
+    v
+}
+
+fn text_frame(s: &str) -> Vec<u8> {
+    frame(0x1, s.as_bytes())
+}
+
+impl Hub {
+    /// Send an encoded frame to one client; drop it if the queue is full.
+    fn broadcast_to(&self, id: u64, f: Vec<u8>) {
+        let mut clients = self.clients.lock().unwrap();
+        if clients.get(&id).is_some_and(|tx| tx.try_send(f).is_err()) {
+            clients.remove(&id);
+        }
+    }
+}
+
+fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
+    let bitlen = data.len() as u64 * 8;
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bitlen.to_be_bytes());
+    for chunk in msg.as_chunks::<64>().0 {
+        let mut w = [0u32; 80];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes(chunk[4 * i..4 * i + 4].try_into().unwrap());
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A82_7999u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let tmp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*wi);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = tmp;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    let mut out = [0u8; 20];
+    for (i, x) in h.iter().enumerate() {
+        out[4 * i..4 * i + 4].copy_from_slice(&x.to_be_bytes());
+    }
+    out
+}
+
+fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = ((c[0] as u32) << 16)
+            | ((c.get(1).copied().unwrap_or(0) as u32) << 8)
+            | c.get(2).copied().unwrap_or(0) as u32;
+        s.push(T[(n >> 18) as usize & 63] as char);
+        s.push(T[(n >> 12) as usize & 63] as char);
+        s.push(if c.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        s.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    s
+}
+
+// --- JSON feed --------------------------------------------------------------
+
+fn esc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn fnum(x: f64) -> String {
+    if x.is_finite() {
+        format!("{x:.6}")
+    } else {
+        "0".into()
+    }
+}
+
+/// One alert event for the feed: `{type, at, state, severity, pack, rule, entity, exercise, message}`.
+pub fn alert_json(e: &AlertEvent) -> String {
+    let sev = match e.alert.severity {
+        Severity::Critical => "critical",
+        Severity::Warning => "warning",
+    };
+    let state = match e.state {
+        AlertState::Firing => "firing",
+        AlertState::Resolved => "resolved",
+    };
+    format!(
+        "{{\"type\":\"alert\",\"at\":{},\"state\":\"{state}\",\"severity\":\"{sev}\",\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"exercise\":{},\"message\":\"{}\"}}",
+        fnum(e.at),
+        esc(&e.alert.pack),
+        esc(&e.alert.rule_id),
+        esc(&e.alert.key.id.to_string()),
+        e.alert.key.exercise,
+        esc(&e.alert.message),
+    )
+}
+
+/// The once-per-second aggregated state the dashboard renders.
+pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], recent: &VecDeque<String>) -> String {
+    let now = m.now;
+    let timeout = m.engine.config.timeout();
+    let w1 = m.metrics.window(now, 1);
+    let w10 = m.metrics.window(now, 10);
+    let mut s = String::with_capacity(8192);
+    s.push_str("{\"type\":\"state\",\"at\":");
+    s.push_str(&fnum(now));
+    s.push_str(",\"uptime\":");
+    s.push_str(&fnum(uptime));
+    s.push_str(",\"clients\":");
+    s.push_str(&clients.to_string());
+    s.push_str(",\"packs\":[");
+    s.push_str(
+        &packs
+            .iter()
+            .map(|p| format!("\"{}\"", esc(p)))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    s.push(']');
+    s.push_str(&format!(
+        ",\"totals\":{{\"datagrams\":{},\"pdus\":{},\"errors\":{}}}",
+        m.datagrams, m.pdus, m.decode_errors
+    ));
+    s.push_str(&format!(
+        ",\"rates\":{{\"pdu_1s\":{},\"pdu_10s\":{},\"kb_10s\":{}}}",
+        fnum(w1.pdu_rate()),
+        fnum(w10.pdu_rate()),
+        fnum(w10.byte_rate() / 1000.0)
+    ));
+    s.push_str(",\"exercises\":{");
+    let mut first = true;
+    for (id, ex) in &m.table.exercises {
+        if !first {
+            s.push(',');
+        }
+        first = false;
+        s.push_str(&format!("\"{id}\":{{\"frozen\":{}}}", ex.frozen));
+    }
+    s.push('}');
+    s.push_str(",\"entities\":[");
+    let mut first = true;
+    for rec in m.table.entities.values() {
+        if !first {
+            s.push(',');
+        }
+        first = false;
+        let k = rec.kinematics();
+        let (lat, lon, alt) = geo::ecef_to_lla(&k.location);
+        let speed =
+            ((k.velocity.x * k.velocity.x + k.velocity.y * k.velocity.y + k.velocity.z * k.velocity.z) as f64).sqrt();
+        let age = (now - rec.last_seen).max(0.0);
+        s.push_str(&format!(
+            "{{\"id\":\"{}\",\"exercise\":{},\"marking\":\"{}\",\"force\":{},\"etype\":\"{}\",\"lat\":{},\"lon\":{},\"alt\":{},\"heading\":{},\"speed\":{},\"age\":{},\"senders\":{},\"removed\":{},\"deactivated\":{},\"stale\":{},\"frozen\":{}}}",
+            rec.key.id,
+            rec.key.exercise,
+            esc(&rec.marking),
+            rec.force_id,
+            rec.entity_type,
+            fnum(lat),
+            fnum(lon),
+            fnum(alt),
+            fnum(k.orientation.psi.to_degrees() as f64),
+            fnum(speed),
+            fnum(age),
+            rec.sources.len(),
+            rec.removed,
+            rec.deactivated(),
+            age > timeout,
+            rec.appearance & nn_decode::appearance::FROZEN != 0,
+        ));
+    }
+    s.push(']');
+    s.push_str(",\"alerts\":[");
+    let mut first = true;
+    for a in m.engine.active() {
+        if !first {
+            s.push(',');
+        }
+        first = false;
+        s.push_str(&format!(
+            "{{\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"severity\":\"{}\",\"since\":{},\"message\":\"{}\"}}",
+            esc(&a.pack),
+            esc(&a.rule_id),
+            esc(&a.key.id.to_string()),
+            match a.severity {
+                Severity::Critical => "critical",
+                Severity::Warning => "warning",
+            },
+            fnum(a.since),
+            esc(&a.message),
+        ));
+    }
+    s.push(']');
+    s.push_str(",\"recent\":[");
+    s.push_str(&recent.iter().cloned().collect::<Vec<_>>().join(","));
+    s.push_str("]}");
+    s
+}
+
+/// Wall-clock seconds helper for the serve loop.
+pub fn now_secs() -> f64 {
+    secs(SystemTime::now())
+}
