@@ -13,7 +13,7 @@ The core loop works end to end on the console: synthetic or captured DIS traffic
 | 1. Generator + capture + decoder | Mostly done: codec, UDP and multicast capture, pcap and pcapng import, generator with every fault and control. Still to do: live libpcap capture, kernel drop counters, cargo-fuzz harness, dis-rs comparison (ADR 0001). |
 | 2. Entity state, metrics and monitor health | Core done: entity table per exercise and sender, heartbeat statistics, rolling PDU/byte/error rates, freeze periods, dead reckoning (algorithms 1–9), ECEF ↔ lat/lon. Still to do: performance measurement against the targets, kernel drop counts. |
 | 3. Rule packs + three alert rules | Done and proven against the generator (below): TOML packs validate, layer and load ([docs](docs/rule-packs.md)); enumeration checks run on every PDU; each alert cites its pack. Still to do: SISO-REF-010 tables generated rather than hand-authored, pack signing. |
-| 4. Dashboard + map | Started: `nn-server serve` streams entities, rates and alerts over WebSocket to an embedded page (see Try it). Still to do: MapLibre map, acknowledge/mute/notes, deltas above ~1,000 entities, TLS and local accounts. |
+| 4. Dashboard + map | Started: `nn-server serve` streams entities, rates and alerts over WebSocket to an embedded page (see Try it); a sequenced event log (`/api/log`, `--log` on disk) records alerts, decode errors and server events across runs. Still to do: MapLibre map, acknowledge/mute/notes, deltas above ~1,000 entities, TLS and local accounts. |
 | 5–7 | Not started. |
 
 **What the tests prove** (`cargo test --workspace`):

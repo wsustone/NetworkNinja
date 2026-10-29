@@ -18,15 +18,23 @@ use std::time::{Duration, SystemTime};
 const INDEX_HTML: &str = include_str!("../../../web/index.html");
 /// Queued frames per client before it is dropped as too slow.
 const CLIENT_QUEUE: usize = 128;
+/// Log entries kept in memory for `/api/log` and new clients.
+const LOG_CAP: usize = 2_000;
 const MAX_HTTP_HEAD: usize = 16 * 1024;
 const MAX_WS_PAYLOAD: u64 = 1 << 20;
 
-/// The dashboard feed hub: WebSocket clients plus the latest state push.
+/// The dashboard feed hub: WebSocket clients, the latest state push and the
+/// event log (alerts, decode errors, server events) behind `/api/log`.
 pub struct Hub {
     clients: Mutex<BTreeMap<u64, SyncSender<Vec<u8>>>>,
     next_id: AtomicU64,
     /// Last state JSON, replayed to each new client and served at /api/state.
     snapshot: Mutex<Option<String>>,
+    /// Event log: JSON entries each carrying `"seq"` and `"kind"`.
+    log_buf: Mutex<VecDeque<String>>,
+    seq: AtomicU64,
+    /// `--log` file: every entry appended as one JSON line.
+    log_file: Mutex<Option<std::fs::File>>,
 }
 
 impl Default for Hub {
@@ -41,6 +49,9 @@ impl Hub {
             clients: Mutex::new(BTreeMap::new()),
             next_id: AtomicU64::new(1),
             snapshot: Mutex::new(None),
+            log_buf: Mutex::new(VecDeque::new()),
+            seq: AtomicU64::new(0),
+            log_file: Mutex::new(None),
         }
     }
 
@@ -69,6 +80,65 @@ impl Hub {
     /// Store the state JSON served to new clients and `/api/state`.
     pub fn set_snapshot(&self, json: String) {
         *self.snapshot.lock().unwrap() = Some(json);
+    }
+
+    /// Append a log entry — `fields` is a JSON object body — then broadcast
+    /// it to every client and (if set) the log file. Returns the entry.
+    pub fn log(&self, kind: &str, fields: &str) -> String {
+        debug_assert!(fields.starts_with('{'));
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let entry = format!("{{\"seq\":{seq},\"kind\":\"{kind}\",{}", &fields[1..]);
+        {
+            let mut q = self.log_buf.lock().unwrap();
+            if q.len() >= LOG_CAP {
+                q.pop_front();
+            }
+            q.push_back(entry.clone());
+        }
+        if let Some(f) = self.log_file.lock().unwrap().as_mut() {
+            use std::io::Write;
+            let _ = writeln!(f, "{entry}");
+        }
+        self.broadcast(&entry);
+        entry
+    }
+
+    /// `{"entries":[...],"latest":N}` — entries with seq > `after`, capped.
+    pub fn log_tail(&self, after: u64, limit: usize) -> String {
+        let q = self.log_buf.lock().unwrap();
+        let entries: Vec<&String> = q.iter().filter(|e| seq_of(e) > after).take(limit).collect();
+        format!(
+            "{{\"entries\":[{}],\"latest\":{}}}",
+            entries.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(","),
+            self.seq.load(Ordering::Relaxed)
+        )
+    }
+
+    /// Load a `--log` file: previous runs' entries first (their seqs kept),
+    /// then append everything new. Returns entries loaded.
+    pub fn open_log(&self, path: &std::path::Path) -> io::Result<usize> {
+        use std::io::{BufRead, BufReader};
+        let mut loaded = 0;
+        if let Ok(f) = std::fs::File::open(path) {
+            let mut q = self.log_buf.lock().unwrap();
+            let mut max_seq = 0;
+            for line in BufReader::new(f).lines() {
+                let line = line?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                max_seq = max_seq.max(seq_of(&line));
+                if q.len() >= LOG_CAP {
+                    q.pop_front();
+                }
+                q.push_back(line);
+                loaded += 1;
+            }
+            self.seq.fetch_max(max_seq, Ordering::Relaxed);
+        }
+        let f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        *self.log_file.lock().unwrap() = Some(f);
+        Ok(loaded)
     }
 
     pub fn client_count(&self) -> usize {
@@ -143,6 +213,15 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
+/// The `"seq"` number of a log entry, which always leads the object.
+fn seq_of(entry: &str) -> u64 {
+    entry
+        .strip_prefix("{\"seq\":")
+        .and_then(|r| r.split(',').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
 fn respond(mut s: TcpStream, status: &str, content_type: &str, body: &str) -> io::Result<()> {
     write!(
         s,
@@ -159,12 +238,22 @@ fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
         Err(_) => return,
     };
     let path = req.path.split(['?', '#']).next().unwrap_or("/");
+    let query = req.path.split('?').nth(1).unwrap_or_default();
     match (req.method.as_str(), path) {
         ("GET", "/" | "/index.html") => {
             let _ = respond(s, "200 OK", "text/html; charset=utf-8", INDEX_HTML);
         }
         ("GET", "/api/state") => {
             let body = hub.snapshot.lock().unwrap().clone().unwrap_or_else(|| "{}".into());
+            let _ = respond(s, "200 OK", "application/json", &body);
+        }
+        ("GET", "/api/log") => {
+            let arg = |name: &str| -> Option<u64> {
+                query
+                    .split('&')
+                    .find_map(|kv| kv.strip_prefix(name).and_then(|v| v.parse().ok()))
+            };
+            let body = hub.log_tail(arg("after=").unwrap_or(0), arg("limit=").unwrap_or(500) as usize);
             let _ = respond(s, "200 OK", "application/json", &body);
         }
         ("GET", "/ws") if is_ws_upgrade(&req) => ws_serve(hub, s, &req),
@@ -410,13 +499,29 @@ pub fn alert_json(e: &AlertEvent) -> String {
         AlertState::Resolved => "resolved",
     };
     format!(
-        "{{\"type\":\"alert\",\"at\":{},\"state\":\"{state}\",\"severity\":\"{sev}\",\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"exercise\":{},\"message\":\"{}\"}}",
+        "{{\"at\":{},\"state\":\"{state}\",\"severity\":\"{sev}\",\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"exercise\":{},\"message\":\"{}\"}}",
         fnum(e.at),
         esc(&e.alert.pack),
         esc(&e.alert.rule_id),
         esc(&e.alert.key.id.to_string()),
         e.alert.key.exercise,
         esc(&e.alert.message),
+    )
+}
+
+/// A server event log entry body (`kind = "info"`).
+pub fn info_json(at: f64, message: &str) -> String {
+    format!("{{\"at\":{},\"message\":\"{}\"}}", fnum(at), esc(message))
+}
+
+/// A decode-error log entry body (`kind = "error"`).
+pub fn error_json(at: f64, count: u64, source: &str) -> String {
+    format!(
+        "{{\"at\":{},\"count\":{count},\"source\":\"{}\",\"message\":\"{count} decode {} from {}\"}}",
+        fnum(at),
+        esc(source),
+        if count == 1 { "error" } else { "errors" },
+        esc(source),
     )
 }
 
