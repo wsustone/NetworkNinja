@@ -67,6 +67,7 @@ impl EventStore {
     }
 
     /// Index one log entry (its full JSON body is kept verbatim).
+    #[allow(clippy::too_many_arguments)]
     pub fn insert(
         &self,
         run: i64,
