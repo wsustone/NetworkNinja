@@ -7,7 +7,7 @@
 use nn_capture::{Datagram, PcapReader, UdpConfig, UdpSource};
 use nn_decode::{Pdu, PduBody};
 use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
-use nn_server::web::{alert_json, error_json, info_json, now_secs, state_json, Hub};
+use nn_server::web::{alert_json, delta_json, entity_baseline, error_json, info_json, now_secs, state_json, Hub};
 use nn_server::{describe, Tally};
 use nn_state::secs;
 use std::collections::VecDeque;
@@ -395,8 +395,10 @@ fn serve(
     hub.set_command_sink(cmd_tx);
     let mut m = Monitor::with_packs(packs);
     let mut recent: VecDeque<String> = VecDeque::new();
+    let mut prev_ents = std::collections::BTreeMap::new();
     let start = Instant::now();
     let mut next_state = 0.0;
+    let mut next_full = 0.0;
     loop {
         let t = start.elapsed().as_secs_f64();
         if duration.is_some_and(|d| t >= d) {
@@ -465,9 +467,16 @@ fn serve(
             recent.push_back(j);
         }
         if t >= next_state {
-            let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent);
-            hub.set_snapshot(snap.clone());
-            hub.broadcast(&snap);
+            if t >= next_full {
+                // Full frame every 30 s: also the snapshot new clients get.
+                let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent);
+                hub.set_snapshot(snap.clone());
+                hub.broadcast(&snap);
+                entity_baseline(&m, &mut prev_ents);
+                next_full = t + 30.0;
+            } else {
+                hub.broadcast(&delta_json(&m, t, hub.client_count(), &packs.packs, &mut prev_ents));
+            }
             next_state = t + 1.0;
         }
     }

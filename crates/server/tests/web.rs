@@ -2,11 +2,11 @@
 //! end-to-end connect over a real socket.
 
 use nn_rules::{Alert, AlertEvent, AlertState, Monitor, Rule, RuleConfig, Severity};
-use nn_server::web::{alert_json, apply_command, state_json, Hub};
+use nn_server::web::{alert_json, apply_command, delta_json, state_json, Hub};
 use nn_state::{secs, EntityKey};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
 use std::time::{Duration, SystemTime};
 
 // Re-exported internals for tests via the public test hooks below.
@@ -215,4 +215,69 @@ fn client_commands_ack_and_mute() {
     apply_command(&mut m, "{\"cmd\":\"unmute_rule\",\"rule\":\"position-jump\"}").unwrap();
     assert!(!m.engine.muted("entity-timeout", &key, m.now));
     assert!(!m.engine.muted("position-jump", &other, m.now));
+}
+
+fn datagram(pdu: &nn_decode::Pdu, t: f64) -> nn_capture::Datagram {
+    nn_capture::Datagram {
+        received_at: SystemTime::UNIX_EPOCH + Duration::from_secs_f64(1_800_000_000.0 + t),
+        source: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 5000)),
+        destination: None,
+        payload: nn_decode::encode_pdu(pdu),
+    }
+}
+
+fn entity_state(n: u16) -> nn_decode::Pdu {
+    nn_decode::Pdu {
+        header: nn_decode::PduHeader::new(
+            7,
+            1,
+            nn_decode::pdu_type::ENTITY_STATE,
+            nn_decode::DisTimestamp::default(),
+        ),
+        body: nn_decode::PduBody::EntityState(nn_decode::EntityState {
+            entity_id: nn_decode::EntityId::new(1, 1, n),
+            force_id: 1,
+            entity_type: Default::default(),
+            alternative_entity_type: Default::default(),
+            linear_velocity: Default::default(),
+            location: Default::default(),
+            orientation: Default::default(),
+            appearance: 0,
+            dead_reckoning: Default::default(),
+            marking: Default::default(),
+            capabilities: 0,
+            variable_parameters: Vec::new(),
+        }),
+    }
+}
+
+#[test]
+fn delta_sends_only_changed_entities() {
+    let mut m = Monitor::new(RuleConfig::default());
+    m.ingest(&datagram(&entity_state(1), 0.0));
+    let mut prev = std::collections::BTreeMap::new();
+    let packs = vec!["dis-base v1".to_string()];
+
+    // First delta after an empty baseline carries the entity.
+    let d = delta_json(&m, 1.0, 0, &packs, &mut prev);
+    assert!(d.contains("\"type\":\"delta\""), "{d}");
+    assert!(d.contains("\"1:1:1\""), "{d}");
+
+    // Same table — nothing changed.
+    let d = delta_json(&m, 2.0, 0, &packs, &mut prev);
+    assert!(d.contains("\"ents\":[]"), "{d}");
+
+    // A heartbeat bumps `seen` → the entity re-emits.
+    m.ingest(&datagram(&entity_state(1), 5.0));
+    let d = delta_json(&m, 6.0, 0, &packs, &mut prev);
+    assert!(d.contains("\"1:1:1\""), "{d}");
+
+    // A second entity arrives; only it ships in the next delta.
+    m.ingest(&datagram(&entity_state(2), 7.0));
+    let d = delta_json(&m, 8.0, 0, &packs, &mut prev);
+    assert!(d.contains("\"1:1:2\"") && !d.contains("\"1:1:1\""), "{d}");
+
+    // Full state still carries everything; `seen` replaces `age`.
+    let s = state_json(&m, 8.0, 0, &packs, &VecDeque::new());
+    assert!(s.contains("\"seen\":") && !s.contains("\"age\":"), "{s}");
 }
