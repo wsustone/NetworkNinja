@@ -119,7 +119,7 @@ fn alert_and_state_json() {
     m.now = secs(SystemTime::now());
     let mut recent = VecDeque::new();
     recent.push_back(j);
-    let s = state_json(&m, 12.0, 2, &["dis-base v1".to_string()], &recent);
+    let s = state_json(&m, 12.0, 2, &["dis-base v1".to_string()], &recent, None);
     assert!(s.contains("\"type\":\"state\""), "{s}");
     assert!(s.contains("\"packs\":[\"dis-base v1\"]"), "{s}");
     assert!(s.contains("\"entities\":[]"), "{s}");
