@@ -45,9 +45,24 @@ web/          dashboard frontend (TypeScript, MapLibre) — not started
 rulepacks/    base DIS rule pack — not started
 ```
 
+## Platforms
+
+- **Monitor (server):** Windows, macOS and Linux, one self-contained binary each. CI builds and tests all three on every push.
+- **Viewers:** the dashboard (milestone 4) is a responsive web page, so it works in any modern browser on a desktop, tablet or phone, with nothing to install.
+- Phones and tablets are viewers, not capture hosts: capturing exercise traffic needs a machine on the exercise LAN.
+
+## Get the code
+
+```
+git clone https://github.com/wsustone/NetworkNinja.git
+cd NetworkNinja
+```
+
+Install Rust from https://rustup.rs (Windows also needs the Visual Studio C++ build tools the installer offers). Then:
+
 ## Build and test
 
-Requires a recent stable Rust (1.87 or later). There are no external crate dependencies yet. CI runs fmt, clippy and the tests on Linux and Windows for every push.
+Requires a recent stable Rust (1.87 or later). There are no external crate dependencies yet. CI runs fmt, clippy and the tests on Linux, Windows and macOS for every push.
 
 ```
 cargo build --release
@@ -55,6 +70,8 @@ cargo test --workspace
 ```
 
 ## Try it
+
+On Windows, the binaries are `target\release\nn-server.exe` and `nn-generator.exe`; the first `listen` may trigger a firewall prompt (allow it on private networks).
 
 Terminal 1, the console listener (`--alerts-only` hides the per-PDU lines):
 
