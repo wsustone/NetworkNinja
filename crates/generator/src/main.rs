@@ -32,6 +32,7 @@ EXERCISE
     --dr-threshold M        Dead-reckoning error that triggers an update (default 1.0)
     --fire-every SECS       Fire + Detonation every N seconds (default off)
     --bundle                Pack several PDUs per datagram
+    --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
 
 FAULTS (alerts must fire)          T defaults to a third of the duration
@@ -71,7 +72,10 @@ struct Options {
 }
 
 fn parse_args() -> Result<Options, String> {
-    let mut cfg = Config { start_time: SystemTime::now(), ..Default::default() };
+    let mut cfg = Config {
+        start_time: SystemTime::now(),
+        ..Default::default()
+    };
     let mut target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3000);
     let (mut broadcast, mut pcap, mut truth) = (false, None, None);
     let mut pending: Vec<(EventKind, String)> = Vec::new();
@@ -104,6 +108,7 @@ fn parse_args() -> Result<Options, String> {
             "--dr-threshold" => cfg.dr_threshold = num(val()?)?,
             "--fire-every" => cfg.fire_every = Some(num(val()?)?),
             "--bundle" => cfg.bundle = true,
+            "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--drop-heartbeat" => pending.push((EventKind::DropHeartbeat, val()?)),
             "--clone-id" => pending.push((EventKind::CloneId, val()?)),
@@ -141,8 +146,16 @@ fn parse_args() -> Result<Options, String> {
             EventKind::RestartPort => Target::Site(what.parse().map_err(|e| format!("bad site '{what}': {e}"))?),
             _ => {
                 let id: EntityId = what.parse()?;
-                if id.site == 0 || id.site > cfg.sites || id.application != 1 || id.entity == 0 || id.entity > cfg.entities_per_site {
-                    return Err(format!("{id} is not a generated entity (sites 1..={}, app 1, entities 1..={})", cfg.sites, cfg.entities_per_site));
+                if id.site == 0
+                    || id.site > cfg.sites
+                    || id.application != 1
+                    || id.entity == 0
+                    || id.entity > cfg.entities_per_site
+                {
+                    return Err(format!(
+                        "{id} is not a generated entity (sites 1..={}, app 1, entities 1..={})",
+                        cfg.sites, cfg.entities_per_site
+                    ));
                 }
                 Target::Entity(id)
             }
@@ -152,7 +165,13 @@ fn parse_args() -> Result<Options, String> {
         }
         cfg.events.push(Event { kind, target, at });
     }
-    Ok(Options { cfg, target, broadcast, pcap, truth })
+    Ok(Options {
+        cfg,
+        target,
+        broadcast,
+        pcap,
+        truth,
+    })
 }
 
 /// Sends datagrams in real time, one UDP socket per simulated sender.
@@ -178,7 +197,13 @@ impl Sink for LiveSink {
             eprintln!(
                 "  sender site {}{} → source port {}",
                 sender.site,
-                if sender.rogue { " (rogue clone)" } else if sender.generation > 0 { " (restarted)" } else { "" },
+                if sender.rogue {
+                    " (rogue clone)"
+                } else if sender.generation > 0 {
+                    " (restarted)"
+                } else {
+                    ""
+                },
                 s.local_addr()?.port()
             );
             self.sockets.insert(sender, s);
@@ -231,14 +256,23 @@ fn real_main() -> Result<(), String> {
         if cfg.bundle { ", bundled" } else { "" }
     );
     for e in &cfg.events {
-        eprintln!("  scheduled {:<14} {:<12} at {:>6.1} s", e.kind.name(), e.target.to_string(), e.at);
+        eprintln!(
+            "  scheduled {:<14} {:<12} at {:>6.1} s",
+            e.kind.name(),
+            e.target.to_string(),
+            e.at
+        );
     }
 
     let truth = match &opts.pcap {
         Some(path) => {
             let file = File::create(path).map_err(|e| format!("{path}: {e}"))?;
             let writer = PcapWriter::new(BufWriter::new(file)).map_err(|e| e.to_string())?;
-            let mut sink = PcapSink { writer, target: opts.target, start: cfg.start_time };
+            let mut sink = PcapSink {
+                writer,
+                target: opts.target,
+                start: cfg.start_time,
+            };
             let truth = run(cfg, &mut sink).map_err(|e| e.to_string())?;
             sink.writer.flush().map_err(|e| e.to_string())?;
             eprintln!("  wrote {} datagrams to {path}", truth.datagrams);

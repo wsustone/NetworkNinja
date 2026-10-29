@@ -1,9 +1,15 @@
 [package]
 name = "nn-rules"
-description = "Rule-pack loader and alert engine."
+description = "Alert rules and the monitor that runs them."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
+nn-decode = { path = "../decode" }
+nn-capture = { path = "../capture" }
+nn-state = { path = "../state" }
+
+[dev-dependencies]
+nn-generator = { path = "../generator" }

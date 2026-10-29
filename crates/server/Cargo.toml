@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 nn-decode = { path = "../decode" }
 nn-capture = { path = "../capture" }
+nn-state = { path = "../state" }
+nn-rules = { path = "../rules" }
 
 [dev-dependencies]
 nn-generator = { path = "../generator" }

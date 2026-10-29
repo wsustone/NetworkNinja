@@ -8,11 +8,31 @@ fn entity_state(n_params: usize) -> EntityState {
     EntityState {
         entity_id: EntityId::new(10, 20, 30),
         force_id: 1,
-        entity_type: EntityType { kind: 1, domain: 1, country: 225, category: 1, subcategory: 1, specific: 3, extra: 0 },
+        entity_type: EntityType {
+            kind: 1,
+            domain: 1,
+            country: 225,
+            category: 1,
+            subcategory: 1,
+            specific: 3,
+            extra: 0,
+        },
         alternative_entity_type: EntityType::default(),
-        linear_velocity: Vec3f { x: 1.0, y: -2.0, z: 3.5 },
-        location: WorldCoord { x: -2_430_000.25, y: -4_700_000.5, z: 3_550_000.75 },
-        orientation: EulerAngles { psi: 0.5, theta: -0.1, phi: 0.02 },
+        linear_velocity: Vec3f {
+            x: 1.0,
+            y: -2.0,
+            z: 3.5,
+        },
+        location: WorldCoord {
+            x: -2_430_000.25,
+            y: -4_700_000.5,
+            z: 3_550_000.75,
+        },
+        orientation: EulerAngles {
+            psi: 0.5,
+            theta: -0.1,
+            phi: 0.02,
+        },
         appearance: appearance::FROZEN,
         dead_reckoning: DeadReckoning {
             algorithm: 2,
@@ -28,17 +48,33 @@ fn entity_state(n_params: usize) -> EntityState {
 
 fn sample_pdus(version: u8) -> Vec<Pdu> {
     let eid = EntityId::new(1, 2, 3);
-    let event = EventId { site: 1, application: 2, event_number: 99 };
+    let event = EventId {
+        site: 1,
+        application: 2,
+        event_number: 99,
+    };
     let burst = BurstDescriptor {
-        munition_type: EntityType { kind: 2, domain: 2, country: 225, category: 1, ..Default::default() },
+        munition_type: EntityType {
+            kind: 2,
+            domain: 2,
+            country: 225,
+            category: 1,
+            ..Default::default()
+        },
         warhead: 1000,
         fuse: 1000,
         quantity: 1,
         rate: 0,
     };
     vec![
-        Pdu { header: header(version, 1), body: PduBody::EntityState(entity_state(0)) },
-        Pdu { header: header(version, 1), body: PduBody::EntityState(entity_state(2)) },
+        Pdu {
+            header: header(version, 1),
+            body: PduBody::EntityState(entity_state(0)),
+        },
+        Pdu {
+            header: header(version, 1),
+            body: PduBody::EntityState(entity_state(2)),
+        },
         Pdu {
             header: header(version, 2),
             body: PduBody::Fire(Fire {
@@ -49,7 +85,11 @@ fn sample_pdus(version: u8) -> Vec<Pdu> {
                 fire_mission_index: 7,
                 location: WorldCoord { x: 1.0, y: 2.0, z: 3.0 },
                 descriptor: burst,
-                velocity: Vec3f { x: 300.0, y: 0.0, z: 10.0 },
+                velocity: Vec3f {
+                    x: 300.0,
+                    y: 0.0,
+                    z: 10.0,
+                },
                 range: 2500.0,
             }),
         },
@@ -60,7 +100,11 @@ fn sample_pdus(version: u8) -> Vec<Pdu> {
                 target_entity: EntityId::new(4, 5, 6),
                 munition_id: EntityId::new(1, 2, 400),
                 event_id: event,
-                velocity: Vec3f { x: 250.0, y: 0.0, z: -5.0 },
+                velocity: Vec3f {
+                    x: 250.0,
+                    y: 0.0,
+                    z: -5.0,
+                },
                 location: WorldCoord { x: 4.0, y: 5.0, z: 6.0 },
                 descriptor: burst,
                 location_in_entity: Vec3f { x: 0.5, y: 0.0, z: 1.0 },
@@ -73,8 +117,14 @@ fn sample_pdus(version: u8) -> Vec<Pdu> {
             body: PduBody::StartResume(StartResume {
                 originating: EntityId::new(1, 2, 0xffff),
                 receiving: EntityId::new(0xffff, 0xffff, 0xffff),
-                real_world_time: ClockTime { hour: 493_000, time_past_hour: 12345 },
-                simulation_time: ClockTime { hour: 0, time_past_hour: 0 },
+                real_world_time: ClockTime {
+                    hour: 493_000,
+                    time_past_hour: 12345,
+                },
+                simulation_time: ClockTime {
+                    hour: 0,
+                    time_past_hour: 0,
+                },
                 request_id: 42,
             }),
         },
@@ -83,7 +133,10 @@ fn sample_pdus(version: u8) -> Vec<Pdu> {
             body: PduBody::StopFreeze(StopFreeze {
                 originating: EntityId::new(1, 2, 0xffff),
                 receiving: EntityId::new(0xffff, 0xffff, 0xffff),
-                real_world_time: ClockTime { hour: 493_000, time_past_hour: 99 },
+                real_world_time: ClockTime {
+                    hour: 493_000,
+                    time_past_hour: 99,
+                },
                 reason: 2,
                 frozen_behavior: 1,
                 request_id: 43,
@@ -97,7 +150,10 @@ fn sample_pdus(version: u8) -> Vec<Pdu> {
                 request_id: 44,
             }),
         },
-        Pdu { header: header(version, 25), body: PduBody::Other(vec![1, 2, 3, 4, 5, 6, 7, 8]) },
+        Pdu {
+            header: header(version, 25),
+            body: PduBody::Other(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+        },
     ]
 }
 
@@ -190,7 +246,7 @@ fn truncated_and_inconsistent_pdus_are_errors() {
 #[test]
 fn bad_body_does_not_stop_the_next_pdu() {
     let good = encode_pdu(&sample_pdus(7).remove(6)); // RemoveEntity
-    // A Fire PDU whose length field is 4 bytes too long but framed consistently.
+                                                      // A Fire PDU whose length field is 4 bytes too long but framed consistently.
     let mut odd = encode_pdu(&sample_pdus(7).remove(2));
     odd.extend([0xAA; 4]);
     let l = odd.len() as u16;
@@ -234,7 +290,11 @@ fn hostile_input_never_panics() {
         seed ^= seed << 17;
         seed
     };
-    let valid: Vec<Vec<u8>> = [6, 7].iter().flat_map(|&v| sample_pdus(v)).map(|p| encode_pdu(&p)).collect();
+    let valid: Vec<Vec<u8>> = [6, 7]
+        .iter()
+        .flat_map(|&v| sample_pdus(v))
+        .map(|p| encode_pdu(&p))
+        .collect();
 
     for i in 0..300_000u32 {
         let mut buf = match i % 3 {

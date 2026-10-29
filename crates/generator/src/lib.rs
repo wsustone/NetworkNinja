@@ -10,7 +10,7 @@
 //! step), and returns a [`Truth`] summary that later milestones compare
 //! against what the monitor reports.
 
-pub mod geo;
+pub use nn_state::geo;
 
 use nn_decode::*;
 use std::collections::BTreeMap;
@@ -59,7 +59,10 @@ impl EventKind {
     }
     /// True for faults that an alert rule should catch.
     pub fn is_fault(self) -> bool {
-        matches!(self, EventKind::DropHeartbeat | EventKind::CloneId | EventKind::Teleport)
+        matches!(
+            self,
+            EventKind::DropHeartbeat | EventKind::CloneId | EventKind::Teleport
+        )
     }
 }
 
@@ -102,6 +105,9 @@ pub struct Config {
     pub fire_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
+    /// Simulators stop sending while the exercise is frozen (some do; the
+    /// default keeps heartbeating with the frozen appearance bit set).
+    pub silent_when_frozen: bool,
     pub events: Vec<Event>,
     /// Wall-clock time of simulation time zero (for DIS timestamps).
     pub start_time: SystemTime,
@@ -120,6 +126,7 @@ impl Default for Config {
             seed: 1,
             fire_every: None,
             bundle: false,
+            silent_when_frozen: false,
             events: Vec::new(),
             start_time: UNIX_EPOCH + Duration::from_secs(1_798_761_600), // 2027-01-01T00:00:00Z
         }
@@ -236,7 +243,10 @@ impl SimEntity {
     fn kinematics(&self, m: f64) -> (WorldCoord, Vec3f, f32) {
         let w = self.speed / self.radius;
         let a = self.phase + w * m;
-        let (e, n) = (self.centre_e + self.radius * a.cos(), self.centre_n + self.radius * a.sin());
+        let (e, n) = (
+            self.centre_e + self.radius * a.cos(),
+            self.centre_n + self.radius * a.sin(),
+        );
         let (ve, vn) = (-self.radius * w * a.sin(), self.radius * w * a.cos());
         let (mlat, mlon) = geo::metres_per_degree(ORIGIN_LAT);
         let lat = ORIGIN_LAT + n / mlat;
@@ -326,9 +336,16 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
         let wall = cfg.start_time + Duration::from_secs_f64(t);
         let since_epoch = wall.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
         let stamp = DisTimestamp::from_seconds_past_hour(since_epoch, true);
-        let clock = ClockTime { hour: (since_epoch / 3600.0) as i32, time_past_hour: stamp.0 >> 1 };
+        let clock = ClockTime {
+            hour: (since_epoch / 3600.0) as i32,
+            time_past_hour: stamp.0 >> 1,
+        };
         let header = |pdu_type: u8| PduHeader::new(cfg.version, cfg.exercise, pdu_type, stamp);
-        let gen_of = |g: &BTreeMap<u16, u16>, site: u16| Sender { site, generation: *g.get(&site).unwrap_or(&0), rogue: false };
+        let gen_of = |g: &BTreeMap<u16, u16>, site: u16| Sender {
+            site,
+            generation: *g.get(&site).unwrap_or(&0),
+            rogue: false,
+        };
 
         // Each sender's PDUs for this tick, in order.
         let mut out: Vec<(Sender, Pdu)> = Vec::new();
@@ -353,9 +370,15 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
             let ev = pending[next_event];
             next_event += 1;
             let applied = match (ev.kind, ev.target) {
-                (EventKind::DropHeartbeat, Target::Entity(id)) => find(&entities, &id).map(|i| entities[i].sending = false),
-                (EventKind::Teleport, Target::Entity(id)) => find(&entities, &id).map(|i| entities[i].centre_e += 20_000.0),
-                (EventKind::CloneId, Target::Entity(id)) => find(&entities, &id).map(|i| clone_of = Some((i, f64::NEG_INFINITY))),
+                (EventKind::DropHeartbeat, Target::Entity(id)) => {
+                    find(&entities, &id).map(|i| entities[i].sending = false)
+                }
+                (EventKind::Teleport, Target::Entity(id)) => {
+                    find(&entities, &id).map(|i| entities[i].centre_e += 20_000.0)
+                }
+                (EventKind::CloneId, Target::Entity(id)) => {
+                    find(&entities, &id).map(|i| clone_of = Some((i, f64::NEG_INFINITY)))
+                }
                 (EventKind::Remove, Target::Entity(id)) => find(&entities, &id).map(|i| {
                     entities[i].sending = false;
                     out.push((
@@ -430,9 +453,16 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
                 alternative_entity_type: e.entity_type,
                 linear_velocity: if frozen { Vec3f::default() } else { vel },
                 location: pos,
-                orientation: EulerAngles { psi: heading, theta: 0.0, phi: 0.0 },
+                orientation: EulerAngles {
+                    psi: heading,
+                    theta: 0.0,
+                    phi: 0.0,
+                },
                 appearance: appearance_bits,
-                dead_reckoning: DeadReckoning { algorithm: 2, ..Default::default() },
+                dead_reckoning: DeadReckoning {
+                    algorithm: 2,
+                    ..Default::default()
+                },
                 marking,
                 capabilities: 0,
                 variable_parameters: Vec::new(),
@@ -440,7 +470,7 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
         };
 
         for e in entities.iter_mut() {
-            if !e.sending {
+            if !e.sending || (frozen && cfg.silent_when_frozen) {
                 continue;
             }
             let (pos, vel, heading) = e.kinematics(motion_time);
@@ -456,12 +486,19 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
         }
 
         if let Some((i, last)) = clone_of {
-            if t - last >= cfg.heartbeat {
+            if t - last >= cfg.heartbeat && !(frozen && cfg.silent_when_frozen) {
                 let e = &entities[i];
                 let (mut pos, vel, heading) = e.kinematics(motion_time);
                 pos.z += 500.0; // a different simulator's idea of the same entity
                 let pdu = make_state(e, pos, vel, heading, Marking::ascii("CLONE"));
-                out.push((Sender { site: e.id.site, generation: 0, rogue: true }, pdu));
+                out.push((
+                    Sender {
+                        site: e.id.site,
+                        generation: 0,
+                        rogue: true,
+                    },
+                    pdu,
+                ));
                 clone_of = Some((i, t));
             }
         }
@@ -471,17 +508,37 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
             let live: Vec<usize> = (0..entities.len()).filter(|&i| entities[i].sending).collect();
             if live.len() >= 2 {
                 let a = live[(rng.next_u64() as usize) % live.len()];
-                let others: Vec<usize> = live.iter().copied().filter(|&i| entities[i].id.site != entities[a].id.site).collect();
-                let pool = if others.is_empty() { live.iter().copied().filter(|&i| i != a).collect() } else { others };
+                let others: Vec<usize> = live
+                    .iter()
+                    .copied()
+                    .filter(|&i| entities[i].id.site != entities[a].id.site)
+                    .collect();
+                let pool = if others.is_empty() {
+                    live.iter().copied().filter(|&i| i != a).collect()
+                } else {
+                    others
+                };
                 let b = pool[(rng.next_u64() as usize) % pool.len()];
                 fire_count = fire_count.wrapping_add(1);
                 let (from, _, _) = entities[a].kinematics(motion_time);
                 let (to, _, _) = entities[b].kinematics(motion_time);
                 let firer = entities[a].id;
-                let event_id = EventId { site: firer.site, application: firer.application, event_number: fire_count };
+                let event_id = EventId {
+                    site: firer.site,
+                    application: firer.application,
+                    event_number: fire_count,
+                };
                 let munition_id = EntityId::new(firer.site, firer.application, 1000 + fire_count);
                 let descriptor = BurstDescriptor {
-                    munition_type: EntityType { kind: 2, domain: 1, country: 225, category: 2, subcategory: 1, specific: 0, extra: 0 },
+                    munition_type: EntityType {
+                        kind: 2,
+                        domain: 1,
+                        country: 225,
+                        category: 2,
+                        subcategory: 1,
+                        specific: 0,
+                        extra: 0,
+                    },
                     warhead: 1000,
                     fuse: 1000,
                     quantity: 1,
@@ -500,7 +557,11 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
                             fire_mission_index: 0,
                             location: from,
                             descriptor,
-                            velocity: Vec3f { x: 0.0, y: 0.0, z: 300.0 },
+                            velocity: Vec3f {
+                                x: 0.0,
+                                y: 0.0,
+                                z: 300.0,
+                            },
                             range,
                         }),
                     },
@@ -512,7 +573,11 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
                         target_entity: entities[b].id,
                         munition_id,
                         event_id,
-                        velocity: Vec3f { x: 0.0, y: 0.0, z: -250.0 },
+                        velocity: Vec3f {
+                            x: 0.0,
+                            y: 0.0,
+                            z: -250.0,
+                        },
                         location: to,
                         descriptor,
                         location_in_entity: Vec3f::default(),
@@ -527,7 +592,10 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
             if *at <= t + 1e-9 {
                 out.push((
                     gen_of(&generation, d.firing_entity.site),
-                    Pdu { header: header(pdu_type::DETONATION), body: PduBody::Detonation(d.clone()) },
+                    Pdu {
+                        header: header(pdu_type::DETONATION),
+                        body: PduBody::Detonation(d.clone()),
+                    },
                 ));
                 false
             } else {
@@ -594,7 +662,10 @@ mod tests {
 
     #[test]
     fn clean_run_has_heartbeats_and_dr_updates() {
-        let cfg = Config { duration: 30.0, ..Default::default() };
+        let cfg = Config {
+            duration: 30.0,
+            ..Default::default()
+        };
         let mut sink = Collect(Vec::new());
         let truth = run(&cfg, &mut sink).unwrap();
         assert_eq!(truth.entities.len(), 20);
@@ -606,7 +677,11 @@ mod tests {
             }
         }
         // Every datagram decodes cleanly.
-        let decoded: u64 = sink.0.iter().map(|(_, _, d)| decode_datagram(d).iter().filter(|r| r.is_ok()).count() as u64).sum();
+        let decoded: u64 = sink
+            .0
+            .iter()
+            .map(|(_, _, d)| decode_datagram(d).iter().filter(|r| r.is_ok()).count() as u64)
+            .sum();
         assert_eq!(decoded, truth.total_pdus());
     }
 
@@ -616,13 +691,41 @@ mod tests {
         let cfg = Config {
             duration: 40.0,
             events: vec![
-                Event { kind: EventKind::DropHeartbeat, target: Target::Entity(id(1)), at: 10.0 },
-                Event { kind: EventKind::Remove, target: Target::Entity(id(2)), at: 10.0 },
-                Event { kind: EventKind::CloneId, target: Target::Entity(id(3)), at: 15.0 },
-                Event { kind: EventKind::Teleport, target: Target::Entity(id(4)), at: 20.0 },
-                Event { kind: EventKind::RestartPort, target: Target::Site(2), at: 20.0 },
-                Event { kind: EventKind::Freeze, target: Target::Exercise, at: 25.0 },
-                Event { kind: EventKind::Resume, target: Target::Exercise, at: 30.0 },
+                Event {
+                    kind: EventKind::DropHeartbeat,
+                    target: Target::Entity(id(1)),
+                    at: 10.0,
+                },
+                Event {
+                    kind: EventKind::Remove,
+                    target: Target::Entity(id(2)),
+                    at: 10.0,
+                },
+                Event {
+                    kind: EventKind::CloneId,
+                    target: Target::Entity(id(3)),
+                    at: 15.0,
+                },
+                Event {
+                    kind: EventKind::Teleport,
+                    target: Target::Entity(id(4)),
+                    at: 20.0,
+                },
+                Event {
+                    kind: EventKind::RestartPort,
+                    target: Target::Site(2),
+                    at: 20.0,
+                },
+                Event {
+                    kind: EventKind::Freeze,
+                    target: Target::Exercise,
+                    at: 25.0,
+                },
+                Event {
+                    kind: EventKind::Resume,
+                    target: Target::Exercise,
+                    at: 30.0,
+                },
             ],
             ..Default::default()
         };
@@ -640,8 +743,12 @@ mod tests {
         assert_eq!(truth.pdus_by_type["StopFreeze"], 1);
         assert_eq!(truth.pdus_by_type["StartResume"], 2);
 
-        let gens: std::collections::BTreeSet<u16> =
-            sink.0.iter().filter(|(_, s, _)| s.site == 2 && !s.rogue).map(|(_, s, _)| s.generation).collect();
+        let gens: std::collections::BTreeSet<u16> = sink
+            .0
+            .iter()
+            .filter(|(_, s, _)| s.site == 2 && !s.rogue)
+            .map(|(_, s, _)| s.generation)
+            .collect();
         assert_eq!(gens.into_iter().collect::<Vec<_>>(), vec![0, 1]);
 
         // Teleport: the first report after 20 s is ~20 km from the last one before it.
@@ -669,8 +776,16 @@ mod tests {
         let cfg = Config {
             duration: 20.0,
             events: vec![
-                Event { kind: EventKind::Freeze, target: Target::Exercise, at: 5.0 },
-                Event { kind: EventKind::Resume, target: Target::Exercise, at: 15.0 },
+                Event {
+                    kind: EventKind::Freeze,
+                    target: Target::Exercise,
+                    at: 5.0,
+                },
+                Event {
+                    kind: EventKind::Resume,
+                    target: Target::Exercise,
+                    at: 15.0,
+                },
             ],
             ..Default::default()
         };
@@ -692,7 +807,13 @@ mod tests {
 
     #[test]
     fn bundling_packs_pdus_and_is_deterministic() {
-        let cfg = Config { duration: 10.0, bundle: true, fire_every: Some(3.0), entities_per_site: 200, ..Default::default() };
+        let cfg = Config {
+            duration: 10.0,
+            bundle: true,
+            fire_every: Some(3.0),
+            entities_per_site: 200,
+            ..Default::default()
+        };
         let mut a = Collect(Vec::new());
         let ta = run(&cfg, &mut a).unwrap();
         let mut b = Collect(Vec::new());

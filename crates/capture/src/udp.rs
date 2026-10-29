@@ -58,7 +58,13 @@ impl UdpSource {
         }
         socket.set_read_timeout(Some(cfg.read_timeout))?;
         let local = socket.local_addr()?;
-        Ok(UdpSource { socket, local, buf: vec![0u8; MAX_DATAGRAM], datagrams: 0, bytes: 0 })
+        Ok(UdpSource {
+            socket,
+            local,
+            buf: vec![0u8; MAX_DATAGRAM],
+            datagrams: 0,
+            bytes: 0,
+        })
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -90,7 +96,11 @@ mod tests {
 
     #[test]
     fn receives_from_loopback() {
-        let cfg = UdpConfig { bind: Ipv4Addr::LOCALHOST, port: 0, ..Default::default() };
+        let cfg = UdpConfig {
+            bind: Ipv4Addr::LOCALHOST,
+            port: 0,
+            ..Default::default()
+        };
         let mut src = UdpSource::open(&cfg).unwrap();
         let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
         sender.send_to(b"ping", src.local_addr()).unwrap();

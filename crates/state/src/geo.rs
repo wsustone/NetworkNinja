@@ -34,6 +34,30 @@ pub fn metres_per_degree(lat_deg: f64) -> (f64, f64) {
     (111_132.92 - 559.82 * (2.0 * lat).cos(), 111_412.84 * lat.cos())
 }
 
+/// ECEF metres to latitude/longitude in degrees and height in metres.
+///
+/// Uses Bowring's formula with one refinement step; sub-millimetre accurate
+/// near the Earth's surface.
+pub fn ecef_to_lla(p: &WorldCoord) -> (f64, f64, f64) {
+    let b = A * (1.0 - F);
+    let ep2 = (A * A - b * b) / (b * b);
+    let r = (p.x * p.x + p.y * p.y).sqrt();
+    if r < 1e-9 {
+        // On the polar axis.
+        let lat = if p.z >= 0.0 { 90.0 } else { -90.0 };
+        return (lat, 0.0, p.z.abs() - b);
+    }
+    let lon = p.y.atan2(p.x);
+    let mut theta = (p.z * A).atan2(r * b);
+    let mut lat = (p.z + ep2 * b * theta.sin().powi(3)).atan2(r - E2 * A * theta.cos().powi(3));
+    // One refinement pass using the new latitude.
+    theta = ((1.0 - F) * lat.tan()).atan();
+    lat = (p.z + ep2 * b * theta.sin().powi(3)).atan2(r - E2 * A * theta.cos().powi(3));
+    let n = A / (1.0 - E2 * lat.sin().powi(2)).sqrt();
+    let h = r / lat.cos() - n;
+    (lat.to_degrees(), lon.to_degrees(), h)
+}
+
 pub fn distance(a: &WorldCoord, b: &WorldCoord) -> f64 {
     ((a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)).sqrt()
 }
@@ -46,6 +70,23 @@ mod tests {
     fn equator_prime_meridian() {
         let p = lla_to_ecef(0.0, 0.0, 0.0);
         assert!((p.x - A).abs() < 1e-6 && p.y.abs() < 1e-6 && p.z.abs() < 1e-6);
+    }
+
+    #[test]
+    fn ecef_lla_roundtrip() {
+        for (lat, lon, h) in [
+            (36.6, -121.9, 10.0),
+            (-33.9, 151.2, 500.0),
+            (0.0, 0.0, 0.0),
+            (89.9, 10.0, 1000.0),
+            (51.5, -0.1, 11_000.0),
+        ] {
+            let (la, lo, hh) = ecef_to_lla(&lla_to_ecef(lat, lon, h));
+            assert!(
+                (la - lat).abs() < 1e-8 && (lo - lon).abs() < 1e-8 && (hh - h).abs() < 1e-3,
+                "{lat},{lon},{h} -> {la},{lo},{hh}"
+            );
+        }
     }
 
     #[test]
