@@ -38,6 +38,8 @@ pub struct Hub {
     seq: AtomicU64,
     /// `--log` file: every entry appended as one JSON line.
     log_file: Mutex<Option<std::fs::File>>,
+    /// `--db` SQLite store and the current run id (ADR 0005).
+    store: Mutex<Option<(crate::store::EventStore, i64)>>,
     /// Client commands (ack/mute) forwarded to the serve loop.
     cmd_tx: Mutex<Option<SyncSender<String>>>,
 }
@@ -57,6 +59,7 @@ impl Hub {
             log_buf: Mutex::new(VecDeque::new()),
             seq: AtomicU64::new(0),
             log_file: Mutex::new(None),
+            store: Mutex::new(None),
             cmd_tx: Mutex::new(None),
         }
     }
@@ -100,6 +103,20 @@ impl Hub {
                 q.pop_front();
             }
             q.push_back(entry.clone());
+        }
+        if let Some((store, run)) = self.store.lock().unwrap().as_ref() {
+            store.insert(
+                *run,
+                seq,
+                jnum(&entry, "at").unwrap_or(0.0),
+                kind,
+                jstr(&entry, "entity"),
+                jstr(&entry, "rule"),
+                jstr(&entry, "severity"),
+                jnum(&entry, "exercise").map(|e| e as u8),
+                jstr(&entry, "message"),
+                &entry,
+            );
         }
         if let Some(f) = self.log_file.lock().unwrap().as_mut() {
             use std::io::Write;
@@ -145,6 +162,26 @@ impl Hub {
         let f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
         *self.log_file.lock().unwrap() = Some(f);
         Ok(loaded)
+    }
+
+    /// Open the SQLite event store and register a new run in it.
+    /// Sequence numbering continues from the highest stored seq.
+    pub fn open_db(&self, path: &std::path::Path, packs: &str) -> Result<(), String> {
+        let store = crate::store::EventStore::open(path)?;
+        let run = store.start_run(crate::web::now_secs(), packs)?;
+        self.seq.fetch_max(store.max_seq(), Ordering::Relaxed);
+        *self.store.lock().unwrap() = Some((store, run));
+        Ok(())
+    }
+
+    /// Highest seq assigned so far.
+    pub fn latest_seq(&self) -> u64 {
+        self.seq.load(Ordering::Relaxed)
+    }
+
+    /// Query the SQLite store for /api/log. `None` when no store is open.
+    fn db_query(&self, q: &crate::store::EventQuery) -> Option<Vec<String>> {
+        self.store.lock().unwrap().as_ref().map(|(store, _)| store.query(q))
     }
 
     pub fn client_count(&self) -> usize {
@@ -279,7 +316,22 @@ fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
                     .split('&')
                     .find_map(|kv| kv.strip_prefix(name).and_then(|v| v.parse().ok()))
             };
-            let body = hub.log_tail(arg("after=").unwrap_or(0), arg("limit=").unwrap_or(500) as usize);
+            let arg_s = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name).map(String::from));
+            let body = match hub.db_query(&crate::store::EventQuery {
+                after: arg("after=").unwrap_or(0),
+                kind: arg_s("kind="),
+                rule: arg_s("rule="),
+                entity: arg_s("entity="),
+                text: arg_s("q="),
+                limit: arg("limit=").unwrap_or(500) as usize,
+            }) {
+                Some(entries) => format!(
+                    "{{\"entries\":[{}],\"latest\":{}}}",
+                    entries.join(","),
+                    hub.latest_seq()
+                ),
+                None => hub.log_tail(arg("after=").unwrap_or(0), arg("limit=").unwrap_or(500) as usize),
+            };
             let _ = respond(s, "200 OK", "application/json", &body);
         }
         ("GET", "/ws") if is_ws_upgrade(&req) => ws_serve(hub, s, &req),

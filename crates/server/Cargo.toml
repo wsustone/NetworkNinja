@@ -11,6 +11,7 @@ nn-decode = { path = "../decode" }
 nn-capture = { path = "../capture" }
 nn-state = { path = "../state" }
 nn-rules = { path = "../rules" }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 
 [dev-dependencies]
 nn-generator = { path = "../generator" }
