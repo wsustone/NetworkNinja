@@ -26,6 +26,7 @@ USAGE:
     nn-server listen [OPTIONS]        Receive live traffic (receive-only)
     nn-server replay FILE [OPTIONS]   Decode a pcap file
     nn-server serve [OPTIONS]         Receive traffic and serve the dashboard
+    nn-server passwd FILE --user U --pass P   Create or update a user account
 
 LISTEN / SERVE OPTIONS
     --port N              UDP port (default 3000)
@@ -43,6 +44,7 @@ LISTEN / SERVE OPTIONS
                           instead of live capture (serve only)
     --speed N             Replay speed multiplier (default 1)
     --runs DIR            Directory of .nnrec files listed at /api/runs
+    --users FILE          Require login for /api and /ws (see `passwd`)
                           and switchable from the dashboard (serve only)
 
 REPLAY OPTIONS
@@ -116,7 +118,7 @@ fn real_main() -> Result<(), String> {
     }
     let command = args.remove(0);
     let mut file = None;
-    if command == "replay" {
+    if command == "replay" || command == "passwd" {
         if args.is_empty() || args[0].starts_with("--") {
             return Err("replay needs a pcap FILE".into());
         }
@@ -138,6 +140,9 @@ fn real_main() -> Result<(), String> {
         quiet: false,
         every: 10.0,
     };
+    let mut users_file = None;
+    let mut passwd_user = None;
+    let mut passwd_pass = None;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -163,6 +168,9 @@ fn real_main() -> Result<(), String> {
             "--record" => record_file = Some(val()?),
             "--replay" => replay_file = Some(val()?),
             "--runs" => runs_dir = Some(val()?),
+            "--users" => users_file = Some(val()?),
+            "--user" => passwd_user = Some(val()?),
+            "--pass" => passwd_pass = Some(val()?),
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -181,9 +189,23 @@ fn real_main() -> Result<(), String> {
             replay_file.as_deref(),
             speed.unwrap_or(1.0),
             runs_dir.as_deref(),
+            users_file.as_deref(),
             &packs,
         ),
-        other => Err(format!("unknown command '{other}' (expected listen, replay or serve)")),
+        "passwd" => {
+            let (Some(f), Some(u), Some(p)) = (file.as_deref(), passwd_user.as_deref(), passwd_pass.as_deref()) else {
+                return Err("usage: nn-server passwd FILE --user NAME --pass PASS".into());
+            };
+            let path = std::path::Path::new(f);
+            let mut a = nn_server::auth::Auth::load(path).unwrap_or_else(|_| nn_server::auth::Auth::empty());
+            a.set_user(u, p);
+            a.save(path).map_err(|e| format!("{f}: {e}"))?;
+            println!("users: {f} ({} users)", a.len());
+            Ok(())
+        }
+        other => Err(format!(
+            "unknown command '{other}' (expected listen, replay, serve or passwd)"
+        )),
     }
 }
 
@@ -354,6 +376,7 @@ fn serve(
     replay_file: Option<&str>,
     speed: f64,
     runs_dir: Option<&str>,
+    users_file: Option<&str>,
     packs: &Merged,
 ) -> Result<(), String> {
     let mut src: Src = match replay_file {
@@ -403,8 +426,13 @@ fn serve(
             &format!("capture started {desc}; packs {}", packs.packs.join(" + ")),
         ),
     );
-    let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<String>(64);
+    let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<(String, String)>(64);
     hub.set_command_sink(cmd_tx);
+    if let Some(f) = users_file {
+        let a = nn_server::auth::Auth::load(std::path::Path::new(f)).map_err(|e| format!("--users {f}: {e}"))?;
+        eprintln!("  users: {f} ({} accounts)", a.len());
+        hub.set_auth(std::sync::Arc::new(a));
+    }
     let mut m = Monitor::with_packs(packs);
     let mut recent: VecDeque<String> = VecDeque::new();
     let mut prev_ents = std::collections::BTreeMap::new();
@@ -422,8 +450,8 @@ fn serve(
             break;
         }
         for _ in 0..32 {
-            let Ok(c) = cmd_rx.try_recv() else { break };
-            match nn_server::web::apply_command(&mut m, &c) {
+            let Ok((user, c)) = cmd_rx.try_recv() else { break };
+            match nn_server::web::apply_command_by(&mut m, &c, &user) {
                 Ok(out) => {
                     for e in &out.events {
                         let j = hub.log("alert", &alert_json(e));

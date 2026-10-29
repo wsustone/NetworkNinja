@@ -68,6 +68,12 @@
   #tlrow { display:none; gap:.6em; align-items:center; padding:.35em 1em; background:var(--panel); border-bottom:1px solid var(--line); font-size:11px; color:var(--dim); }
   #tlrow.on { display:flex; }
   #seek { flex:1; accent-color:var(--ok); }
+  #login { position:fixed; inset:0; background:rgba(0,0,0,.72); display:none; align-items:center; justify-content:center; z-index:9; }
+  #login.on { display:flex; }
+  #login>div { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:2em; display:flex; flex-direction:column; gap:.8em; min-width:240px; }
+  #login input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.6em .8em; font:inherit; }
+  #login button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.6em; font:inherit; font-weight:700; cursor:pointer; }
+  #lerr { color:var(--crit); font-size:12px; min-height:1em; }
   select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:3px; font:inherit; font-size:11px; padding:.15em .3em; }
   #filter, #efilter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
   #filter::placeholder, #efilter::placeholder { color:var(--dim); }
@@ -118,6 +124,13 @@
 </main>
 <script src="/vendor/maplibre-gl.js"></script>
 
+<div id="login"><div>
+  <b>NetworkNinja</b>
+  <input id="luser" placeholder="user" autocomplete="username">
+  <input id="lpass" type="password" placeholder="password" autocomplete="current-password">
+  <span id="lerr"></span>
+  <button id="lgo">sign in</button>
+</div></div>
 <script>
 "use strict";
 let state = null, sortKey = "id", sortAsc = true, selected = null, seeded = false;
@@ -351,24 +364,38 @@ function take(s) {
   } else if (s.type === "delta" && state) {
     for (const e of s.ents || []) byId[e.id] = e;
     for (const id of s.gone || []) delete byId[id];
-    Object.assign(state, {at:s.at, uptime:s.uptime, clients:s.clients, totals:s.totals, rates:s.rates, exercises:s.exercises, alerts:s.alerts});
+    Object.assign(state, {at:s.at, uptime:s.uptime, clients:s.clients, totals:s.totals, rates:s.rates, exercises:s.exercises, alerts:s.alerts, replay:s.replay});
     state.entities = Object.values(byId);
     render(); updateMap();
   } else if (s.kind) pushEntry(s);
 }
 
+const tok = () => sessionStorage.nn_tok || "";
+const api = u => u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(tok());
+function showLogin() { $("login").classList.add("on"); }
+$("lgo").onclick = () => {
+  const u = $("luser").value, p = $("lpass").value;
+  fetch(`/api/login?user=${encodeURIComponent(u)}&pass=${encodeURIComponent(p)}`, {method:"POST"})
+    .then(r => r.status === 200 ? r.json() : Promise.reject(r.status))
+    .then(j => { sessionStorage.nn_tok = j.token; location.reload(); })
+    .catch(() => $("lerr").textContent = "bad credentials");
+};
+
 let ws;
 function connect() {
-  try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"); }
+  try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?token=" + encodeURIComponent(tok())); }
   catch(e) { return poll(); }
   ws.onopen = () => { $("conn").className = "ws"; $("conn").textContent = "live"; };
   ws.onmessage = ev => { try { take(JSON.parse(ev.data)); } catch(e) {} };
-  ws.onclose = () => { $("conn").className = "down"; $("conn").textContent = "reconnecting…"; setTimeout(connect, 2000); };
+  ws.onclose = () => {
+    if ($("login").classList.contains("on")) return;
+    $("conn").className = "down"; $("conn").textContent = "reconnecting…"; setTimeout(connect, 2000);
+  };
   ws.onerror = () => ws.close();
 }
 function poll() {
   $("conn").className = "poll"; $("conn").textContent = "polling";
-  setInterval(() => fetch("/api/state").then(r => r.json()).then(take).catch(() => {}), 2000);
+  setInterval(() => fetch(api("/api/state")).then(r => r.status === 401 ? showLogin() : r.json().then(take)).catch(() => {}), 2000);
 }
 document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   const k = th.dataset.k;
@@ -397,7 +424,7 @@ $("runsel").onchange = ev => cmd(ev.target.value ? {cmd:"replay", file:ev.target
 $("pspeed").onchange = ev => cmd({cmd:"speed", x:+ev.target.value});
 $("seek").onchange = ev => cmd({cmd:"seek", to:+ev.target.value});
 function loadRuns() {
-  fetch("/api/runs").then(r => r.json()).then(d => {
+  fetch(api("/api/runs")).then(r => r.json()).then(d => {
     const sel = $("runsel"), cur = sel.value;
     sel.innerHTML = '<option value="">live</option>' +
       (d.runs || []).map(r => `<option value="${esc(r.name)}" ${r.name === cur ? "selected" : ""}>${esc(r.name)}</option>`).join("");
@@ -405,6 +432,9 @@ function loadRuns() {
 }
 loadRuns();
 initMap();
-fetch("/api/log?limit=500").then(r => r.json()).then(d => (d.entries || []).forEach(e => pushEntry(e, true))).catch(() => {});
-connect();
+fetch(api("/api/log?limit=500")).then(r => {
+  if (r.status === 401) { showLogin(); return; }
+  r.json().then(d => (d.entries || []).forEach(e => pushEntry(e, true)));
+  connect();
+}).catch(() => connect());
 </script>

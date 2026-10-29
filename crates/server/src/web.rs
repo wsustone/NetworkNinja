@@ -11,6 +11,8 @@ use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+
+use crate::auth::Auth;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -46,7 +48,8 @@ pub struct Hub {
     /// `--runs` directory scanned for `.nnrec` recordings at /api/runs.
     runs_dir: Mutex<Option<std::path::PathBuf>>,
     /// Client commands (ack/mute) forwarded to the serve loop.
-    cmd_tx: Mutex<Option<SyncSender<String>>>,
+    cmd_tx: Mutex<Option<SyncSender<(String, String)>>>,
+    auth: Mutex<Option<Arc<Auth>>>,
 }
 
 impl Default for Hub {
@@ -67,6 +70,7 @@ impl Hub {
             store: Mutex::new(None),
             runs_dir: Mutex::new(None),
             cmd_tx: Mutex::new(None),
+            auth: Mutex::new(None),
         }
     }
 
@@ -206,13 +210,21 @@ impl Hub {
     }
 
     /// The serve loop's command inbox: every client text frame lands here.
-    pub fn set_command_sink(&self, tx: SyncSender<String>) {
+    pub fn set_command_sink(&self, tx: SyncSender<(String, String)>) {
         *self.cmd_tx.lock().unwrap() = Some(tx);
     }
 
-    fn send_command(&self, text: String) {
+    pub fn set_auth(&self, a: Arc<Auth>) {
+        *self.auth.lock().unwrap() = Some(a);
+    }
+
+    fn auth(&self) -> Option<Arc<Auth>> {
+        self.auth.lock().unwrap().clone()
+    }
+
+    fn send_command(&self, user: String, text: String) {
         if let Some(tx) = self.cmd_tx.lock().unwrap().as_ref() {
-            let _ = tx.try_send(text);
+            let _ = tx.try_send((user, text));
         }
     }
 
@@ -345,7 +357,40 @@ fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
     };
     let path = req.path.split(['?', '#']).next().unwrap_or("/");
     let query = req.path.split('?').nth(1).unwrap_or_default();
+    let qparam = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name).map(String::from));
+    // Bearer-token gate: /api/* and /ws require a session when --users is set.
+    let auth = hub.auth();
+    let user = auth.as_ref().and_then(|a| qparam("token=").and_then(|t| a.check(&t)));
+    if auth.is_some() && user.is_none() && ((path.starts_with("/api/") && path != "/api/login") || path == "/ws") {
+        let _ = respond(s, "401 Unauthorized", "application/json", "{\"need\":\"auth\"}");
+        return;
+    }
     match (req.method.as_str(), path) {
+        ("POST", "/api/login") => {
+            let ok = match (auth.as_ref(), qparam("user="), qparam("pass=")) {
+                (Some(a), Some(u), Some(p)) if a.verify(&u, &p) => Some((a.issue(&u), u)),
+                _ => None,
+            };
+            match ok {
+                Some((tok, u)) => {
+                    hub.log("info", &info_json(now_secs(), &format!("{u} logged in")));
+                    let _ = respond(
+                        s,
+                        "200 OK",
+                        "application/json",
+                        &format!("{{\"token\":\"{tok}\",\"user\":\"{u}\"}}"),
+                    );
+                }
+                None => {
+                    let _ = respond(
+                        s,
+                        "401 Unauthorized",
+                        "application/json",
+                        "{\"error\":\"bad credentials\"}",
+                    );
+                }
+            }
+        }
         ("GET", "/" | "/index.html") => {
             let _ = respond(s, "200 OK", "text/html; charset=utf-8", INDEX_HTML);
         }
@@ -399,7 +444,7 @@ fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
             };
             let _ = respond(s, "200 OK", "application/json", &body);
         }
-        ("GET", "/ws") if is_ws_upgrade(&req) => ws_serve(hub, s, &req),
+        ("GET", "/ws") if is_ws_upgrade(&req) => ws_serve(hub, s, &req, user.unwrap_or_else(|| "operator".into())),
         ("GET", _) => {
             let _ = respond(s, "404 Not Found", "text/plain", "not found\n");
         }
@@ -419,7 +464,7 @@ fn is_ws_upgrade(req: &Request) -> bool {
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request) {
+fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request, user: String) {
     let key = req.header("sec-websocket-key").unwrap_or_default();
     let response = format!(
         "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {}\r\n\r\n",
@@ -455,7 +500,9 @@ fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request) {
         match read_frame(&mut s) {
             Ok(Some(f)) if f.opcode == 0x9 => hub.broadcast_to(id, frame(0xA, &f.payload)),
             Ok(Some(f)) if f.opcode == 0x8 => break,
-            Ok(Some(f)) if f.opcode == 0x1 => hub.send_command(String::from_utf8_lossy(&f.payload).to_string()),
+            Ok(Some(f)) if f.opcode == 0x1 => {
+                hub.send_command(user.clone(), String::from_utf8_lossy(&f.payload).to_string())
+            }
             Ok(Some(_)) => {}
             Ok(None) | Err(_) => break,
         }
@@ -537,7 +584,7 @@ impl Hub {
     }
 }
 
-fn sha1(data: &[u8]) -> [u8; 20] {
+pub(crate) fn sha1(data: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
     let bitlen = data.len() as u64 * 8;
     let mut msg = data.to_vec();
@@ -722,6 +769,10 @@ fn note(msg: String) -> CmdOut {
 
 /// One client command (ack, mute, unmute, replay, live, speed).
 pub fn apply_command(m: &mut Monitor, text: &str) -> Result<CmdOut, String> {
+    apply_command_by(m, text, "operator")
+}
+
+pub fn apply_command_by(m: &mut Monitor, text: &str, by: &str) -> Result<CmdOut, String> {
     let now = m.now;
     let cmd = jstr(text, "cmd").ok_or("missing \"cmd\"")?;
     let entity = |t: &str| -> Result<EntityKey, String> {
@@ -735,7 +786,7 @@ pub fn apply_command(m: &mut Monitor, text: &str) -> Result<CmdOut, String> {
             let rule = jstr(text, "rule").ok_or("missing \"rule\"")?;
             let key = entity(text)?;
             let ack_note = jstr(text, "note").unwrap_or("");
-            if m.engine.ack(rule, key, "operator", ack_note, now) {
+            if m.engine.ack(rule, key, by, ack_note, now) {
                 Ok(note(format!("acknowledged {rule} on {}", key.id)))
             } else {
                 Err(format!("no active {rule} alert on {}", key.id))

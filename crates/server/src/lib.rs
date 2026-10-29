@@ -4,6 +4,7 @@
 //! Later milestones replace the console output with entity state, rules and
 //! the dashboard; [`Tally`] stays as the cross-check against generator truth.
 
+pub mod auth;
 pub mod store;
 pub mod web;
 
