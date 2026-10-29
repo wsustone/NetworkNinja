@@ -15,6 +15,7 @@ rusqlite = { version = "0.41.1", features = ["bundled"] }
 nn-recorder = { version = "0.1.0", path = "../recorder" }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12", "logging"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
+aws-lc-rs = "1"
 
 [dev-dependencies]
 nn-generator = { path = "../generator" }

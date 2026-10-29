@@ -73,6 +73,7 @@
   #login>div { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:2em; display:flex; flex-direction:column; gap:.8em; min-width:240px; }
   #login input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.6em .8em; font:inherit; }
   #login button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.6em; font:inherit; font-weight:700; cursor:pointer; }
+  #logout { background:none; color:var(--dim); border:1px solid var(--line); border-radius:4px; padding:.1em .5em; font:inherit; font-size:11px; cursor:pointer; }
   #lerr { color:var(--crit); font-size:12px; min-height:1em; }
   select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:3px; font:inherit; font-size:11px; padding:.15em .3em; }
   #filter, #efilter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
@@ -95,6 +96,7 @@
   <span class="stat">run <select id="runsel"><option value="">live</option></select></span>
   <span class="stat">speed <select id="pspeed"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></span>
   <span class="stat" style="margin-left:auto" id="hPacks"></span>
+  <span class="stat" id="hUser" hidden><b id="hWho"></b> <button id="logout">sign out</button></span>
 </header>
 <div id="tlrow"><b>replay</b><span id="seekt">0:00</span><input type="range" id="seek" min="0" max="0" step="0.1"><span id="seekd">0:00</span></div>
 
@@ -371,14 +373,23 @@ function take(s) {
 }
 
 const tok = () => sessionStorage.nn_tok || "";
-const api = u => u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(tok());
+// Session token goes in a header, never in a URL (the WebSocket is the exception).
+const auth = (opts = {}) => Object.assign({}, opts, {headers: Object.assign({authorization: "Bearer " + tok()}, opts.headers || {})});
 function showLogin() { $("login").classList.add("on"); }
-$("lgo").onclick = () => {
+function signIn() {
   const u = $("luser").value, p = $("lpass").value;
-  fetch(`/api/login?user=${encodeURIComponent(u)}&pass=${encodeURIComponent(p)}`, {method:"POST"})
+  fetch("/api/login", {method:"POST", headers:{"content-type":"application/x-www-form-urlencoded"},
+        body: "user=" + encodeURIComponent(u) + "&pass=" + encodeURIComponent(p)})
     .then(r => r.status === 200 ? r.json() : Promise.reject(r.status))
-    .then(j => { sessionStorage.nn_tok = j.token; location.reload(); })
+    .then(j => { sessionStorage.nn_tok = j.token; sessionStorage.nn_user = j.user; location.reload(); })
     .catch(() => $("lerr").textContent = "bad credentials");
+}
+$("lgo").onclick = signIn;
+$("lpass").onkeydown = e => { if (e.key === "Enter") signIn(); };
+if (tok()) { $("hUser").hidden = false; $("hWho").textContent = sessionStorage.nn_user || ""; }
+$("logout").onclick = () => {
+  fetch("/api/logout", auth({method:"POST"})).catch(() => {})
+    .finally(() => { delete sessionStorage.nn_tok; delete sessionStorage.nn_user; location.reload(); });
 };
 
 let ws;
@@ -389,13 +400,16 @@ function connect() {
   ws.onmessage = ev => { try { take(JSON.parse(ev.data)); } catch(e) {} };
   ws.onclose = () => {
     if ($("login").classList.contains("on")) return;
-    $("conn").className = "down"; $("conn").textContent = "reconnecting…"; setTimeout(connect, 2000);
+    $("conn").className = "down"; $("conn").textContent = "reconnecting…";
+    // An expired session closes the socket too: ask before reconnecting.
+    fetch("/api/state", auth()).then(r => r.status === 401 ? showLogin() : setTimeout(connect, 2000))
+      .catch(() => setTimeout(connect, 2000));
   };
   ws.onerror = () => ws.close();
 }
 function poll() {
   $("conn").className = "poll"; $("conn").textContent = "polling";
-  setInterval(() => fetch(api("/api/state")).then(r => r.status === 401 ? showLogin() : r.json().then(take)).catch(() => {}), 2000);
+  setInterval(() => fetch("/api/state", auth()).then(r => r.status === 401 ? showLogin() : r.json().then(take)).catch(() => {}), 2000);
 }
 document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   const k = th.dataset.k;
@@ -424,7 +438,7 @@ $("runsel").onchange = ev => cmd(ev.target.value ? {cmd:"replay", file:ev.target
 $("pspeed").onchange = ev => cmd({cmd:"speed", x:+ev.target.value});
 $("seek").onchange = ev => cmd({cmd:"seek", to:+ev.target.value});
 function loadRuns() {
-  fetch(api("/api/runs")).then(r => r.json()).then(d => {
+  fetch("/api/runs", auth()).then(r => r.json()).then(d => {
     const sel = $("runsel"), cur = sel.value;
     sel.innerHTML = '<option value="">live</option>' +
       (d.runs || []).map(r => `<option value="${esc(r.name)}" ${r.name === cur ? "selected" : ""}>${esc(r.name)}</option>`).join("");
@@ -432,7 +446,7 @@ function loadRuns() {
 }
 loadRuns();
 initMap();
-fetch(api("/api/log?limit=500")).then(r => {
+fetch("/api/log?limit=500", auth()).then(r => {
   if (r.status === 401) { showLogin(); return; }
   r.json().then(d => (d.entries || []).forEach(e => pushEntry(e, true)));
   connect();
