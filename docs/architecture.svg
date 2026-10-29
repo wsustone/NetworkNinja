@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 552" width="760" height="552" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" role="img" aria-label="One receive-only binary turns DIS traffic into live alerts">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#9a9a8f"/>
+    </marker>
+  </defs>
+  <rect width="760" height="552" fill="#ffffff"/>
+  <text x="24" y="34" font-size="15" font-weight="600" fill="#1f1f1f">One receive-only binary turns DIS traffic into live alerts</text>
+
+  <!-- binary container -->
+  <rect x="24" y="152" width="712" height="288" rx="8" fill="#f2f1ec" stroke="#9a9a8f" stroke-width="1.25"/>
+  <text x="720" y="174" text-anchor="end" font-weight="600" fill="#1f1f1f">One Rust binary, receive-only, on the exercise LAN</text>
+
+  <!-- connectors -->
+  <g fill="none" stroke="#9a9a8f" stroke-width="1.25" marker-end="url(#arrow)">
+    <path d="M110 116V192"/>
+    <path d="M380 116V136H170V192"/>
+    <path d="M240 220H280"/>
+    <path d="M480 220H520"/>
+    <path d="M620 248V280"/>
+    <path d="M540 248V264H380V280"/>
+    <path d="M320 248V264H140V280"/>
+    <path d="M520 308H480"/>
+    <path d="M620 368V336"/>
+    <path d="M380 336V472"/>
+  </g>
+
+  <!-- boxes -->
+  <g fill="#ffffff" stroke="#9a9a8f" stroke-width="1.25">
+    <rect x="40" y="60" width="200" height="56" rx="8"/>
+    <rect x="280" y="60" width="200" height="56" rx="8"/>
+    <rect x="40" y="192" width="200" height="56" rx="8"/>
+    <rect x="280" y="192" width="200" height="56" rx="8"/>
+    <rect x="520" y="192" width="200" height="56" rx="8"/>
+    <rect x="40" y="280" width="200" height="56" rx="8"/>
+    <rect x="280" y="280" width="200" height="56" rx="8"/>
+    <rect x="520" y="368" width="200" height="56" rx="8"/>
+    <rect x="280" y="472" width="200" height="56" rx="8"/>
+  </g>
+  <rect x="520" y="280" width="200" height="56" rx="8" fill="#e3ecfa" stroke="#2f6fd6" stroke-width="2"/>
+
+  <!-- labels -->
+  <g text-anchor="middle">
+    <text x="140" y="84" font-weight="600" fill="#1f1f1f">Exercise LAN</text>
+    <text x="140" y="102" font-size="11.5" fill="#5f5f5a">live DIS over UDP</text>
+    <text x="380" y="84" font-weight="600" fill="#1f1f1f">Replay</text>
+    <text x="380" y="102" font-size="11.5" fill="#5f5f5a">recordings, pcap, generator</text>
+    <text x="140" y="216" font-weight="600" fill="#1f1f1f">Capture</text>
+    <text x="140" y="234" font-size="11.5" fill="#5f5f5a">socket or libpcap, filters</text>
+    <text x="380" y="216" font-weight="600" fill="#1f1f1f">Decode</text>
+    <text x="380" y="234" font-size="11.5" fill="#5f5f5a">dis-rs, all PDU types</text>
+    <text x="620" y="216" font-weight="600" fill="#1f1f1f">State and metrics</text>
+    <text x="620" y="234" font-size="11.5" fill="#5f5f5a">entities, rates, jitter</text>
+    <text x="140" y="304" font-weight="600" fill="#1f1f1f">Recorder</text>
+    <text x="140" y="322" font-size="11.5" fill="#5f5f5a">native format, pcap export</text>
+    <text x="380" y="304" font-weight="600" fill="#1f1f1f">WebSocket server</text>
+    <text x="380" y="322" font-size="11.5" fill="#5f5f5a">deltas ~1 s, alerts at once</text>
+    <text x="620" y="304" font-weight="600" fill="#1f1f1f">Rules engine</text>
+    <text x="620" y="322" font-size="11.5" fill="#1f1f1f">timeout, ID conflict, jump</text>
+    <text x="620" y="392" font-weight="600" fill="#1f1f1f">Rule packs + license</text>
+    <text x="620" y="410" font-size="11.5" fill="#5f5f5a">signed, checked offline</text>
+    <text x="380" y="496" font-weight="600" fill="#1f1f1f">Dashboard (browser)</text>
+    <text x="380" y="514" font-size="11.5" fill="#5f5f5a">table, chart, alerts, map</text>
+  </g>
+  <text x="392" y="460" font-size="11.5" fill="#5f5f5a">management interface, TLS</text>
+</svg>

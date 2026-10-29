@@ -1,0 +1,9 @@
+[package]
+name = "nn-rules"
+description = "Rule-pack loader and alert engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

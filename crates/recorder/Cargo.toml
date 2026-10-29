@@ -1,0 +1,9 @@
+[package]
+name = "nn-recorder"
+description = "Native recording format, pcap import/export and replay."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

@@ -1,0 +1,9 @@
+[package]
+name = "nn-decode"
+description = "DIS v6/v7 decoding and PDU splitting, built on dis-rs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

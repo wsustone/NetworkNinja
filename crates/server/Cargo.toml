@@ -1,0 +1,9 @@
+[package]
+name = "nn-server"
+description = "NetworkNinja single binary: capture pipeline, WebSocket API and embedded dashboard."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
