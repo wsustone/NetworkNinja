@@ -7,8 +7,10 @@
 use nn_capture::{Datagram, PcapReader, UdpConfig, UdpSource};
 use nn_decode::{Pdu, PduBody};
 use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
+use nn_server::web::{alert_json, now_secs, state_json, Hub};
 use nn_server::{describe, Tally};
 use nn_state::secs;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::Ipv4Addr;
@@ -21,13 +23,15 @@ nn-server: decode DIS traffic and raise alerts on the console (NetworkNinja)
 USAGE:
     nn-server listen [OPTIONS]        Receive live traffic (receive-only)
     nn-server replay FILE [OPTIONS]   Decode a pcap file
+    nn-server serve [OPTIONS]         Receive traffic and serve the dashboard
 
-LISTEN OPTIONS
+LISTEN / SERVE OPTIONS
     --port N              UDP port (default 3000)
     --bind IP             Local address (default 0.0.0.0, needed for broadcast/multicast)
     --multicast GROUP     Join an IPv4 multicast group (repeatable)
     --iface IP            Interface address for multicast joins (default: OS choice)
     --duration SECS       Stop after this long (default: run until killed)
+    --http ADDR           Dashboard bind (serve only; default 127.0.0.1:8080)
 
 REPLAY OPTIONS
     --speed X             Replay at X times real time (default: as fast as possible)
@@ -110,6 +114,7 @@ fn real_main() -> Result<(), String> {
     let mut udp = UdpConfig::default();
     let mut duration = None;
     let mut speed = None;
+    let mut http: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let mut pack_files: Vec<String> = Vec::new();
     let mut common = Common {
         filter: Filter::default(),
@@ -135,6 +140,7 @@ fn real_main() -> Result<(), String> {
             "--quiet" | "--alerts-only" => common.quiet = true,
             "--every" => common.every = val()?.parse().map_err(|e| bad(&e))?,
             "--rulepack" => pack_files.push(val()?),
+            "--http" => http = val()?.parse().map_err(|e| bad(&e))?,
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -143,7 +149,8 @@ fn real_main() -> Result<(), String> {
     match command.as_str() {
         "listen" => listen(&udp, duration, &common, &packs),
         "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
-        other => Err(format!("unknown command '{other}' (expected listen or replay)")),
+        "serve" => serve(&udp, http, duration, &packs),
+        other => Err(format!("unknown command '{other}' (expected listen, replay or serve)")),
     }
 }
 
@@ -291,6 +298,53 @@ fn replay(path: &str, speed: Option<f64>, common: &Common, packs: &Merged) -> Re
     eprintln!(
         "  pcap: {} records, {} UDP, {} non-UDP, {} fragments, {} truncated",
         st.records, st.udp_datagrams, st.not_ipv4_udp, st.fragments, st.truncated
+    );
+    Ok(())
+}
+
+/// Live capture plus the embedded dashboard: entity state once a second and
+/// alerts the moment they fire, over WebSocket.
+fn serve(cfg: &UdpConfig, http: std::net::SocketAddr, duration: Option<f64>, packs: &Merged) -> Result<(), String> {
+    let mut src = UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?;
+    let (addr, hub) = Hub::listen(http).map_err(|e| format!("cannot bind dashboard on {http}: {e}"))?;
+    eprintln!("nn-server: listening on {} (receive-only)", src.local_addr());
+    eprintln!("  dashboard: http://{addr}");
+    eprintln!("  rule packs: {}", packs.packs.join(" + "));
+    for g in &cfg.multicast_groups {
+        eprintln!("  joined multicast {g} on {}", cfg.multicast_interface);
+    }
+    let mut m = Monitor::with_packs(packs);
+    let mut recent: VecDeque<String> = VecDeque::new();
+    let start = Instant::now();
+    let mut next_state = 0.0;
+    loop {
+        let t = start.elapsed().as_secs_f64();
+        if duration.is_some_and(|d| t >= d) {
+            break;
+        }
+        let events = match src.recv().map_err(|e| format!("receive failed: {e}"))? {
+            Some(d) => m.ingest(&d).1,
+            None => m.tick(now_secs()),
+        };
+        for e in &events {
+            let j = alert_json(e);
+            if recent.len() >= 100 {
+                recent.pop_front();
+            }
+            recent.push_back(j.clone());
+            hub.broadcast(&j);
+        }
+        if t >= next_state {
+            let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent);
+            hub.set_snapshot(snap.clone());
+            hub.broadcast(&snap);
+            next_state = t + 1.0;
+        }
+    }
+    eprintln!(
+        "=== final: {} entities, {} dashboard clients",
+        m.table.entities.len(),
+        hub.client_count()
     );
     Ok(())
 }
