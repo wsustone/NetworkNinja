@@ -341,6 +341,8 @@ fn serve(
             ),
         ),
     );
+    let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<String>(64);
+    hub.set_command_sink(cmd_tx);
     let mut m = Monitor::with_packs(packs);
     let mut recent: VecDeque<String> = VecDeque::new();
     let start = Instant::now();
@@ -349,6 +351,24 @@ fn serve(
         let t = start.elapsed().as_secs_f64();
         if duration.is_some_and(|d| t >= d) {
             break;
+        }
+        for _ in 0..32 {
+            let Ok(c) = cmd_rx.try_recv() else { break };
+            match nn_server::web::apply_command(&mut m, &c) {
+                Ok((events, msg)) => {
+                    for e in &events {
+                        let j = hub.log("alert", &alert_json(e));
+                        if recent.len() >= 100 {
+                            recent.pop_front();
+                        }
+                        recent.push_back(j);
+                    }
+                    hub.log("info", &info_json(now_secs(), &msg));
+                }
+                Err(e) => {
+                    hub.log("info", &info_json(now_secs(), &format!("command rejected: {e}")));
+                }
+            }
         }
         let errs_before = m.decode_errors;
         let events = match src.recv().map_err(|e| format!("receive failed: {e}"))? {

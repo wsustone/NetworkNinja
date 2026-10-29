@@ -2,7 +2,7 @@
 //! end-to-end connect over a real socket.
 
 use nn_rules::{Alert, AlertEvent, AlertState, Monitor, Rule, RuleConfig, Severity};
-use nn_server::web::{alert_json, state_json, Hub};
+use nn_server::web::{alert_json, apply_command, state_json, Hub};
 use nn_state::{secs, EntityKey};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -171,4 +171,48 @@ fn event_log_over_http_and_on_disk() {
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("\"seq\":41") && text.contains("\"seq\":42"), "{text}");
     std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn client_commands_ack_and_mute() {
+    let mut m = Monitor::new(RuleConfig::default());
+    let key = EntityKey {
+        exercise: 1,
+        id: nn_decode::EntityId::new(1, 1, 2),
+    };
+
+    assert!(apply_command(&mut m, "{\"cmd\":\"bogus\"}").is_err());
+    assert!(apply_command(&mut m, "not json").is_err());
+    // Ack with no active alert is rejected.
+    assert!(apply_command(
+        &mut m,
+        "{\"cmd\":\"ack\",\"rule\":\"entity-timeout\",\"entity\":\"1:1:2\",\"exercise\":1}"
+    )
+    .is_err());
+
+    // Mute by entity, then by rule, then unmute.
+    let (events, msg) = apply_command(
+        &mut m,
+        "{\"cmd\":\"mute\",\"entity\":\"1:1:2\",\"exercise\":1,\"secs\":60}",
+    )
+    .unwrap();
+    assert!(events.is_empty() && msg.contains("muted 1:1:2"), "{msg}");
+    assert!(m.engine.muted("entity-timeout", &key, m.now));
+    assert!(m.engine.muted("header.pdu_type", &key, m.now));
+
+    apply_command(
+        &mut m,
+        "{\"cmd\":\"mute_rule\",\"rule\":\"position-jump\",\"secs\":120}",
+    )
+    .unwrap();
+    let other = EntityKey {
+        exercise: 1,
+        id: nn_decode::EntityId::new(9, 9, 9),
+    };
+    assert!(m.engine.muted("position-jump", &other, m.now));
+
+    apply_command(&mut m, "{\"cmd\":\"unmute\",\"entity\":\"1:1:2\",\"exercise\":1}").unwrap();
+    apply_command(&mut m, "{\"cmd\":\"unmute_rule\",\"rule\":\"position-jump\"}").unwrap();
+    assert!(!m.engine.muted("entity-timeout", &key, m.now));
+    assert!(!m.engine.muted("position-jump", &other, m.now));
 }

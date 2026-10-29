@@ -35,6 +35,9 @@
   #alerts li.info { border-left:3px solid var(--line); color:var(--dim); }
   #alerts .t { color:var(--dim); font-size:11px; }
   #alerts .r { color:var(--dim); font-size:11px; float:right; }
+  .albtn { font-size:10px; padding:.1em .5em; margin-left:.5em; background:#21262d; color:var(--dim); border:1px solid var(--line); border-radius:3px; cursor:pointer; }
+  .albtn:hover { color:var(--fg); border-color:var(--dim); }
+  .acked { color:var(--ok); font-size:11px; }
   #filter, #efilter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
   #filter::placeholder, #efilter::placeholder { color:var(--dim); }
   .tablewrap { max-height:70vh; overflow:auto; }
@@ -96,12 +99,22 @@ function pushEntry(e, silent) {
   }
 }
 
+function cmd(o) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
+}
+
 function entryHtml(e) {
   const t = new Date((e.at||0)*1000).toLocaleTimeString();
   if (e.kind === "alert") {
     const cls = e.state === "resolved" ? "res" : (e.severity === "critical" ? "crit" : "warn");
+    const acked = e.state === "firing" && state && state.alerts.some(a => a.rule === e.rule && a.entity === e.entity && a.ack);
+    const btns = e.state === "firing" && !acked
+      ? `<button class="albtn" data-cmd="ack" data-rule="${esc(e.rule)}" data-ent="${esc(e.entity)}" data-ex="${e.exercise}">ack</button>`
+        + `<button class="albtn" data-cmd="mute" data-ent="${esc(e.entity)}" data-ex="${e.exercise}" data-secs="300">mute 5m</button>`
+      : "";
+    const badge = acked ? ' <span class="acked">· acked</span>' : "";
     return {cls, ent: e.entity,
-      html: `<span class="r">${esc(e.pack)}/${esc(e.rule)}</span><span class="t">${t} · ${e.state}</span><br><b>${esc(e.entity)}</b> ${esc(e.message)}`};
+      html: `<span class="r">${esc(e.pack)}/${esc(e.rule)}</span><span class="t">${t} · ${e.state}${badge}</span><br><b>${esc(e.entity)}</b> ${esc(e.message)}${btns}`};
   }
   if (e.kind === "error") {
     return {cls: "err", ent: null,
@@ -197,6 +210,18 @@ document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   render();
 });
 $("alerts").onclick = ev => {
+  const btn = ev.target.closest("button[data-cmd]");
+  if (btn) {
+    ev.stopPropagation();
+    const o = {cmd: btn.dataset.cmd};
+    if (btn.dataset.rule) o.rule = btn.dataset.rule;
+    if (btn.dataset.ent) o.entity = btn.dataset.ent;
+    if (btn.dataset.ex) o.exercise = +btn.dataset.ex;
+    if (btn.dataset.secs) o.secs = +btn.dataset.secs;
+    if (o.cmd === "ack") o.note = prompt("Note (optional):", "") || "";
+    cmd(o);
+    return;
+  }
   const li = ev.target.closest("li[data-ent]");
   if (li) selectEntity(li.dataset.ent);
 };
