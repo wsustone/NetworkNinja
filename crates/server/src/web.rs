@@ -19,6 +19,9 @@ const INDEX_HTML: &str = include_str!("../../../web/index.html");
 const MAPLIBRE_JS: &str = include_str!("../../../web/vendor/maplibre-gl.js");
 const MAPLIBRE_CSS: &str = include_str!("../../../web/vendor/maplibre-gl.css");
 const WORLD_GEOJSON: &str = include_str!("../../../web/world.geojson");
+const NE_COASTLINE: &str = include_str!("../../../web/ne-coastline.json");
+const NE_RIVERS: &str = include_str!("../../../web/ne-rivers_lake_centerlines.json");
+const NE_LAKES: &str = include_str!("../../../web/ne-lakes.json");
 /// Queued frames per client before it is dropped as too slow.
 const CLIENT_QUEUE: usize = 128;
 /// Log entries kept in memory for `/api/log` and new clients.
@@ -305,6 +308,15 @@ fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
         }
         ("GET", "/world.geojson") => {
             let _ = respond(s, "200 OK", "application/geo+json", WORLD_GEOJSON);
+        }
+        ("GET", "/ne/coastline") => {
+            let _ = respond(s, "200 OK", "application/geo+json", NE_COASTLINE);
+        }
+        ("GET", "/ne/rivers") => {
+            let _ = respond(s, "200 OK", "application/geo+json", NE_RIVERS);
+        }
+        ("GET", "/ne/lakes") => {
+            let _ = respond(s, "200 OK", "application/geo+json", NE_LAKES);
         }
         ("GET", "/api/state") => {
             let body = hub.snapshot.lock().unwrap().clone().unwrap_or_else(|| "{}".into());
@@ -729,11 +741,13 @@ pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], re
             ((k.velocity.x * k.velocity.x + k.velocity.y * k.velocity.y + k.velocity.z * k.velocity.z) as f64).sqrt();
         let age = (now - rec.last_seen).max(0.0);
         s.push_str(&format!(
-            "{{\"id\":\"{}\",\"exercise\":{},\"marking\":\"{}\",\"force\":{},\"etype\":\"{}\",\"lat\":{},\"lon\":{},\"alt\":{},\"heading\":{},\"speed\":{},\"age\":{},\"senders\":{},\"removed\":{},\"deactivated\":{},\"stale\":{},\"frozen\":{}}}",
+            "{{\"id\":\"{}\",\"exercise\":{},\"marking\":\"{}\",\"force\":{},\"ek\":{},\"edom\":{},\"etype\":\"{}\",\"lat\":{},\"lon\":{},\"alt\":{},\"heading\":{},\"speed\":{},\"age\":{},\"senders\":{},\"removed\":{},\"deactivated\":{},\"stale\":{},\"frozen\":{}}}",
             rec.key.id,
             rec.key.exercise,
             esc(&rec.marking),
             rec.force_id,
+            rec.entity_type.kind,
+            rec.entity_type.domain,
             rec.entity_type,
             fnum(lat),
             fnum(lon),
