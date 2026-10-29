@@ -34,6 +34,8 @@ LISTEN / SERVE OPTIONS
     --http ADDR           Dashboard bind (serve only; default 127.0.0.1:8080)
     --log FILE            Append the event log to FILE and show past runs
                           (serve only; JSON lines, loaded back at startup)
+    --db FILE             Store the event log in SQLite FILE for indexed
+                          search via /api/log (serve only)
 
 REPLAY OPTIONS
     --speed X             Replay at X times real time (default: as fast as possible)
@@ -118,6 +120,7 @@ fn real_main() -> Result<(), String> {
     let mut speed = None;
     let mut http: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let mut log_file: Option<String> = None;
+    let mut db_file: Option<String> = None;
     let mut pack_files: Vec<String> = Vec::new();
     let mut common = Common {
         filter: Filter::default(),
@@ -145,6 +148,7 @@ fn real_main() -> Result<(), String> {
             "--rulepack" => pack_files.push(val()?),
             "--http" => http = val()?.parse().map_err(|e| bad(&e))?,
             "--log" => log_file = Some(val()?),
+            "--db" => db_file = Some(val()?),
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -153,7 +157,7 @@ fn real_main() -> Result<(), String> {
     match command.as_str() {
         "listen" => listen(&udp, duration, &common, &packs),
         "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
-        "serve" => serve(&udp, http, duration, log_file.as_deref(), &packs),
+        "serve" => serve(&udp, http, duration, log_file.as_deref(), db_file.as_deref(), &packs),
         other => Err(format!("unknown command '{other}' (expected listen, replay or serve)")),
     }
 }
@@ -314,6 +318,7 @@ fn serve(
     http: std::net::SocketAddr,
     duration: Option<f64>,
     log_file: Option<&str>,
+    db_file: Option<&str>,
     packs: &Merged,
 ) -> Result<(), String> {
     let mut src = UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?;
@@ -329,6 +334,11 @@ fn serve(
             .open_log(std::path::Path::new(path))
             .map_err(|e| format!("cannot open log {path}: {e}"))?;
         eprintln!("  event log: {path} ({n} entries from past runs)");
+    }
+    if let Some(path) = db_file {
+        hub.open_db(std::path::Path::new(path), &packs.packs.join(" + "))
+            .map_err(|e| format!("cannot open db {path}: {e}"))?;
+        eprintln!("  event store: {path}");
     }
     hub.log(
         "info",

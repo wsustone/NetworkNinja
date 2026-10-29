@@ -1,6 +1,6 @@
 # 0005: Event and run storage in embedded SQLite
 
-Date: 2026-10-28 · Status: Proposed
+Date: 2026-10-28 · Status: Accepted
 
 ## Context
 
