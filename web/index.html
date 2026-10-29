@@ -46,6 +46,7 @@
   .albtn { font-size:10px; padding:.1em .5em; margin-left:.5em; background:#21262d; color:var(--dim); border:1px solid var(--line); border-radius:3px; cursor:pointer; }
   .albtn:hover { color:var(--fg); border-color:var(--dim); }
   .acked { color:var(--ok); font-size:11px; }
+  select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:3px; font:inherit; font-size:11px; padding:.15em .3em; }
   #filter, #efilter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
   #filter::placeholder, #efilter::placeholder { color:var(--dim); }
   .tablewrap { max-height:70vh; overflow:auto; }
@@ -63,6 +64,8 @@
   <span class="stat">errors <b id="hErr">0</b></span>
   <span class="stat">alerts <b id="hAlerts">0</b></span>
   <span class="stat" id="hFrozen"></span>
+  <span class="stat">run <select id="runsel"><option value="">live</option></select></span>
+  <span class="stat">speed <select id="pspeed"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></span>
   <span class="stat" style="margin-left:auto" id="hPacks"></span>
 </header>
 
@@ -358,6 +361,16 @@ $("alerts").onclick = ev => {
 };
 $("filter").oninput = renderFeed;
 $("efilter").oninput = render;
+$("runsel").onchange = ev => cmd(ev.target.value ? {cmd:"replay", file:ev.target.value} : {cmd:"live"});
+$("pspeed").onchange = ev => cmd({cmd:"speed", x:+ev.target.value});
+function loadRuns() {
+  fetch("/api/runs").then(r => r.json()).then(d => {
+    const sel = $("runsel"), cur = sel.value;
+    sel.innerHTML = '<option value="">live</option>' +
+      (d.runs || []).map(r => `<option value="${esc(r.name)}" ${r.name === cur ? "selected" : ""}>${esc(r.name)}</option>`).join("");
+  }).catch(() => {});
+}
+loadRuns();
 initMap();
 fetch("/api/log?limit=500").then(r => r.json()).then(d => (d.entries || []).forEach(e => pushEntry(e, true))).catch(() => {});
 connect();

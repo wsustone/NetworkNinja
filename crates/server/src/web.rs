@@ -43,6 +43,8 @@ pub struct Hub {
     log_file: Mutex<Option<std::fs::File>>,
     /// `--db` SQLite store and the current run id (ADR 0005).
     store: Mutex<Option<(crate::store::EventStore, i64)>>,
+    /// `--runs` directory scanned for `.nnrec` recordings at /api/runs.
+    runs_dir: Mutex<Option<std::path::PathBuf>>,
     /// Client commands (ack/mute) forwarded to the serve loop.
     cmd_tx: Mutex<Option<SyncSender<String>>>,
 }
@@ -63,6 +65,7 @@ impl Hub {
             seq: AtomicU64::new(0),
             log_file: Mutex::new(None),
             store: Mutex::new(None),
+            runs_dir: Mutex::new(None),
             cmd_tx: Mutex::new(None),
         }
     }
@@ -212,6 +215,50 @@ impl Hub {
             let _ = tx.try_send(text);
         }
     }
+
+    /// The directory `/api/runs` lists `.nnrec` recordings from.
+    pub fn set_runs_dir(&self, dir: std::path::PathBuf) {
+        *self.runs_dir.lock().unwrap() = Some(dir);
+    }
+
+    /// `{"runs":[{"name":…,"size":…,"mtime":…}]}` — recordings in the runs dir.
+    fn runs_list(&self) -> String {
+        let dir = self.runs_dir.lock().unwrap();
+        let Some(dir) = dir.as_ref() else {
+            return "{\"runs\":[]}".into();
+        };
+        let mut runs: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) != Some("nnrec") {
+                    continue;
+                }
+                let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let (size, mtime) = e
+                    .metadata()
+                    .map(|md| {
+                        (
+                            md.len(),
+                            md.modified()
+                                .ok()
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs_f64())
+                                .unwrap_or(0.0),
+                        )
+                    })
+                    .unwrap_or((0, 0.0));
+                runs.push(format!(
+                    "{{\"name\":\"{}\",\"size\":{},\"mtime\":{}}}",
+                    esc(&name),
+                    size,
+                    fnum(mtime)
+                ));
+            }
+        }
+        runs.sort_by(|a, b| b.cmp(a));
+        format!("{{\"runs\":[{}]}}", runs.join(","))
+    }
 }
 
 // --- HTTP -----------------------------------------------------------------
@@ -320,6 +367,10 @@ fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
         }
         ("GET", "/api/state") => {
             let body = hub.snapshot.lock().unwrap().clone().unwrap_or_else(|| "{}".into());
+            let _ = respond(s, "200 OK", "application/json", &body);
+        }
+        ("GET", "/api/runs") => {
+            let body = hub.runs_list();
             let _ = respond(s, "200 OK", "application/json", &body);
         }
         ("GET", "/api/log") => {
@@ -638,9 +689,35 @@ fn jnum(text: &str, key: &str) -> Option<f64> {
     rest[..end].parse().ok()
 }
 
-/// One client command (ack, mute, unmute) against the monitor.
-/// Returns alert events to log (mute resolutions) plus an info message.
-pub fn apply_command(m: &mut Monitor, text: &str) -> Result<(Vec<AlertEvent>, String), String> {
+/// What a command wants the capture source to become (runs picker).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Switch {
+    /// Back to the live UDP listener.
+    Live,
+    /// Replay this `.nnrec` file (basename inside the runs dir).
+    Replay(String),
+    /// Change replay pacing.
+    Speed(f64),
+}
+
+/// The outcome of one client command: alert events to log, a note for the
+/// event feed, and optionally a capture-source switch.
+pub struct CmdOut {
+    pub events: Vec<AlertEvent>,
+    pub note: String,
+    pub switch: Option<Switch>,
+}
+
+fn note(msg: String) -> CmdOut {
+    CmdOut {
+        events: Vec::new(),
+        note: msg,
+        switch: None,
+    }
+}
+
+/// One client command (ack, mute, unmute, replay, live, speed).
+pub fn apply_command(m: &mut Monitor, text: &str) -> Result<CmdOut, String> {
     let now = m.now;
     let cmd = jstr(text, "cmd").ok_or("missing \"cmd\"")?;
     let entity = |t: &str| -> Result<EntityKey, String> {
@@ -653,9 +730,9 @@ pub fn apply_command(m: &mut Monitor, text: &str) -> Result<(Vec<AlertEvent>, St
         "ack" => {
             let rule = jstr(text, "rule").ok_or("missing \"rule\"")?;
             let key = entity(text)?;
-            let note = jstr(text, "note").unwrap_or("");
-            if m.engine.ack(rule, key, "operator", note, now) {
-                Ok((vec![], format!("acknowledged {rule} on {}", key.id)))
+            let ack_note = jstr(text, "note").unwrap_or("");
+            if m.engine.ack(rule, key, "operator", ack_note, now) {
+                Ok(note(format!("acknowledged {rule} on {}", key.id)))
             } else {
                 Err(format!("no active {rule} alert on {}", key.id))
             }
@@ -664,23 +741,54 @@ pub fn apply_command(m: &mut Monitor, text: &str) -> Result<(Vec<AlertEvent>, St
             let key = entity(text)?;
             let until = now + dur(text);
             let events = m.engine.mute_entity(key, until, now);
-            Ok((events, format!("muted {} for {:.0} s", key.id, until - now)))
+            Ok(CmdOut {
+                events,
+                note: format!("muted {} for {:.0} s", key.id, until - now),
+                switch: None,
+            })
         }
         "mute_rule" => {
             let rule = jstr(text, "rule").ok_or("missing \"rule\"")?;
             let until = now + dur(text);
             m.engine.mute_rule(rule, until);
-            Ok((vec![], format!("muted rule {rule} for {:.0} s", until - now)))
+            Ok(note(format!("muted rule {rule} for {:.0} s", until - now)))
         }
         "unmute" => {
             let key = entity(text)?;
             let n = m.engine.unmute(&MuteScope::Entity(key));
-            Ok((vec![], format!("removed {n} mute(s) on {}", key.id)))
+            Ok(note(format!("removed {n} mute(s) on {}", key.id)))
         }
         "unmute_rule" => {
             let rule = jstr(text, "rule").ok_or("missing \"rule\"")?;
             let n = m.engine.unmute(&MuteScope::Rule(rule.to_string()));
-            Ok((vec![], format!("removed {n} mute(s) on {rule}")))
+            Ok(note(format!("removed {n} mute(s) on {rule}")))
+        }
+        "replay" => {
+            let file = jstr(text, "file").ok_or("missing \"file\"")?;
+            if file.is_empty() || file.contains('/') || file.contains('\\') || file.contains("..") {
+                return Err("bad file name".into());
+            }
+            Ok(CmdOut {
+                events: vec![],
+                note: format!("replaying {file}"),
+                switch: Some(Switch::Replay(file.to_string())),
+            })
+        }
+        "live" => Ok(CmdOut {
+            events: vec![],
+            note: "back to live capture".to_string(),
+            switch: Some(Switch::Live),
+        }),
+        "speed" => {
+            let x = jnum(text, "x").ok_or("missing \"x\"")?;
+            if !(0.1..=64.0).contains(&x) {
+                return Err("speed out of range".into());
+            }
+            Ok(CmdOut {
+                events: vec![],
+                note: format!("replay speed {x}x"),
+                switch: Some(Switch::Speed(x)),
+            })
         }
         other => Err(format!("unknown command '{other}'")),
     }
