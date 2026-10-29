@@ -79,11 +79,18 @@ Three layers, three owners:
   clock and the last timestamp persisted in `events.db`, so turning the
   clock back does not extend a license, and a clock that is merely wrong
   degrades to a warning rather than a lockout.
-- **No license at all → evaluation mode:** Base features, two concurrent
-  sessions, an "EVALUATION" banner, no time limit. This keeps demos and
-  trials frictionless and matches ADR 0002's "tier checks only gate
-  features that come after the MVP". (Open for the business owner: a
-  30-day evaluation clock instead.)
+- **No license at all → 30-day trial.** Full Base features with a
+  "TRIAL — N days left" banner. The trial starts the first time `serve`
+  runs; the start is recorded in `events.db` and floored by the same
+  last-timestamp rule as expiry, so wiping the clock does not restart it
+  (wiping the data directory does, which we accept: the trial is a
+  convenience, not the copy protection). When the 30 days are up the
+  dashboard goes **read-only** — viewers still see entities, alerts and
+  the map, but ack, mute, replay and recording are disabled — and the
+  banner says how to add a license. Capture, rules and the event log keep
+  running: monitoring is never cut off (ADR 0002). Adding a license file
+  lifts the limits without a restart at the next hourly check, or at once
+  via `nn-server license FILE`.
 - `seats` caps live sessions: a login past the cap gets `409 seats in
   use`; an admin can sign other sessions out. Upselling seats or tier is
   a new file, not a new install (ADR 0002).
@@ -134,9 +141,11 @@ that painful.
 2. `nn-server setup` and `install`/`uninstall` for Linux (systemd) first,
    then macOS and Windows.
 3. `license` module: armour, Ed25519 verify against embedded keys,
-   payload parse, status (valid/warning/grace/expired/evaluation),
-   clock-rollback floor from `events.db`; `nn-license` vendor tool.
-4. Health panel + `/api/health` show license status; banner states.
+   payload parse, status (valid/warning/grace/expired/trial/trial-ended),
+   trial start + clock-rollback floor from `events.db`; `nn-license`
+   vendor tool.
+4. Health panel + `/api/health` show license status; banner states;
+   read-only gate on ack/mute/replay/record when the trial has ended.
 5. Seat cap in `Auth::issue`; `/api/sessions` list/revoke (admin).
 6. Roles in the users file; `/api/users` (admin); dashboard account page.
 7. `kind = "audit"` entries and an export.
@@ -150,5 +159,5 @@ that painful.
 - Negative: we own three service-manager integrations and their quirks;
   a stolen vendor signing key is a product-wide incident (keep it on
   offline hardware, rotate via key ids); in-memory sessions mean a
-  service restart signs everyone out; the evaluation mode is a business
-  decision that needs the owner's sign-off before milestone 7 starts.
+  service restart signs everyone out; a trial can be restarted by
+  deleting the data directory, which we accept for this market.
