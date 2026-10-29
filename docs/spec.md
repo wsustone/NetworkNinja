@@ -21,7 +21,7 @@ The MVP proves one thing: three alerts that fire correctly on live DIS traffic, 
 - Passive capture of DIS v6 and v7, live or from a recording
 - Live entity table, traffic metrics and a map
 - Three alert rules with near-zero false positives on a clean exercise
-- Runs as one binary on an air-gapped exercise LAN
+- Runs as one binary on an air-gapped exercise LAN, on Windows, macOS or Linux; the dashboard works in any modern browser on desktop, tablet or phone
 
 **Non-goals for the MVP**
 
@@ -96,13 +96,13 @@ The system keeps per-entity state keyed by the full Entity ID (site/application/
 
 ## Alert rules
 
-The MVP ships three rules, each defined so that it stays quiet on a healthy exercise. All rules are suppressed while the exercise is frozen.
+The MVP ships three rules, each defined so that it stays quiet on a healthy exercise. No rule fires while the exercise is frozen.
 
 | Rule | Fires when | Suppressed when | Default |
 | --- | --- | --- | --- |
-| Entity timeout | No Entity State from an entity for longer than its heartbeat × multiplier | Remove Entity received; deactivated appearance bit set; exercise frozen | 5 s heartbeat × 2.4 = 12 s |
+| Entity timeout | No Entity State from an entity for longer than its heartbeat × multiplier | Remove Entity received; deactivated appearance bit set; frozen time doesn't count, and senders get one heartbeat of grace after a resume | 5 s heartbeat × 2.4 = 12 s |
 | Entity ID conflict | The same site/application/entity triple arrives from two different source IP:port pairs, or with a different entity type | A single source whose port changes after a restart (no overlap within 2 s) | Any overlap |
-| Position jump | The reported position differs from the dead-reckoned prediction by more than the tolerance | First PDU for an entity; an entity reappearing after a timeout | 3× sender DR threshold, plus a physical speed cap per entity kind |
+| Position jump | The reported position differs from the dead-reckoned prediction by more than the tolerance | First report from a sender; an entity reappearing after a timeout; the first report after a freeze or resume | 3× sender DR threshold, plus a physical speed cap per entity kind |
 
 **Why these definitions**
 
@@ -155,6 +155,8 @@ The dashboard is a single page fed over WebSocket. The server pushes aggregated 
 - **Monitor health:** capture drops, CPU, memory, rule pack versions, license status
 - **Outputs:** alerts forwarded to syslog/CEF; export of alerts and an exercise summary report (CSV and PDF)
 
+**Devices:** one responsive layout serves desktop, tablet and phone browsers, so nothing is installed on viewing devices. A phone shows the alert feed and key counts first; a tablet shows the map beside the alerts; a desktop shows everything. Operator actions (acknowledge, mute, note) are touch-friendly. The dashboard can be added to a home screen as a Progressive Web App for full-screen use, which avoids app-store installs on managed devices.
+
 To keep the browser responsive above about 1,000 entities, the server sends deltas, not the full state, and the map draws entities as a single symbol layer.
 
 ## Record and replay
@@ -206,7 +208,7 @@ The synthetic generator is built in milestone 1, not later: every rule needs a f
 The MVP ships as one self-contained binary that runs on the exercise LAN. A hosted version can come later, for unclassified training only.
 
 - One Rust binary with the frontend, offline map tiles and the config built in
-- Supported platforms: STIG-hardened RHEL and Windows; exact versions to confirm with the first customers
+- Server platforms: Windows, macOS and Linux, on x86-64 and ARM64, each a single binary; STIG-hardened RHEL and Windows come first for accreditation. Viewers need only a modern browser on a desktop, tablet or phone
 - No outbound network calls, telemetry or update checks
 - Receive-only on the capture interface: the tool never transmits onto the exercise network. The one exception, network replay, is a separately enabled Pro feature on its own interface.
 - The dashboard is served on a separate management interface, with TLS and local user accounts so several people can watch. It stays bound to localhost until configured.
@@ -291,15 +293,15 @@ Open questions: price points per tier; export-control classification of the soft
 
 ## Milestones
 
-There are seven milestones, each with an exit test. The generator comes first because every later exit test runs against it. Milestones 1 to 6 are the MVP; milestone 7 makes it sellable.
+There are seven milestones, each with an exit test. The generator comes first because every later exit test runs against it. Milestones 1 to 6 are the MVP; milestone 7 makes it sellable. Status at 2026-10-28: milestone 1 is mostly done, and the cores of milestones 2 and 3 (entity state, metrics, the three alert rules) are built and tested; the repository README tracks the details.
 
 1. **Generator + capture + decoder.** Exit: decodes 100% of generator output for v6 and v7, by socket, by libpcap and from pcap; every PDU type decoded to header and enumerated fields; the decoder survives a fuzzing run with no crash.
 2. **Entity state, metrics and monitor health.** Exit: entity count and PDU rates match the generator's ground truth within 1%; capture drops are reported; memory and throughput measured against the performance targets.
 3. **Rule packs + three alert rules.** Exit: the pack loader validates and layers packs; enumeration checks generated from SISO-REF-010 run on every PDU; each injected fault fires its alert within 2 s; control scenarios produce zero alerts over 30 minutes.
-4. **Dashboard + map.** Exit: an alert appears in the browser within 2 s; acknowledge and mute work; the UI stays responsive at the target entity count; the map works with no internet; TLS and local accounts let several viewers watch.
+4. **Dashboard + map.** Exit: an alert appears in the browser within 2 s; acknowledge and mute work; the UI stays responsive at the target entity count; the map works with no internet; TLS and local accounts let several viewers watch; the layout works on a phone and a tablet as well as a desktop browser.
 5. **Record and replay.** Exit: a recording made in the app replays into the dashboard with seek, speed and filters, and raises the same alerts as the live run; pcap import and export work.
 6. **Demo.** Exit: a scripted 15-minute run on recorded or synthetic traffic, showing all three faults caught live and then replayed.
-7. **Release readiness.** Exit: signed license files checked offline with a grace period; signed binaries and an SBOM; audit log; diagnostic bundle; install guide for air-gapped sites.
+7. **Release readiness.** Exit: signed license files checked offline with a grace period; signed binaries and an SBOM; audit log; diagnostic bundle; install guide for air-gapped sites; signed builds for Windows, macOS and Linux.
 
 Open question: a target date for each milestone.
 
