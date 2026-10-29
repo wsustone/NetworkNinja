@@ -7,7 +7,7 @@
 use nn_capture::{Datagram, PcapReader, UdpConfig, UdpSource};
 use nn_decode::{Pdu, PduBody};
 use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
-use nn_server::web::{alert_json, now_secs, state_json, Hub};
+use nn_server::web::{alert_json, error_json, info_json, now_secs, state_json, Hub};
 use nn_server::{describe, Tally};
 use nn_state::secs;
 use std::collections::VecDeque;
@@ -32,6 +32,8 @@ LISTEN / SERVE OPTIONS
     --iface IP            Interface address for multicast joins (default: OS choice)
     --duration SECS       Stop after this long (default: run until killed)
     --http ADDR           Dashboard bind (serve only; default 127.0.0.1:8080)
+    --log FILE            Append the event log to FILE and show past runs
+                          (serve only; JSON lines, loaded back at startup)
 
 REPLAY OPTIONS
     --speed X             Replay at X times real time (default: as fast as possible)
@@ -115,6 +117,7 @@ fn real_main() -> Result<(), String> {
     let mut duration = None;
     let mut speed = None;
     let mut http: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
+    let mut log_file: Option<String> = None;
     let mut pack_files: Vec<String> = Vec::new();
     let mut common = Common {
         filter: Filter::default(),
@@ -141,6 +144,7 @@ fn real_main() -> Result<(), String> {
             "--every" => common.every = val()?.parse().map_err(|e| bad(&e))?,
             "--rulepack" => pack_files.push(val()?),
             "--http" => http = val()?.parse().map_err(|e| bad(&e))?,
+            "--log" => log_file = Some(val()?),
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -149,7 +153,7 @@ fn real_main() -> Result<(), String> {
     match command.as_str() {
         "listen" => listen(&udp, duration, &common, &packs),
         "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
-        "serve" => serve(&udp, http, duration, &packs),
+        "serve" => serve(&udp, http, duration, log_file.as_deref(), &packs),
         other => Err(format!("unknown command '{other}' (expected listen, replay or serve)")),
     }
 }
@@ -303,8 +307,15 @@ fn replay(path: &str, speed: Option<f64>, common: &Common, packs: &Merged) -> Re
 }
 
 /// Live capture plus the embedded dashboard: entity state once a second and
-/// alerts the moment they fire, over WebSocket.
-fn serve(cfg: &UdpConfig, http: std::net::SocketAddr, duration: Option<f64>, packs: &Merged) -> Result<(), String> {
+/// alerts the moment they fire, over WebSocket. Every alert, decode error
+/// and server event lands in the event log (`/api/log`, `--log` on disk).
+fn serve(
+    cfg: &UdpConfig,
+    http: std::net::SocketAddr,
+    duration: Option<f64>,
+    log_file: Option<&str>,
+    packs: &Merged,
+) -> Result<(), String> {
     let mut src = UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?;
     let (addr, hub) = Hub::listen(http).map_err(|e| format!("cannot bind dashboard on {http}: {e}"))?;
     eprintln!("nn-server: listening on {} (receive-only)", src.local_addr());
@@ -313,6 +324,23 @@ fn serve(cfg: &UdpConfig, http: std::net::SocketAddr, duration: Option<f64>, pac
     for g in &cfg.multicast_groups {
         eprintln!("  joined multicast {g} on {}", cfg.multicast_interface);
     }
+    if let Some(path) = log_file {
+        let n = hub
+            .open_log(std::path::Path::new(path))
+            .map_err(|e| format!("cannot open log {path}: {e}"))?;
+        eprintln!("  event log: {path} ({n} entries from past runs)");
+    }
+    hub.log(
+        "info",
+        &info_json(
+            now_secs(),
+            &format!(
+                "capture started on {}; packs {}",
+                src.local_addr(),
+                packs.packs.join(" + ")
+            ),
+        ),
+    );
     let mut m = Monitor::with_packs(packs);
     let mut recent: VecDeque<String> = VecDeque::new();
     let start = Instant::now();
@@ -322,17 +350,26 @@ fn serve(cfg: &UdpConfig, http: std::net::SocketAddr, duration: Option<f64>, pac
         if duration.is_some_and(|d| t >= d) {
             break;
         }
+        let errs_before = m.decode_errors;
         let events = match src.recv().map_err(|e| format!("receive failed: {e}"))? {
-            Some(d) => m.ingest(&d).1,
+            Some(d) => {
+                let (.., events) = m.ingest(&d);
+                if m.decode_errors > errs_before {
+                    hub.log(
+                        "error",
+                        &error_json(now_secs(), m.decode_errors - errs_before, &d.source.to_string()),
+                    );
+                }
+                events
+            }
             None => m.tick(now_secs()),
         };
         for e in &events {
-            let j = alert_json(e);
+            let j = hub.log("alert", &alert_json(e));
             if recent.len() >= 100 {
                 recent.pop_front();
             }
-            recent.push_back(j.clone());
-            hub.broadcast(&j);
+            recent.push_back(j);
         }
         if t >= next_state {
             let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent);

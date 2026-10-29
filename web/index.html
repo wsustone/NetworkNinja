@@ -31,8 +31,12 @@
   #alerts li.crit { border-left:3px solid var(--crit); }
   #alerts li.warn { border-left:3px solid var(--warn); }
   #alerts li.res { border-left:3px solid var(--ok); opacity:.65; }
+  #alerts li.err { border-left:3px solid var(--crit); background:#2d1f22; }
+  #alerts li.info { border-left:3px solid var(--line); color:var(--dim); }
   #alerts .t { color:var(--dim); font-size:11px; }
   #alerts .r { color:var(--dim); font-size:11px; float:right; }
+  #filter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
+  #filter::placeholder { color:var(--dim); }
   .tablewrap { max-height:70vh; overflow:auto; }
   .empty { padding:1em; color:var(--dim); }
 </style>
@@ -43,6 +47,7 @@
   <span class="stat">exercise <b id="hEx">–</b></span>
   <span class="stat">entities <b id="hEnt">0</b></span>
   <span class="stat">PDU/s <b id="hRate">0</b></span>
+  <span class="stat">errors <b id="hErr">0</b></span>
   <span class="stat">alerts <b id="hAlerts">0</b></span>
   <span class="stat" id="hFrozen"></span>
   <span class="stat" style="margin-left:auto" id="hPacks"></span>
@@ -61,14 +66,15 @@
     </table></div>
   </section>
   <section>
-    <h2>Alerts <span id="aCount"></span></h2>
+    <h2>Event log <span id="aCount"></span></h2>
+    <input id="filter" placeholder="filter: entity, rule, message…">
     <ul id="alerts"></ul>
   </section>
 </main>
 
 <script>
 "use strict";
-let state = null, sortKey = "id", sortAsc = true, selected = null;
+let state = null, sortKey = "id", sortAsc = true, selected = null, seeded = false;
 const $ = id => document.getElementById(id);
 const seen = new Set();
 const feed = [];
@@ -76,18 +82,44 @@ const feed = [];
 function fmtAge(a) { return a < 60 ? a.toFixed(0)+"s" : (a/60).toFixed(1)+"m"; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
-function pushAlert(a, silent) {
-  const k = a.state + "|" + a.rule + "|" + a.entity + "|" + a.at.toFixed(3);
+function pushEntry(e, silent) {
+  const k = e.seq ?? (e.kind + "|" + e.at + "|" + (e.entity||"") + "|" + (e.rule||"") + "|" + (e.state||""));
   if (seen.has(k)) return;
   seen.add(k);
-  feed.push(a);
-  const li = document.createElement("li");
-  li.className = a.state === "resolved" ? "res" : (a.severity === "critical" ? "crit" : "warn");
-  li.innerHTML = `<span class="r">${esc(a.pack)}/${esc(a.rule)}</span><span class="t">${new Date(a.at*1000).toLocaleTimeString()} · ${a.state}</span><br><b>${esc(a.entity)}</b> ${esc(a.message)}`;
-  li.onclick = () => selectEntity(a.entity);
-  $("alerts").prepend(li);
-  while ($("alerts").children.length > 200) $("alerts").lastChild.remove();
-  if (!silent && a.state === "firing" && a.severity === "critical") li.style.background = "#3d1f22";
+  feed.push(e);
+  if (feed.length > 2000) feed.shift();
+  renderFeed();
+  if (!silent && e.kind === "alert" && e.state === "firing" && e.severity === "critical") {
+    document.title = "⚠ NetworkNinja";
+    setTimeout(() => document.title = "NetworkNinja", 5000);
+  }
+}
+
+function entryHtml(e) {
+  const t = new Date((e.at||0)*1000).toLocaleTimeString();
+  if (e.kind === "alert") {
+    const cls = e.state === "resolved" ? "res" : (e.severity === "critical" ? "crit" : "warn");
+    return {cls, ent: e.entity,
+      html: `<span class="r">${esc(e.pack)}/${esc(e.rule)}</span><span class="t">${t} · ${e.state}</span><br><b>${esc(e.entity)}</b> ${esc(e.message)}`};
+  }
+  if (e.kind === "error") {
+    return {cls: "err", ent: null,
+      html: `<span class="r">decode error</span><span class="t">${t}</span><br>${esc(e.message)}`};
+  }
+  return {cls: "info", ent: null,
+    html: `<span class="r">info</span><span class="t">${t}</span><br>${esc(e.message)}`};
+}
+
+function renderFeed() {
+  const f = $("filter").value.trim().toLowerCase();
+  const items = feed
+    .filter(e => !f || [e.entity, e.rule, e.message, e.pack, e.state].join(" ").toLowerCase().includes(f))
+    .slice(-500);
+  $("alerts").innerHTML = items.map(e => {
+    const {cls, ent, html} = entryHtml(e);
+    return `<li class="${cls}" ${ent ? `data-ent="${esc(ent)}"` : ""}>${html}</li>`;
+  }).reverse().join("");
+  $("aCount").textContent = `${state ? state.alerts.length : 0} open · ${feed.length} events`;
 }
 
 function selectEntity(id) {
@@ -112,12 +144,13 @@ function render() {
   const live = state.entities.filter(e => !e.removed && !e.stale).length;
   $("hEnt").textContent = live + " / " + state.entities.length;
   $("hRate").textContent = state.rates.pdu_1s.toFixed(1);
+  $("hErr").textContent = state.totals.errors;
   $("hAlerts").textContent = state.alerts.length;
   $("hPacks").textContent = state.packs.join(" + ");
   const anyFrozen = exIds.some(id => state.exercises[id].frozen);
   $("hFrozen").innerHTML = anyFrozen ? '<span class="frozen">FROZEN</span>' : "";
   $("eCount").textContent = state.entities.length;
-  $("aCount").textContent = state.alerts.length + " open";
+  renderFeed();
 
   const rows = [...state.entities].sort((a,b) => {
     let x = a[sortKey], y = b[sortKey];
@@ -137,9 +170,9 @@ function render() {
 
 function take(s) {
   if (s.type === "state") {
-    if (state === null) { for (const a of s.recent || []) pushAlert(a, true); }
+    if (!seeded) { for (const a of s.recent || []) pushEntry(a, true); seeded = true; }
     state = s; render();
-  } else if (s.type === "alert") pushAlert(s);
+  } else if (s.kind) pushEntry(s);
 }
 
 let ws;
@@ -160,5 +193,11 @@ document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = true; }
   render();
 });
+$("alerts").onclick = ev => {
+  const li = ev.target.closest("li[data-ent]");
+  if (li) selectEntity(li.dataset.ent);
+};
+$("filter").oninput = renderFeed;
+fetch("/api/log?limit=500").then(r => r.json()).then(d => (d.entries || []).forEach(e => pushEntry(e, true))).catch(() => {});
 connect();
 </script>
