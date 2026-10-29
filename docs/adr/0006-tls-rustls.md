@@ -52,6 +52,10 @@ Implementation checklist (next slice):
 5. Tests: handshake over `wss` via a local cert; plaintext still works
    without `--cert`
 
+Implementation note: PEM parsing uses `rustls-pki-types`' `PemObject`
+(already pulled in by rustls) instead of `rustls-pemfile`, which is now
+unmaintained and superseded by it — one crate fewer.
+
 ## Consequences
 
 - Positive: meets the M4 exit test; single-binary story intact;

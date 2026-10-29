@@ -32,7 +32,11 @@ cargo clippy --workspace --all-targets # must be warning-free
 Recordings: `--record x.nnrec` while serving; pick it from the header
 run dropdown (`--runs DIR` for `/api/runs`); scrub bar + `--speed`.
 Accounts: `nn-server passwd FILE --user U --pass P`, then `serve --users
-FILE` — plaintext until TLS (ADR 0006).
+FILE`. TLS (ADR 0006): `nn-server cert nn [--host NAME]` writes
+`nn.crt` + `nn.key` (refuses to overwrite), then `serve --cert nn.crt --key
+nn.key` → HTTPS + WSS on the `--http` port; no flags = plaintext as before.
+TLS WebSockets share one rustls session between the reader/writer threads
+(`TlsReader`/`TlsWriter` in `web.rs`) since it can't be `try_clone`d.
 
 ## Architecture map
 
