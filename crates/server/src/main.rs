@@ -410,6 +410,9 @@ fn serve(
     let mut prev_ents = std::collections::BTreeMap::new();
     let mut speed = speed;
     let mut epoch = Instant::now();
+    let mut cur_replay: Option<std::path::PathBuf> = replay_file.map(std::path::PathBuf::from);
+    let mut skip_to: Option<f64> = None;
+    let mut replay_pos: Option<(f64, f64)> = None;
     let start = Instant::now();
     let mut next_state = 0.0;
     let mut next_full = 0.0;
@@ -434,6 +437,8 @@ fn serve(
                             Switch::Live => match UdpSource::open(cfg) {
                                 Ok(s) => {
                                     src = Src::Udp(s);
+                                    cur_replay = None;
+                                    replay_pos = None;
                                     true
                                 }
                                 Err(e) => {
@@ -446,9 +451,12 @@ fn serve(
                                     hub.log("error", &info_json(now_secs(), "no --runs dir configured"));
                                     continue;
                                 };
-                                match nn_recorder::Reader::open(&std::path::Path::new(dir).join(f)) {
+                                let path = std::path::Path::new(dir).join(f);
+                                match nn_recorder::Reader::open(&path) {
                                     Ok(r) => {
                                         src = Src::Rec(r);
+                                        cur_replay = Some(path);
+                                        skip_to = None;
                                         true
                                     }
                                     Err(e) => {
@@ -460,6 +468,23 @@ fn serve(
                             Switch::Speed(x) => {
                                 speed = *x;
                                 false
+                            }
+                            Switch::Seek(to) => {
+                                let Some(path) = &cur_replay else {
+                                    hub.log("error", &info_json(now_secs(), "not replaying"));
+                                    continue;
+                                };
+                                match nn_recorder::Reader::open(path) {
+                                    Ok(r) => {
+                                        src = Src::Rec(r);
+                                        skip_to = Some(to.max(0.0));
+                                        true
+                                    }
+                                    Err(e) => {
+                                        hub.log("error", &info_json(now_secs(), &format!("cannot reopen recording: {e}")));
+                                        false
+                                    }
+                                }
                             }
                         };
                         if switched {
@@ -485,9 +510,19 @@ fn serve(
                 if let Some(d) = &d {
                     let first = r.first_at.unwrap_or(d.received_at);
                     let recorded = d.received_at.duration_since(first).unwrap_or_default().as_secs_f64();
-                    let target = std::time::Duration::from_secs_f64(recorded / speed);
-                    if target > epoch.elapsed() {
-                        std::thread::sleep(target - epoch.elapsed());
+                    replay_pos = Some((recorded, r.duration));
+                    if let Some(to) = skip_to {
+                        if recorded < to {
+                            // Fast-forward through the monitor without pacing.
+                        } else {
+                            skip_to = None;
+                            epoch = Instant::now() - std::time::Duration::from_secs_f64(recorded / speed);
+                        }
+                    } else {
+                        let target = std::time::Duration::from_secs_f64(recorded / speed);
+                        if target > epoch.elapsed() {
+                            std::thread::sleep(target - epoch.elapsed());
+                        }
                     }
                 }
                 d
@@ -524,13 +559,13 @@ fn serve(
         if t >= next_state {
             if t >= next_full {
                 // Full frame every 30 s: also the snapshot new clients get.
-                let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent);
+                let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent, replay_pos);
                 hub.set_snapshot(snap.clone());
                 hub.broadcast(&snap);
                 entity_baseline(&m, &mut prev_ents);
                 next_full = t + 30.0;
             } else {
-                hub.broadcast(&delta_json(&m, t, hub.client_count(), &packs.packs, &mut prev_ents));
+                hub.broadcast(&delta_json(&m, t, hub.client_count(), &packs.packs, &mut prev_ents, replay_pos));
             }
             next_state = t + 1.0;
         }

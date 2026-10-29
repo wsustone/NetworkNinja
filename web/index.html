@@ -46,6 +46,9 @@
   .albtn { font-size:10px; padding:.1em .5em; margin-left:.5em; background:#21262d; color:var(--dim); border:1px solid var(--line); border-radius:3px; cursor:pointer; }
   .albtn:hover { color:var(--fg); border-color:var(--dim); }
   .acked { color:var(--ok); font-size:11px; }
+  #tlrow { display:none; gap:.6em; align-items:center; padding:.35em 1em; background:var(--panel); border-bottom:1px solid var(--line); font-size:11px; color:var(--dim); }
+  #tlrow.on { display:flex; }
+  #seek { flex:1; accent-color:var(--ok); }
   select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:3px; font:inherit; font-size:11px; padding:.15em .3em; }
   #filter, #efilter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
   #filter::placeholder, #efilter::placeholder { color:var(--dim); }
@@ -68,6 +71,7 @@
   <span class="stat">speed <select id="pspeed"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></span>
   <span class="stat" style="margin-left:auto" id="hPacks"></span>
 </header>
+<div id="tlrow"><b>replay</b><span id="seekt">0:00</span><input type="range" id="seek" min="0" max="0" step="0.1"><span id="seekd">0:00</span></div>
 
 <main>
   <section id="sidebar">
@@ -103,6 +107,7 @@ const seen = new Set();
 const feed = [];
 
 function fmtAge(a) { return a < 60 ? a.toFixed(0)+"s" : (a/60).toFixed(1)+"m"; }
+function fmtT(s) { const m = Math.floor(s/60), r = Math.floor(s%60); return `${m}:${String(r).padStart(2,"0")}`; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
 function pushEntry(e, silent) {
@@ -206,6 +211,14 @@ function render() {
       <td>${e.speed.toFixed(0)}</td><td>${fmtAge(e.age)}</td><td>${e.senders}</td>
       <td>${statusOf(e)}</td></tr>`;
   }).join("") || '<tr><td colspan="10" class="empty">waiting for traffic…</td></tr>';
+  const tl = $("tlrow");
+  if (state.replay) {
+    tl.classList.add("on");
+    $("seek").max = state.replay.dur;
+    if (document.activeElement !== $("seek")) $("seek").value = state.replay.pos;
+    $("seekt").textContent = fmtT(state.replay.pos);
+    $("seekd").textContent = fmtT(state.replay.dur);
+  } else tl.classList.remove("on");
   $("eCount").textContent = ef ? `${rows.length} / ${state.entities.length}` : state.entities.length;
   $("sidelist").innerHTML = rows.map(e =>
     `<li ${selected === e.id ? 'class="sel"' : ""} onclick="selectEntity('${e.id}')"><span class="dot" style="background:${STATUS_COLOR[statusOf(e)]}"></span>${esc(e.marking)}<span class="id">${e.id}</span></li>`
@@ -363,6 +376,7 @@ $("filter").oninput = renderFeed;
 $("efilter").oninput = render;
 $("runsel").onchange = ev => cmd(ev.target.value ? {cmd:"replay", file:ev.target.value} : {cmd:"live"});
 $("pspeed").onchange = ev => cmd({cmd:"speed", x:+ev.target.value});
+$("seek").onchange = ev => cmd({cmd:"seek", to:+ev.target.value});
 function loadRuns() {
   fetch("/api/runs").then(r => r.json()).then(d => {
     const sel = $("runsel"), cur = sel.value;
