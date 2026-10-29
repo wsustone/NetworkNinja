@@ -121,6 +121,15 @@ fn write_new(
         .map_err(|e| format!("{path}: {e}"))
 }
 
+/// This host's LAN address: the source the OS would route a packet from.
+/// Connecting a UDP socket sends nothing; it only picks the route.
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("10.255.255.255:1").ok()?;
+    let ip = s.local_addr().ok()?.ip();
+    (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
+}
+
 fn main() -> ExitCode {
     match real_main() {
         Ok(()) => ExitCode::SUCCESS,
@@ -451,7 +460,15 @@ fn serve(
         Src::Rec(_) => format!("replaying {} at {}x", replay_file.unwrap(), speed),
     };
     eprintln!("nn-server: {desc} (receive-only)");
-    eprintln!("  dashboard: {scheme}://{addr}");
+    if addr.ip().is_unspecified() {
+        // Bound on every interface: print addresses a browser can actually use.
+        eprintln!("  dashboard: {scheme}://localhost:{}", addr.port());
+        if let Some(ip) = lan_ip() {
+            eprintln!("             {scheme}://{ip}:{}", addr.port());
+        }
+    } else {
+        eprintln!("  dashboard: {scheme}://{addr}");
+    }
     eprintln!("  rule packs: {}", packs.packs.join(" + "));
     for g in &cfg.multicast_groups {
         eprintln!("  joined multicast {g} on {}", cfg.multicast_interface);
