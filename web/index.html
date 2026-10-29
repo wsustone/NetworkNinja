@@ -13,8 +13,15 @@
   .stat { color:var(--dim); } .stat b { color:var(--fg); }
   #conn.ws { color:var(--ok); } #conn.poll { color:var(--warn); } #conn.down { color:var(--crit); }
   .frozen { color:var(--warn); font-weight:600; }
-  main { display:grid; grid-template-columns: 1fr 380px; gap:1em; padding:1em; }
-  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  main { display:grid; grid-template-columns: 200px 1fr 380px; gap:1em; padding:1em; }
+  #sidebar { grid-row:1/3; }
+  #sidelist { list-style:none; margin:0; padding:0; font-size:12px; }
+  #sidelist li { padding:.35em .6em; cursor:pointer; border-radius:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #sidelist li:hover { background:#21262d; }
+  #sidelist li.sel { background:#1f6feb44; }
+  #sidelist .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
+  #sidelist .id { color:var(--dim); font-size:10px; float:right; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } #sidebar { grid-row:auto; } #map { grid-column:1/-1; } }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   h2 { margin:0; padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); border-bottom:1px solid var(--line); }
   h2 span { float:right; font-weight:400; }
@@ -43,7 +50,7 @@
   #filter::placeholder, #efilter::placeholder { color:var(--dim); }
   .tablewrap { max-height:70vh; overflow:auto; }
   .empty { padding:1em; color:var(--dim); }
-  #map { grid-column:1 / -1; height:420px; position:relative; }
+  #map { grid-column:2 / -1; height:420px; position:relative; }
   .maplibregl-ctrl-attrib { font-size:10px; }
 </style>
 
@@ -60,6 +67,10 @@
 </header>
 
 <main>
+  <section id="sidebar">
+    <h2>Entities</h2>
+    <ul id="sidelist"></ul>
+  </section>
   <section>
     <h2>Entities <span id="eCount"></span></h2>
     <input id="efilter" placeholder="search: id, marking, type, site…">
@@ -141,11 +152,17 @@ function renderFeed() {
   $("aCount").textContent = `${state ? state.alerts.length : 0} open · ${feed.length} events`;
 }
 
+const STATUS_COLOR = {live:"#3fb950", frozen:"#d29922", silent:"#d29922", deactivated:"#8b949e", removed:"#8b949e"};
+
 function selectEntity(id) {
   selected = id;
   render();
   const row = document.querySelector(`tr[data-id="${CSS.escape(id)}"]`);
   if (row) row.scrollIntoView({block:"center", behavior:"smooth"});
+  if (mapReady && state) {
+    const e = state.entities.find(x => x.id === id);
+    if (e) map.easeTo({center:[e.lon, e.lat], zoom: Math.max(map.getZoom(), 10)});
+  }
 }
 
 function statusOf(e) {
@@ -186,6 +203,9 @@ function render() {
       <td>${statusOf(e)}</td></tr>`;
   }).join("") || '<tr><td colspan="10" class="empty">waiting for traffic…</td></tr>';
   $("eCount").textContent = ef ? `${rows.length} / ${state.entities.length}` : state.entities.length;
+  $("sidelist").innerHTML = rows.map(e =>
+    `<li ${selected === e.id ? 'class="sel"' : ""} onclick="selectEntity('${e.id}')"><span class="dot" style="background:${STATUS_COLOR[statusOf(e)]}"></span>${esc(e.marking)}<span class="id">${e.id}</span></li>`
+  ).join("") || '<li class="empty">–</li>';
   renderFeed();
 }
 
