@@ -56,6 +56,9 @@ Three layers, three owners:
   `config.toml`, then `install` starts the service. Air-gapped admins work
   from a console or SSH, so this stays CLI-first; a browser setup wizard
   is not planned.
+- `nn-server license FILE` copies a license into the data directory and
+  signals the running service to re-check it, for adding or renewing a
+  license after setup without a restart.
 
 ### License: an Ed25519-signed file checked locally
 
