@@ -9,3 +9,4 @@ Short records of decisions that shape the product. Add a new numbered file for e
 | [0003](0003-rule-packs-as-data.md) | Rules are data, delivered as rule packs | Accepted |
 | [0004](0004-receive-only-by-default.md) | Receive-only by default | Accepted |
 | [0005](0005-event-storage-sqlite.md) | Event and run storage in embedded SQLite | Accepted |
+| [0006](0006-tls-rustls.md) | TLS via rustls + self-signed certs | Accepted |
