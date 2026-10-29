@@ -1,0 +1,9 @@
+[package]
+name = "nn-state"
+description = "Per-entity state and rolling traffic metrics."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

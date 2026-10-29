@@ -1,0 +1,9 @@
+[package]
+name = "nn-generator"
+description = "Synthetic DIS traffic generator with fault injection."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

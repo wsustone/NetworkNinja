@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/capture",
+    "crates/decode",
+    "crates/state",
+    "crates/rules",
+    "crates/recorder",
+    "crates/server",
+    "crates/generator",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "LicenseRef-Proprietary"
+publish = false
