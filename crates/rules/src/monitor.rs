@@ -22,9 +22,18 @@ pub struct Monitor {
 }
 
 impl Monitor {
+    /// Base-pack enum checks and defaults with an explicit threshold config.
     pub fn new(config: RuleConfig) -> Self {
         Monitor {
             engine: Engine::new(config),
+            ..Default::default()
+        }
+    }
+
+    /// Everything from merged rule packs: thresholds, toggles and checks.
+    pub fn with_packs(packs: &crate::pack::Merged) -> Self {
+        Monitor {
+            engine: Engine::with_packs(packs),
             ..Default::default()
         }
     }
@@ -42,6 +51,7 @@ impl Monitor {
             match result {
                 Ok(pdu) => {
                     self.pdus += 1;
+                    events.extend(self.engine.check_enums(now, &pdu));
                     events.extend(self.engine.before_apply(now, d.source, &pdu, &self.table));
                     self.table.apply(now, d.source, &pdu);
                     events.extend(self.engine.after_apply(now, &pdu, &self.table));

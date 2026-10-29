@@ -139,7 +139,7 @@ Rules are data, not code. Each message set has a versioned rule pack that the en
 
 **Custom message sets (later):** program-specific PDU layouts declared in a pack, so non-standard traffic can be decoded and checked without new code. Sold as a separately licensed add-on (see Business model).
 
-Open question: the pack file format (YAML or TOML for authoring, compiled to a binary form at load) and whether to adopt or extend an existing schema.
+Pack file format: a deliberately small TOML subset, parsed with no dependencies so the binary stays self-contained (see [rule-packs.md](rule-packs.md)). Still open: whether to compile packs to a binary form, and whether to adopt or extend an existing schema.
 
 ## Web UI
 

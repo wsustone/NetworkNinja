@@ -1,0 +1,142 @@
+# NetworkNinja base DIS rule pack.
+#
+# Hand-authored subset of SISO-REF-010 enumerations covering the fields the
+# decoder exposes (the six deep-decoded PDU types plus the common header).
+# The full enumeration tables are generated from SISO-REF-010 later; until
+# then this pack errs on the permissive side and sites widen or narrow it
+# with layered packs (see ADR 0003 and docs/rule-packs.md).
+#
+# Layering: this pack is always loaded first, compiled into the binary;
+# files passed with `nn-server --rulepack FILE` sit on top and may override
+# thresholds, disable rules, or replace/disable enum checks by field.
+
+[pack]
+id = "dis-base"
+name = "Base DIS rule pack"
+version = 1
+source = "IEEE 1278.1-2012 structure; SISO-REF-010 enumerations (hand-authored subset)"
+
+[defaults]
+# Seconds between repeats of the same enum violation on the same entity.
+enum_repeat_seconds = 60.0
+# How often time-based checks run, seconds.
+tick_interval = 0.25
+
+# --- Behavioural rules -----------------------------------------------------
+
+[rules.entity-timeout]
+# Expected Entity State interval and the timeout factor (IEEE 1278.1
+# defaults: heartbeat every 5 s, time out after 12 s = 2.4x).
+heartbeat = 5.0
+timeout_multiplier = 2.4
+severity = "warning"
+
+[rules.id-conflict]
+# A second sender must still be reporting this long after the first sender
+# arrived before it counts as a conflict (allows simulator restarts).
+conflict_grace = 2.0
+severity = "critical"
+
+[rules.position-jump]
+# tolerance = max(jump_min_tolerance, jump_dr_multiplier * assumed_dr_threshold)
+#           + speed * jump_timing_slack, metres
+jump_min_tolerance = 50.0
+assumed_dr_threshold = 1.0
+jump_dr_multiplier = 3.0
+jump_timing_slack = 0.5
+severity = "warning"
+
+# --- Enumeration checks ----------------------------------------------------
+# field:    a path from the registry (header.* applies to every PDU)
+# allowed:  integer, "lo-hi" range, "a, b-c" list, or an array of those
+# severity: warning (default) | critical | off
+
+# Header (checked against every PDU). Protocol versions 1-7 are DIS v1
+# through IEEE 1278.1-2012; 0 and 8+ are not assigned.
+[[enum]]
+field = "header.protocol_version"
+allowed = "1-7"
+
+# PDU types assigned in DIS v6 and v7 up to the sim-management family.
+# Later types (directed energy, information operations, etc.) are not in
+# this base list yet — widen it in a site pack if your range uses them.
+[[enum]]
+field = "header.pdu_type"
+allowed = "1-38"
+
+[[enum]]
+field = "header.protocol_family"
+allowed = "0-8"
+
+# Entity State.
+[[enum]]
+field = "entity-state.force_id"
+allowed = "0-16"
+
+[[enum]]
+field = "entity-state.entity_type.kind"
+allowed = "0-9"
+
+[[enum]]
+field = "entity-state.entity_type.domain"
+allowed = "0-5"
+
+[[enum]]
+field = "entity-state.entity_type.country"
+allowed = "0-999"
+
+[[enum]]
+field = "entity-state.entity_type.category"
+allowed = "0-255"
+
+[[enum]]
+field = "entity-state.marking.character_set"
+allowed = "0-1"
+
+[[enum]]
+field = "entity-state.dead_reckoning.algorithm"
+allowed = "0-9"
+
+[[enum]]
+field = "entity-state.alternative_entity_type.kind"
+allowed = "0-9"
+
+[[enum]]
+field = "entity-state.alternative_entity_type.domain"
+allowed = "0-5"
+
+[[enum]]
+field = "entity-state.alternative_entity_type.country"
+allowed = "0-999"
+
+# Warfare. Munition types use the same kind/domain/country ranges.
+[[enum]]
+field = "fire.descriptor.munition_type.kind"
+allowed = "0-9"
+
+[[enum]]
+field = "fire.descriptor.munition_type.domain"
+allowed = "0-5"
+
+[[enum]]
+field = "detonation.descriptor.munition_type.kind"
+allowed = "0-9"
+
+[[enum]]
+field = "detonation.descriptor.munition_type.domain"
+allowed = "0-5"
+
+# Detonation result (0 = other, 1-6 = impact/proximity classes, more in v7).
+[[enum]]
+field = "detonation.result"
+allowed = "0-20"
+
+# Stop/Freeze: reason 0-8 (recess, termination, failure, ...); the frozen
+# behaviour byte is a 3-bit field (run clock / transmit / process updates).
+[[enum]]
+field = "stop-freeze.reason"
+allowed = "0-8"
+
+[[enum]]
+field = "stop-freeze.frozen_behavior"
+allowed = "0-7"

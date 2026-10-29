@@ -6,7 +6,7 @@
 
 use nn_capture::{Datagram, PcapReader, UdpConfig, UdpSource};
 use nn_decode::{Pdu, PduBody};
-use nn_rules::{AlertEvent, AlertState, Monitor, RuleConfig, Severity};
+use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
 use nn_server::{describe, Tally};
 use nn_state::secs;
 use std::fs::File;
@@ -39,6 +39,8 @@ COMMON OPTIONS (display filters; totals always count everything)
     --quiet               No per-PDU lines; alerts and summaries only
     --alerts-only         Same as --quiet
     --every SECS          Print a summary every N seconds (default 10)
+    --rulepack FILE       Layer a rule pack over the built-in base pack
+                          (repeatable; later files win)
 ";
 
 #[derive(Default)]
@@ -108,6 +110,7 @@ fn real_main() -> Result<(), String> {
     let mut udp = UdpConfig::default();
     let mut duration = None;
     let mut speed = None;
+    let mut pack_files: Vec<String> = Vec::new();
     let mut common = Common {
         filter: Filter::default(),
         quiet: false,
@@ -131,13 +134,15 @@ fn real_main() -> Result<(), String> {
             "--type" => common.filter.types.push(val()?),
             "--quiet" | "--alerts-only" => common.quiet = true,
             "--every" => common.every = val()?.parse().map_err(|e| bad(&e))?,
+            "--rulepack" => pack_files.push(val()?),
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
 
+    let packs = Merged::load(&pack_files).map_err(|e| e.to_string())?;
     match command.as_str() {
-        "listen" => listen(&udp, duration, &common),
-        "replay" => replay(file.as_deref().unwrap(), speed, &common),
+        "listen" => listen(&udp, duration, &common, &packs),
+        "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
         other => Err(format!("unknown command '{other}' (expected listen or replay)")),
     }
 }
@@ -152,10 +157,10 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    fn new() -> Self {
+    fn new(packs: &Merged) -> Self {
         Pipeline {
             tally: Tally::default(),
-            monitor: Monitor::new(RuleConfig::default()),
+            monitor: Monitor::with_packs(packs),
             origin: 0.0,
             alerts_fired: 0,
         }
@@ -178,6 +183,7 @@ impl Pipeline {
     fn print_alerts(&mut self, events: &[AlertEvent]) {
         for e in events {
             let t = e.at - self.origin;
+            let rule = format!("{}/{}", e.alert.pack, e.alert.rule_id);
             match e.state {
                 AlertState::Firing => {
                     self.alerts_fired += 1;
@@ -185,11 +191,10 @@ impl Pipeline {
                         Severity::Critical => "CRITICAL",
                         Severity::Warning => "WARNING",
                     };
-                    println!("{t:>9.3}  ** ALERT {sev:<8} {:<15} {}", e.alert.rule.name(), e.reason);
+                    println!("{t:>9.3}  ** ALERT {sev:<8} {rule} {}", e.reason);
                 }
                 AlertState::Resolved => println!(
-                    "{t:>9.3}  ** RESOLVED         {:<15} {} {} (open {:.1} s)",
-                    e.alert.rule.name(),
+                    "{t:>9.3}  ** RESOLVED         {rule} {} {} (open {:.1} s)",
                     e.alert.key.id,
                     e.reason,
                     e.at - e.alert.since
@@ -215,14 +220,15 @@ fn show(p: &mut Pipeline, d: &Datagram, t: f64, common: &Common) {
     p.print_alerts(&events);
 }
 
-fn listen(cfg: &UdpConfig, duration: Option<f64>, common: &Common) -> Result<(), String> {
+fn listen(cfg: &UdpConfig, duration: Option<f64>, common: &Common, packs: &Merged) -> Result<(), String> {
     let mut src = UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?;
     eprintln!("nn-server: listening on {} (receive-only)", src.local_addr());
+    eprintln!("  rule packs: {}", packs.packs.join(" + "));
     for g in &cfg.multicast_groups {
         eprintln!("  joined multicast {g} on {}", cfg.multicast_interface);
     }
     let start = Instant::now();
-    let mut p = Pipeline::new();
+    let mut p = Pipeline::new(packs);
     p.origin = secs(SystemTime::now());
     let mut next_summary = common.every;
     loop {
@@ -247,14 +253,15 @@ fn listen(cfg: &UdpConfig, duration: Option<f64>, common: &Common) -> Result<(),
     Ok(())
 }
 
-fn replay(path: &str, speed: Option<f64>, common: &Common) -> Result<(), String> {
+fn replay(path: &str, speed: Option<f64>, common: &Common, packs: &Merged) -> Result<(), String> {
     let f = File::open(path).map_err(|e| format!("{path}: {e}"))?;
     let mut reader = PcapReader::new(BufReader::new(f)).map_err(|e| format!("{path}: {e}"))?;
     eprintln!(
         "nn-server: replaying {path}{}",
         speed.map(|s| format!(" at {s}x")).unwrap_or_default()
     );
-    let mut p = Pipeline::new();
+    eprintln!("  rule packs: {}", packs.packs.join(" + "));
+    let mut p = Pipeline::new(packs);
     let wall_start = Instant::now();
     let mut first: Option<SystemTime> = None;
     let mut next_summary = common.every;
