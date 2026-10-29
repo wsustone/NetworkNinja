@@ -687,13 +687,118 @@ pub fn apply_command(m: &mut Monitor, text: &str) -> Result<(Vec<AlertEvent>, St
 }
 
 /// The once-per-second aggregated state the dashboard renders.
-pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], recent: &VecDeque<String>) -> String {
-    let now = m.now;
+/// One entity as the dashboard's JSON record. `seen` (not `age`) keeps the
+/// string stable between heartbeats so the delta diff stays quiet.
+fn entity_json(rec: &nn_state::EntityRecord, now: f64, timeout: f64) -> String {
+    let k = rec.kinematics();
+    let (lat, lon, alt) = geo::ecef_to_lla(&k.location);
+    let speed =
+        ((k.velocity.x * k.velocity.x + k.velocity.y * k.velocity.y + k.velocity.z * k.velocity.z) as f64).sqrt();
+    let age = (now - rec.last_seen).max(0.0);
+    format!(
+        "{{\"id\":\"{}\",\"exercise\":{},\"marking\":\"{}\",\"force\":{},\"ek\":{},\"edom\":{},\"etype\":\"{}\",\"lat\":{},\"lon\":{},\"alt\":{},\"heading\":{},\"speed\":{},\"seen\":{},\"senders\":{},\"removed\":{},\"deactivated\":{},\"stale\":{},\"frozen\":{}}}",
+        rec.key.id,
+        rec.key.exercise,
+        esc(&rec.marking),
+        rec.force_id,
+        rec.entity_type.kind,
+        rec.entity_type.domain,
+        rec.entity_type,
+        fnum(lat),
+        fnum(lon),
+        fnum(alt),
+        fnum(k.orientation.psi.to_degrees() as f64),
+        fnum(speed),
+        fnum(rec.last_seen),
+        rec.sources.len(),
+        rec.removed,
+        rec.deactivated(),
+        age > timeout,
+        rec.appearance & nn_decode::appearance::FROZEN != 0,
+    )
+}
+
+/// Rebuild the delta baseline from the monitor's entity table.
+pub fn entity_baseline(m: &Monitor, prev: &mut std::collections::BTreeMap<String, String>) {
     let timeout = m.engine.config.timeout();
+    prev.clear();
+    for r in m.table.entities.values() {
+        prev.insert(r.key.id.to_string(), entity_json(r, m.now, timeout));
+    }
+}
+
+/// `{"type":"delta","ents":[changed/new],"gone":[ids],…}` plus the usual
+/// header fields. `prev` is updated to the new baseline.
+pub fn delta_json(
+    m: &Monitor,
+    uptime: f64,
+    clients: usize,
+    packs: &[String],
+    prev: &mut std::collections::BTreeMap<String, String>,
+) -> String {
+    let mut s = top_json(m, uptime, clients, packs, "delta");
+    let timeout = m.engine.config.timeout();
+    s.push_str(",\"ents\":[");
+    let mut first = true;
+    for r in m.table.entities.values() {
+        let id = r.key.id.to_string();
+        let j = entity_json(r, m.now, timeout);
+        if prev.get(&id) == Some(&j) {
+            continue;
+        }
+        prev.insert(id, j.clone());
+        if !first {
+            s.push(',');
+        }
+        first = false;
+        s.push_str(&j);
+    }
+    s.push_str("],\"gone\":[");
+    let cur: std::collections::BTreeSet<String> = prev.keys().cloned().collect();
+    first = true;
+    for id in cur {
+        if !m.table.entities.values().any(|r| r.key.id.to_string() == id) {
+            prev.remove(&id);
+            if !first {
+                s.push(',');
+            }
+            first = false;
+            s.push_str(&format!("\"{id}\""));
+        }
+    }
+    s.push_str("]}");
+    s
+}
+
+pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], recent: &VecDeque<String>) -> String {
+    let mut s = String::with_capacity(8192);
+    s.push_str(&top_json(m, uptime, clients, packs, "state"));
+    s.push_str(",\"entities\":[");
+    let timeout = m.engine.config.timeout();
+    let mut first = true;
+    for rec in m.table.entities.values() {
+        if !first {
+            s.push(',');
+        }
+        first = false;
+        s.push_str(&entity_json(rec, m.now, timeout));
+    }
+    s.push_str("],\"recent\":[");
+    s.push_str(&recent.iter().cloned().collect::<Vec<_>>().join(","));
+    s.push_str("]}");
+    s
+}
+
+/// The fields every state/delta frame shares: clock, uptime, clients,
+/// packs, totals, rates, exercises and active alerts.
+fn top_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], kind: &str) -> String {
+    let now = m.now;
     let w1 = m.metrics.window(now, 1);
     let w10 = m.metrics.window(now, 10);
-    let mut s = String::with_capacity(8192);
-    s.push_str("{\"type\":\"state\",\"at\":");
+    let mut s = String::with_capacity(4096);
+    s.push_str("{\"type\":\"");
+    s.push_str(kind);
+    s.push_str("\",\"at\":");
     s.push_str(&fnum(now));
     s.push_str(",\"uptime\":");
     s.push_str(&fnum(uptime));
@@ -728,41 +833,6 @@ pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], re
         s.push_str(&format!("\"{id}\":{{\"frozen\":{}}}", ex.frozen));
     }
     s.push('}');
-    s.push_str(",\"entities\":[");
-    let mut first = true;
-    for rec in m.table.entities.values() {
-        if !first {
-            s.push(',');
-        }
-        first = false;
-        let k = rec.kinematics();
-        let (lat, lon, alt) = geo::ecef_to_lla(&k.location);
-        let speed =
-            ((k.velocity.x * k.velocity.x + k.velocity.y * k.velocity.y + k.velocity.z * k.velocity.z) as f64).sqrt();
-        let age = (now - rec.last_seen).max(0.0);
-        s.push_str(&format!(
-            "{{\"id\":\"{}\",\"exercise\":{},\"marking\":\"{}\",\"force\":{},\"ek\":{},\"edom\":{},\"etype\":\"{}\",\"lat\":{},\"lon\":{},\"alt\":{},\"heading\":{},\"speed\":{},\"age\":{},\"senders\":{},\"removed\":{},\"deactivated\":{},\"stale\":{},\"frozen\":{}}}",
-            rec.key.id,
-            rec.key.exercise,
-            esc(&rec.marking),
-            rec.force_id,
-            rec.entity_type.kind,
-            rec.entity_type.domain,
-            rec.entity_type,
-            fnum(lat),
-            fnum(lon),
-            fnum(alt),
-            fnum(k.orientation.psi.to_degrees() as f64),
-            fnum(speed),
-            fnum(age),
-            rec.sources.len(),
-            rec.removed,
-            rec.deactivated(),
-            age > timeout,
-            rec.appearance & nn_decode::appearance::FROZEN != 0,
-        ));
-    }
-    s.push(']');
     s.push_str(",\"alerts\":[");
     let mut first = true;
     for a in m.engine.active() {
@@ -793,9 +863,6 @@ pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], re
         s.push('}');
     }
     s.push(']');
-    s.push_str(",\"recent\":[");
-    s.push_str(&recent.iter().cloned().collect::<Vec<_>>().join(","));
-    s.push_str("]}");
     s
 }
 

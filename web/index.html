@@ -187,6 +187,7 @@ function render() {
   $("hFrozen").innerHTML = anyFrozen ? '<span class="frozen">FROZEN</span>' : "";
   const ef = $("efilter").value.trim().toLowerCase();
   const rows = [...state.entities]
+    .map(e => { e.age = Math.max(0, state.at - (e.seen || state.at)); return e; })
     .filter(e => !ef || [e.id, e.marking, e.etype, e.force, e.exercise].join(" ").toLowerCase().includes(ef))
     .sort((a,b) => {
     let x = a[sortKey], y = b[sortKey];
@@ -305,10 +306,19 @@ function updateMap() {
   map.setFilter("entsel", ["==",["get","id"], selected || ""]);
 }
 
+let byId = {};
 function take(s) {
   if (s.type === "state") {
     if (!seeded) { for (const a of s.recent || []) pushEntry(a, true); seeded = true; }
+    byId = {};
+    for (const e of s.entities) byId[e.id] = e;
     state = s; render(); updateMap();
+  } else if (s.type === "delta" && state) {
+    for (const e of s.ents || []) byId[e.id] = e;
+    for (const id of s.gone || []) delete byId[id];
+    Object.assign(state, {at:s.at, uptime:s.uptime, clients:s.clients, totals:s.totals, rates:s.rates, exercises:s.exercises, alerts:s.alerts});
+    state.entities = Object.values(byId);
+    render(); updateMap();
   } else if (s.kind) pushEntry(s);
 }
 
