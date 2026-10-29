@@ -16,6 +16,9 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 const INDEX_HTML: &str = include_str!("../../../web/index.html");
+const MAPLIBRE_JS: &str = include_str!("../../../web/vendor/maplibre-gl.js");
+const MAPLIBRE_CSS: &str = include_str!("../../../web/vendor/maplibre-gl.css");
+const WORLD_GEOJSON: &str = include_str!("../../../web/world.geojson");
 /// Queued frames per client before it is dropped as too slow.
 const CLIENT_QUEUE: usize = 128;
 /// Log entries kept in memory for `/api/log` and new clients.
@@ -256,6 +259,15 @@ fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
     match (req.method.as_str(), path) {
         ("GET", "/" | "/index.html") => {
             let _ = respond(s, "200 OK", "text/html; charset=utf-8", INDEX_HTML);
+        }
+        ("GET", "/vendor/maplibre-gl.js") => {
+            let _ = respond(s, "200 OK", "text/javascript; charset=utf-8", MAPLIBRE_JS);
+        }
+        ("GET", "/vendor/maplibre-gl.css") => {
+            let _ = respond(s, "200 OK", "text/css; charset=utf-8", MAPLIBRE_CSS);
+        }
+        ("GET", "/world.geojson") => {
+            let _ = respond(s, "200 OK", "application/geo+json", WORLD_GEOJSON);
         }
         ("GET", "/api/state") => {
             let body = hub.snapshot.lock().unwrap().clone().unwrap_or_else(|| "{}".into());

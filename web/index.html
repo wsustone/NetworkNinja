@@ -3,6 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NetworkNinja</title>
+<link rel="stylesheet" href="/vendor/maplibre-gl.css">
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --crit:#f85149; --warn:#d29922; --ok:#3fb950; }
   * { box-sizing: border-box; }
@@ -42,6 +43,8 @@
   #filter::placeholder, #efilter::placeholder { color:var(--dim); }
   .tablewrap { max-height:70vh; overflow:auto; }
   .empty { padding:1em; color:var(--dim); }
+  #map { grid-column:1 / -1; height:420px; position:relative; }
+  .maplibregl-ctrl-attrib { font-size:10px; }
 </style>
 
 <header>
@@ -74,7 +77,9 @@
     <input id="filter" placeholder="filter: entity, rule, message…">
     <ul id="alerts"></ul>
   </section>
+  <section id="map"></section>
 </main>
+<script src="/vendor/maplibre-gl.js"></script>
 
 <script>
 "use strict";
@@ -184,10 +189,50 @@ function render() {
   renderFeed();
 }
 
+// --- map (MapLibre, offline basemap + entity layer) ---
+let map = null, mapReady = false;
+function initMap() {
+  if (!window.maplibregl) return;
+  map = new maplibregl.Map({
+    container: "map",
+    style: {version: 8, sources: {}, layers: [
+      {id:"bg", type:"background", paint:{"background-color":"#0d1117"}},
+    ]},
+    center: [-121.9, 36.6], zoom: 9, attributionControl: {compact: true},
+  });
+  map.on("load", () => {
+    map.addSource("countries", {type:"geojson", data:"/world.geojson"});
+    map.addSource("ents", {type:"geojson", data:{type:"FeatureCollection", features:[]}});
+    map.addLayer({id:"countries", type:"fill", source:"countries",
+      paint:{"fill-color":"#161b22", "fill-outline-color":"#30363d"}});
+    map.addLayer({id:"ents", type:"circle", source:"ents",
+      paint:{"circle-radius":5,
+        "circle-color":["match",["get","st"],"live","#3fb950","frozen","#d29922","silent","#d29922","#8b949e"],
+        "circle-stroke-color":"#e6edf3","circle-stroke-width":1}});
+    map.addLayer({id:"entlbl", type:"symbol", source:"ents",
+      layout:{"text-field":["get","marking"],"text-size":10,"text-offset":[0,0.9]},
+      paint:{"text-color":"#8b949e","text-halo-color":"#0d1117","text-halo-width":1}});
+    map.on("click", "ents", ev => selectEntity(ev.features[0].properties.id));
+    mapReady = true;
+    updateMap();
+  });
+}
+function updateMap() {
+  if (!mapReady || !state) return;
+  map.getSource("ents").setData({type:"FeatureCollection", features:
+    state.entities.filter(e => !e.removed).map(e => ({
+      type:"Feature",
+      geometry:{type:"Point", coordinates:[e.lon, e.lat]},
+      properties:{id:e.id, marking:e.marking, st:statusOf(e)},
+    }))});
+  map.setPaintProperty("ents", "circle-stroke-width",
+    ["case", ["==",["get","id"], selected || ""], 3, 1]);
+}
+
 function take(s) {
   if (s.type === "state") {
     if (!seeded) { for (const a of s.recent || []) pushEntry(a, true); seeded = true; }
-    state = s; render();
+    state = s; render(); updateMap();
   } else if (s.kind) pushEntry(s);
 }
 
@@ -227,6 +272,7 @@ $("alerts").onclick = ev => {
 };
 $("filter").oninput = renderFeed;
 $("efilter").oninput = render;
+initMap();
 fetch("/api/log?limit=500").then(r => r.json()).then(d => (d.entries || []).forEach(e => pushEntry(e, true))).catch(() => {});
 connect();
 </script>
