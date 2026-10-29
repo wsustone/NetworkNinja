@@ -481,7 +481,10 @@ fn serve(
                                         true
                                     }
                                     Err(e) => {
-                                        hub.log("error", &info_json(now_secs(), &format!("cannot reopen recording: {e}")));
+                                        hub.log(
+                                            "error",
+                                            &info_json(now_secs(), &format!("cannot reopen recording: {e}")),
+                                        );
                                         false
                                     }
                                 }
@@ -565,7 +568,14 @@ fn serve(
                 entity_baseline(&m, &mut prev_ents);
                 next_full = t + 30.0;
             } else {
-                hub.broadcast(&delta_json(&m, t, hub.client_count(), &packs.packs, &mut prev_ents, replay_pos));
+                hub.broadcast(&delta_json(
+                    &m,
+                    t,
+                    hub.client_count(),
+                    &packs.packs,
+                    &mut prev_ents,
+                    replay_pos,
+                ));
             }
             next_state = t + 1.0;
         }
