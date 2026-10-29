@@ -32,7 +32,11 @@ cargo clippy --workspace --all-targets # must be warning-free
 Recordings: `--record x.nnrec` while serving; pick it from the header
 run dropdown (`--runs DIR` for `/api/runs`); scrub bar + `--speed`.
 Accounts: `nn-server passwd FILE --user U --pass P`, then `serve --users
-FILE`. TLS (ADR 0006): `nn-server cert nn [--host NAME]` writes
+FILE`. Passwords are PBKDF2-HMAC-SHA256 (`user:pbkdf2:salt:hash` lines);
+older `user:salt:hash` SHA-1 lines still verify — re-run `passwd` to
+upgrade one. Login is `POST /api/login` with a form body; the session
+token goes in `Authorization: Bearer` (`?token=` only for `/ws`), idles
+out after 12 h, and `POST /api/logout` ends it. TLS (ADR 0006): `nn-server cert nn [--host NAME]` writes
 `nn.crt` + `nn.key` (refuses to overwrite), then `serve --cert nn.crt --key
 nn.key` → HTTPS + WSS on the `--http` port; no flags = plaintext as before.
 TLS WebSockets share one rustls session between the reader/writer threads

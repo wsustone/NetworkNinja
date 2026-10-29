@@ -285,3 +285,68 @@ fn delta_sends_only_changed_entities() {
     let s = state_json(&m, 8.0, 0, &packs, &VecDeque::new(), None);
     assert!(s.contains("\"seen\":") && !s.contains("\"age\":"), "{s}");
 }
+
+fn http(addr: std::net::SocketAddr, req: &str) -> String {
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    s.write_all(req.as_bytes()).unwrap();
+    let mut buf = Vec::new();
+    s.read_to_end(&mut buf).unwrap();
+    String::from_utf8_lossy(&buf).to_string()
+}
+
+#[test]
+fn login_logout_and_bearer_sessions() {
+    let (addr, hub) = Hub::listen("127.0.0.1:0").unwrap();
+    hub.set_snapshot("{\"type\":\"state\"}".into());
+    let mut a = nn_server::auth::Auth::empty();
+    a.set_user("ops", "p&ss w%rd");
+    hub.set_auth(std::sync::Arc::new(a));
+
+    // Gate: no token, bad token.
+    assert!(http_get(addr, "/api/state").starts_with("HTTP/1.1 401"));
+    assert!(http(
+        addr,
+        "GET /api/state HTTP/1.1\r\nhost: x\r\nauthorization: Bearer nope\r\n\r\n"
+    )
+    .starts_with("HTTP/1.1 401"));
+    // The page itself is open.
+    assert!(http_get(addr, "/").starts_with("HTTP/1.1 200"));
+
+    // Credentials travel in the body, percent-encoded like a browser form.
+    let login = |body: &str| {
+        http(
+            addr,
+            &format!(
+                "POST /api/login HTTP/1.1\r\nhost: x\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            ),
+        )
+    };
+    assert!(login("user=ops&pass=wrong").starts_with("HTTP/1.1 401"));
+    assert!(http(
+        addr,
+        "POST /api/login?user=ops&pass=p%26ss+w%25rd HTTP/1.1\r\nhost: x\r\n\r\n"
+    )
+    .starts_with("HTTP/1.1 401"));
+    let ok = login("user=ops&pass=p%26ss+w%25rd");
+    assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
+    let body = ok.split("\r\n\r\n").nth(1).unwrap();
+    let token = body.split("\"token\":\"").nth(1).unwrap().split('"').next().unwrap();
+    assert_eq!(token.len(), 40);
+    assert!(body.contains("\"user\":\"ops\""));
+
+    let bearer = format!("GET /api/state HTTP/1.1\r\nhost: x\r\nauthorization: Bearer {token}\r\n\r\n");
+    assert!(http(addr, &bearer).contains("{\"type\":\"state\"}"));
+    // ?token= still works for the WebSocket path.
+    assert!(http_get(addr, &format!("/api/state?token={token}")).starts_with("HTTP/1.1 200"));
+
+    let out = http(
+        addr,
+        &format!("POST /api/logout HTTP/1.1\r\nhost: x\r\nauthorization: Bearer {token}\r\n\r\n"),
+    );
+    assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+    assert!(http(addr, &bearer).starts_with("HTTP/1.1 401"));
+    let log = hub.log_tail(0, 10);
+    assert!(log.contains("ops logged in") && log.contains("ops logged out"), "{log}");
+}

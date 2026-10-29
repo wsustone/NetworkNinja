@@ -29,6 +29,7 @@ const CLIENT_QUEUE: usize = 128;
 /// Log entries kept in memory for `/api/log` and new clients.
 const LOG_CAP: usize = 2_000;
 const MAX_HTTP_HEAD: usize = 16 * 1024;
+const MAX_HTTP_BODY: usize = 64 * 1024;
 const MAX_WS_PAYLOAD: u64 = 1 << 20;
 
 /// The dashboard feed hub: WebSocket clients, the latest state push and the
@@ -299,6 +300,7 @@ struct Request {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
+    body: Vec<u8>,
 }
 
 impl Request {
@@ -342,7 +344,59 @@ fn read_request(r: &mut impl Read) -> io::Result<Request> {
             headers.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
-    Ok(Request { method, path, headers })
+    let mut req = Request {
+        method,
+        path,
+        headers,
+        body: buf.split_off(head_end + 4),
+    };
+    let want: usize = req.header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    if want > MAX_HTTP_BODY {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "body too large"));
+    }
+    while req.body.len() < want {
+        let n = r.read(&mut chunk)?;
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "closed"));
+        }
+        req.body.extend_from_slice(&chunk[..n]);
+    }
+    req.body.truncate(want);
+    Ok(req)
+}
+
+/// `name=value` from a query string or form body, percent-decoded.
+fn param(pairs: &str, name: &str) -> Option<String> {
+    pairs.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+        (k == name).then(|| pct_decode(v))
+    })
+}
+
+fn pct_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                match std::str::from_utf8(&b[i + 1..i + 3])
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                {
+                    Some(x) => {
+                        out.push(x);
+                        i += 2;
+                    }
+                    None => out.push(b'%'),
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -462,17 +516,24 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
     };
     let path = req.path.split(['?', '#']).next().unwrap_or("/");
     let query = req.path.split('?').nth(1).unwrap_or_default();
-    let qparam = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name).map(String::from));
+    let qparam = |name: &str| param(query, name);
     // Bearer-token gate: /api/* and /ws require a session when --users is set.
+    // The token rides `Authorization: Bearer` or, for the WebSocket, `?token=`.
     let auth = hub.auth();
-    let user = auth.as_ref().and_then(|a| qparam("token=").and_then(|t| a.check(&t)));
-    if auth.is_some() && user.is_none() && ((path.starts_with("/api/") && path != "/api/login") || path == "/ws") {
+    let token = req
+        .header("authorization")
+        .and_then(|v| v.strip_prefix("Bearer ").map(str::to_string))
+        .or_else(|| qparam("token"));
+    let user = auth.as_ref().and_then(|a| token.as_deref().and_then(|t| a.check(t)));
+    let open = path == "/api/login" || path == "/api/logout";
+    if auth.is_some() && user.is_none() && ((path.starts_with("/api/") && !open) || path == "/ws") {
         let _ = respond(s, "401 Unauthorized", "application/json", "{\"need\":\"auth\"}");
         return;
     }
     match (req.method.as_str(), path) {
         ("POST", "/api/login") => {
-            let ok = match (auth.as_ref(), qparam("user="), qparam("pass=")) {
+            let form = String::from_utf8_lossy(&req.body);
+            let ok = match (auth.as_ref(), param(&form, "user"), param(&form, "pass")) {
                 (Some(a), Some(u), Some(p)) if a.verify(&u, &p) => Some((a.issue(&u), u)),
                 _ => None,
             };
@@ -495,6 +556,14 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                     );
                 }
             }
+        }
+        ("POST", "/api/logout") => {
+            if let (Some(a), Some(t)) = (auth.as_ref(), token.as_deref()) {
+                if let Some(u) = a.revoke(t) {
+                    hub.log("info", &info_json(now_secs(), &format!("{u} logged out")));
+                }
+            }
+            let _ = respond(s, "200 OK", "application/json", "{\"ok\":true}");
         }
         ("GET", "/" | "/index.html") => {
             let _ = respond(s, "200 OK", "text/html; charset=utf-8", INDEX_HTML);
@@ -531,7 +600,7 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                     .split('&')
                     .find_map(|kv| kv.strip_prefix(name).and_then(|v| v.parse().ok()))
             };
-            let arg_s = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name).map(String::from));
+            let arg_s = |name: &str| qparam(name.trim_end_matches('='));
             let body = match hub.db_query(&crate::store::EventQuery {
                 after: arg("after=").unwrap_or(0),
                 kind: arg_s("kind="),

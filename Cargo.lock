@@ -321,6 +321,7 @@ dependencies = [
 name = "nn-server"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "nn-capture",
  "nn-decode",
  "nn-generator",
