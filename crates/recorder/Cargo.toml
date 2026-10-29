@@ -7,3 +7,4 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+nn-capture = { version = "0.1.0", path = "../capture" }

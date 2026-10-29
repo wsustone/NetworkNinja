@@ -91,6 +91,9 @@ dependencies = [
 [[package]]
 name = "nn-recorder"
 version = "0.1.0"
+dependencies = [
+ "nn-capture",
+]
 
 [[package]]
 name = "nn-rules"
@@ -109,6 +112,7 @@ dependencies = [
  "nn-capture",
  "nn-decode",
  "nn-generator",
+ "nn-recorder",
  "nn-rules",
  "nn-state",
  "rusqlite",

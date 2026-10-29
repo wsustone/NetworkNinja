@@ -36,6 +36,10 @@ LISTEN / SERVE OPTIONS
                           (serve only; JSON lines, loaded back at startup)
     --db FILE             Store the event log in SQLite FILE for indexed
                           search via /api/log (serve only)
+    --record FILE         Record every datagram to FILE (native format)
+    --replay FILE         Replay a --record file through the dashboard
+                          instead of live capture (serve only)
+    --speed N             Replay speed multiplier (default 1)
 
 REPLAY OPTIONS
     --speed X             Replay at X times real time (default: as fast as possible)
@@ -121,6 +125,8 @@ fn real_main() -> Result<(), String> {
     let mut http: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let mut log_file: Option<String> = None;
     let mut db_file: Option<String> = None;
+    let mut record_file: Option<String> = None;
+    let mut replay_file: Option<String> = None;
     let mut pack_files: Vec<String> = Vec::new();
     let mut common = Common {
         filter: Filter::default(),
@@ -149,6 +155,8 @@ fn real_main() -> Result<(), String> {
             "--http" => http = val()?.parse().map_err(|e| bad(&e))?,
             "--log" => log_file = Some(val()?),
             "--db" => db_file = Some(val()?),
+            "--record" => record_file = Some(val()?),
+            "--replay" => replay_file = Some(val()?),
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -157,7 +165,17 @@ fn real_main() -> Result<(), String> {
     match command.as_str() {
         "listen" => listen(&udp, duration, &common, &packs),
         "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
-        "serve" => serve(&udp, http, duration, log_file.as_deref(), db_file.as_deref(), &packs),
+        "serve" => serve(
+            &udp,
+            http,
+            duration,
+            log_file.as_deref(),
+            db_file.as_deref(),
+            record_file.as_deref(),
+            replay_file.as_deref(),
+            speed.unwrap_or(1.0),
+            &packs,
+        ),
         other => Err(format!("unknown command '{other}' (expected listen, replay or serve)")),
     }
 }
@@ -313,17 +331,43 @@ fn replay(path: &str, speed: Option<f64>, common: &Common, packs: &Merged) -> Re
 /// Live capture plus the embedded dashboard: entity state once a second and
 /// alerts the moment they fire, over WebSocket. Every alert, decode error
 /// and server event lands in the event log (`/api/log`, `--log` on disk).
+enum Src {
+    Udp(UdpSource),
+    Rec(nn_recorder::Reader),
+}
+
+#[allow(clippy::too_many_arguments)]
 fn serve(
     cfg: &UdpConfig,
     http: std::net::SocketAddr,
     duration: Option<f64>,
     log_file: Option<&str>,
     db_file: Option<&str>,
+    record_file: Option<&str>,
+    replay_file: Option<&str>,
+    speed: f64,
     packs: &Merged,
 ) -> Result<(), String> {
-    let mut src = UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?;
+    let mut src: Src = match replay_file {
+        Some(path) => {
+            let r = nn_recorder::Reader::open(std::path::Path::new(path))
+                .map_err(|e| format!("cannot open recording {path}: {e}"))?;
+            Src::Rec(r)
+        }
+        None => Src::Udp(UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?),
+    };
+    let mut rec_w = record_file
+        .map(|p| {
+            nn_recorder::Writer::create(std::path::Path::new(p))
+                .map_err(|e| format!("cannot create recording {p}: {e}"))
+        })
+        .transpose()?;
     let (addr, hub) = Hub::listen(http).map_err(|e| format!("cannot bind dashboard on {http}: {e}"))?;
-    eprintln!("nn-server: listening on {} (receive-only)", src.local_addr());
+    let desc = match &src {
+        Src::Udp(s) => format!("live on {}", s.local_addr()),
+        Src::Rec(_) => format!("replaying {} at {}x", replay_file.unwrap(), speed),
+    };
+    eprintln!("nn-server: {desc} (receive-only)");
     eprintln!("  dashboard: http://{addr}");
     eprintln!("  rule packs: {}", packs.packs.join(" + "));
     for g in &cfg.multicast_groups {
@@ -344,11 +388,7 @@ fn serve(
         "info",
         &info_json(
             now_secs(),
-            &format!(
-                "capture started on {}; packs {}",
-                src.local_addr(),
-                packs.packs.join(" + ")
-            ),
+            &format!("capture started {desc}; packs {}", packs.packs.join(" + ")),
         ),
     );
     let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<String>(64);
@@ -381,8 +421,26 @@ fn serve(
             }
         }
         let errs_before = m.decode_errors;
-        let events = match src.recv().map_err(|e| format!("receive failed: {e}"))? {
+        let next = match &mut src {
+            Src::Udp(s) => s.recv().map_err(|e| format!("receive failed: {e}"))?,
+            Src::Rec(r) => {
+                let d = r.next_datagram().map_err(|e| format!("replay failed: {e}"))?;
+                if let Some(d) = &d {
+                    let first = r.first_at.unwrap_or(d.received_at);
+                    let recorded = d.received_at.duration_since(first).unwrap_or_default().as_secs_f64();
+                    let target = std::time::Duration::from_secs_f64(recorded / speed);
+                    if target > start.elapsed() {
+                        std::thread::sleep(target - start.elapsed());
+                    }
+                }
+                d
+            }
+        };
+        let events = match next {
             Some(d) => {
+                if let Some(w) = rec_w.as_mut() {
+                    let _ = w.record(&d);
+                }
                 let (.., events) = m.ingest(&d);
                 if m.decode_errors > errs_before {
                     hub.log(
@@ -392,7 +450,12 @@ fn serve(
                 }
                 events
             }
-            None => m.tick(now_secs()),
+            None => {
+                if matches!(src, Src::Rec(_)) {
+                    break; // end of recording
+                }
+                m.tick(now_secs())
+            }
         };
         for e in &events {
             let j = hub.log("alert", &alert_json(e));
@@ -407,6 +470,10 @@ fn serve(
             hub.broadcast(&snap);
             next_state = t + 1.0;
         }
+    }
+    if let Some(w) = rec_w.as_mut() {
+        let _ = w.flush();
+        eprintln!("  recorded {} datagrams", w.records);
     }
     eprintln!(
         "=== final: {} entities, {} dashboard clients",
