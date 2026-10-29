@@ -7,7 +7,9 @@
 use nn_capture::{Datagram, PcapReader, UdpConfig, UdpSource};
 use nn_decode::{Pdu, PduBody};
 use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
-use nn_server::web::{alert_json, delta_json, entity_baseline, error_json, info_json, now_secs, state_json, Hub};
+use nn_server::web::{
+    alert_json, delta_json, entity_baseline, error_json, info_json, now_secs, state_json, Hub, Switch,
+};
 use nn_server::{describe, Tally};
 use nn_state::secs;
 use std::collections::VecDeque;
@@ -40,6 +42,8 @@ LISTEN / SERVE OPTIONS
     --replay FILE         Replay a --record file through the dashboard
                           instead of live capture (serve only)
     --speed N             Replay speed multiplier (default 1)
+    --runs DIR            Directory of .nnrec files listed at /api/runs
+                          and switchable from the dashboard (serve only)
 
 REPLAY OPTIONS
     --speed X             Replay at X times real time (default: as fast as possible)
@@ -127,6 +131,7 @@ fn real_main() -> Result<(), String> {
     let mut db_file: Option<String> = None;
     let mut record_file: Option<String> = None;
     let mut replay_file: Option<String> = None;
+    let mut runs_dir: Option<String> = None;
     let mut pack_files: Vec<String> = Vec::new();
     let mut common = Common {
         filter: Filter::default(),
@@ -157,6 +162,7 @@ fn real_main() -> Result<(), String> {
             "--db" => db_file = Some(val()?),
             "--record" => record_file = Some(val()?),
             "--replay" => replay_file = Some(val()?),
+            "--runs" => runs_dir = Some(val()?),
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -174,6 +180,7 @@ fn real_main() -> Result<(), String> {
             record_file.as_deref(),
             replay_file.as_deref(),
             speed.unwrap_or(1.0),
+            runs_dir.as_deref(),
             &packs,
         ),
         other => Err(format!("unknown command '{other}' (expected listen, replay or serve)")),
@@ -346,6 +353,7 @@ fn serve(
     record_file: Option<&str>,
     replay_file: Option<&str>,
     speed: f64,
+    runs_dir: Option<&str>,
     packs: &Merged,
 ) -> Result<(), String> {
     let mut src: Src = match replay_file {
@@ -384,6 +392,10 @@ fn serve(
             .map_err(|e| format!("cannot open db {path}: {e}"))?;
         eprintln!("  event store: {path}");
     }
+    if let Some(dir) = runs_dir {
+        hub.set_runs_dir(std::path::PathBuf::from(dir));
+        eprintln!("  recordings: {dir}");
+    }
     hub.log(
         "info",
         &info_json(
@@ -396,6 +408,8 @@ fn serve(
     let mut m = Monitor::with_packs(packs);
     let mut recent: VecDeque<String> = VecDeque::new();
     let mut prev_ents = std::collections::BTreeMap::new();
+    let mut speed = speed;
+    let mut epoch = Instant::now();
     let start = Instant::now();
     let mut next_state = 0.0;
     let mut next_full = 0.0;
@@ -407,15 +421,56 @@ fn serve(
         for _ in 0..32 {
             let Ok(c) = cmd_rx.try_recv() else { break };
             match nn_server::web::apply_command(&mut m, &c) {
-                Ok((events, msg)) => {
-                    for e in &events {
+                Ok(out) => {
+                    for e in &out.events {
                         let j = hub.log("alert", &alert_json(e));
                         if recent.len() >= 100 {
                             recent.pop_front();
                         }
                         recent.push_back(j);
                     }
-                    hub.log("info", &info_json(now_secs(), &msg));
+                    if let Some(sw) = &out.switch {
+                        let switched = match sw {
+                            Switch::Live => match UdpSource::open(cfg) {
+                                Ok(s) => {
+                                    src = Src::Udp(s);
+                                    true
+                                }
+                                Err(e) => {
+                                    hub.log("error", &info_json(now_secs(), &format!("cannot reopen listener: {e}")));
+                                    false
+                                }
+                            },
+                            Switch::Replay(f) => {
+                                let Some(dir) = runs_dir else {
+                                    hub.log("error", &info_json(now_secs(), "no --runs dir configured"));
+                                    continue;
+                                };
+                                match nn_recorder::Reader::open(&std::path::Path::new(dir).join(f)) {
+                                    Ok(r) => {
+                                        src = Src::Rec(r);
+                                        true
+                                    }
+                                    Err(e) => {
+                                        hub.log("error", &info_json(now_secs(), &format!("cannot open {f}: {e}")));
+                                        false
+                                    }
+                                }
+                            }
+                            Switch::Speed(x) => {
+                                speed = *x;
+                                false
+                            }
+                        };
+                        if switched {
+                            m = Monitor::with_packs(packs);
+                            prev_ents.clear();
+                            recent.clear();
+                            next_full = 0.0;
+                            epoch = Instant::now();
+                        }
+                    }
+                    hub.log("info", &info_json(now_secs(), &out.note));
                 }
                 Err(e) => {
                     hub.log("info", &info_json(now_secs(), &format!("command rejected: {e}")));
@@ -431,8 +486,8 @@ fn serve(
                     let first = r.first_at.unwrap_or(d.received_at);
                     let recorded = d.received_at.duration_since(first).unwrap_or_default().as_secs_f64();
                     let target = std::time::Duration::from_secs_f64(recorded / speed);
-                    if target > start.elapsed() {
-                        std::thread::sleep(target - start.elapsed());
+                    if target > epoch.elapsed() {
+                        std::thread::sleep(target - epoch.elapsed());
                     }
                 }
                 d

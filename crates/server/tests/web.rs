@@ -191,12 +191,16 @@ fn client_commands_ack_and_mute() {
     .is_err());
 
     // Mute by entity, then by rule, then unmute.
-    let (events, msg) = apply_command(
+    let out = apply_command(
         &mut m,
         "{\"cmd\":\"mute\",\"entity\":\"1:1:2\",\"exercise\":1,\"secs\":60}",
     )
     .unwrap();
-    assert!(events.is_empty() && msg.contains("muted 1:1:2"), "{msg}");
+    assert!(
+        out.events.is_empty() && out.note.contains("muted 1:1:2"),
+        "{}",
+        out.note
+    );
     assert!(m.engine.muted("entity-timeout", &key, m.now));
     assert!(m.engine.muted("header.pdu_type", &key, m.now));
 
