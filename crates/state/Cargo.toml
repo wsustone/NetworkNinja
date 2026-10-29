@@ -7,3 +7,5 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+nn-decode = { path = "../decode" }
+nn-capture = { path = "../capture" }

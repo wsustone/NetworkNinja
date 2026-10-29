@@ -69,9 +69,7 @@ pub fn default_family(pdu_type: u8) -> u8 {
     match pdu_type {
         pdu_type::ENTITY_STATE => family::ENTITY_INFORMATION,
         pdu_type::FIRE | pdu_type::DETONATION => family::WARFARE,
-        pdu_type::REMOVE_ENTITY | pdu_type::START_RESUME | pdu_type::STOP_FREEZE => {
-            family::SIMULATION_MANAGEMENT
-        }
+        pdu_type::REMOVE_ENTITY | pdu_type::START_RESUME | pdu_type::STOP_FREEZE => family::SIMULATION_MANAGEMENT,
         _ => 0,
     }
 }
@@ -110,7 +108,11 @@ pub struct EntityId {
 
 impl EntityId {
     pub const fn new(site: u16, application: u16, entity: u16) -> Self {
-        EntityId { site, application, entity }
+        EntityId {
+            site,
+            application,
+            entity,
+        }
     }
 }
 
@@ -210,7 +212,10 @@ impl Marking {
         for (dst, src) in chars.iter_mut().zip(text.bytes()) {
             *dst = src;
         }
-        Marking { character_set: 1, chars }
+        Marking {
+            character_set: 1,
+            chars,
+        }
     }
 
     /// The marking text, trimmed of trailing NULs and spaces.

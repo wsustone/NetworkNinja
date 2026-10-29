@@ -16,6 +16,7 @@ version = "0.1.0"
 dependencies = [
  "nn-capture",
  "nn-decode",
+ "nn-state",
 ]
 
 [[package]]
@@ -25,6 +26,12 @@ version = "0.1.0"
 [[package]]
 name = "nn-rules"
 version = "0.1.0"
+dependencies = [
+ "nn-capture",
+ "nn-decode",
+ "nn-generator",
+ "nn-state",
+]
 
 [[package]]
 name = "nn-server"
@@ -33,8 +40,14 @@ dependencies = [
  "nn-capture",
  "nn-decode",
  "nn-generator",
+ "nn-rules",
+ "nn-state",
 ]
 
 [[package]]
 name = "nn-state"
 version = "0.1.0"
+dependencies = [
+ "nn-capture",
+ "nn-decode",
+]

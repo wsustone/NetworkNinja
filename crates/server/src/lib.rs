@@ -70,11 +70,23 @@ impl Tally {
             self.senders.len()
         );
         let join = |m: Vec<String>| if m.is_empty() { "-".to_string() } else { m.join("  ") };
-        s += &format!("  by type:     {}\n", join(self.pdus_by_type.iter().map(|(k, v)| format!("{k} {v}")).collect()));
-        s += &format!("  by version:  {}\n", join(self.by_version.iter().map(|(k, v)| format!("v{k} {v}")).collect()));
-        s += &format!("  by exercise: {}\n", join(self.by_exercise.iter().map(|(k, v)| format!("ex{k} {v}")).collect()));
+        s += &format!(
+            "  by type:     {}\n",
+            join(self.pdus_by_type.iter().map(|(k, v)| format!("{k} {v}")).collect())
+        );
+        s += &format!(
+            "  by version:  {}\n",
+            join(self.by_version.iter().map(|(k, v)| format!("v{k} {v}")).collect())
+        );
+        s += &format!(
+            "  by exercise: {}\n",
+            join(self.by_exercise.iter().map(|(k, v)| format!("ex{k} {v}")).collect())
+        );
         if self.errors() > 0 {
-            s += &format!("  errors:      {}\n", join(self.errors_by_kind.iter().map(|(k, v)| format!("{k} {v}")).collect()));
+            s += &format!(
+                "  errors:      {}\n",
+                join(self.errors_by_kind.iter().map(|(k, v)| format!("{k} {v}")).collect())
+            );
         }
         s
     }
@@ -118,7 +130,12 @@ pub fn describe(p: &Pdu) -> String {
             s.originating, s.receiving, s.reason, s.request_id
         ),
         PduBody::RemoveEntity(r) => format!("{} removes {}  request {}", r.originating, r.receiving, r.request_id),
-        PduBody::Other(raw) => format!("type {} family {}  {} bytes", h.pdu_type, h.protocol_family, raw.len() + HEADER_LEN),
+        PduBody::Other(raw) => format!(
+            "type {} family {}  {} bytes",
+            h.pdu_type,
+            h.protocol_family,
+            raw.len() + HEADER_LEN
+        ),
     };
     format!("{head} {body}")
 }

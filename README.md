@@ -6,19 +6,23 @@ NetworkNinja catches exercise-breaking network and simulation faults live, such 
 
 ## Status
 
-**Milestone 1 (generator + capture + decoder): mostly done.**
+The core loop works end to end on the console: synthetic or captured DIS traffic in, the three MVP alerts out.
 
-| Item | Status |
+| Milestone | Status |
 | --- | --- |
-| DIS v6/v7 codec: header for every PDU type, full decode of Entity State, Fire, Detonation, Start/Resume, Stop/Freeze, Remove Entity | Done |
-| Multi-PDU datagram splitting; errors counted, never silent | Done |
-| Hostile-input robustness test (300k mutated/random inputs, no panic) | Done |
-| UDP socket capture: broadcast, multicast join on a chosen interface | Done |
-| pcap import/export (Ethernet, Linux cooked, raw IP; VLAN tags) | Done |
-| Synthetic generator: heartbeats, DR-threshold updates, Fire/Detonation, all faults and controls, ground-truth JSON | Done |
-| End-to-end tests: generator → pcap and generator → live UDP, totals match ground truth exactly | Done |
-| Live libpcap capture (SPAN port), pcapng import, kernel drop counters, cargo-fuzz harness | To do |
-| Swap the in-house codec for (or validate it against) dis-rs | To do (see ADR 0001) |
+| 1. Generator + capture + decoder | Mostly done: codec, UDP and multicast capture, pcap and pcapng import, generator with every fault and control. Still to do: live libpcap capture, kernel drop counters, cargo-fuzz harness, dis-rs comparison (ADR 0001). |
+| 2. Entity state, metrics and monitor health | Core done: entity table per exercise and sender, heartbeat statistics, rolling PDU/byte/error rates, freeze periods, dead reckoning (algorithms 1–9), ECEF ↔ lat/lon. Still to do: performance measurement against the targets, kernel drop counts. |
+| 3. Rule packs + three alert rules | Rules done and proven against the generator (below). Still to do: the rule-pack format and loader, SISO-REF-010 enumeration checks. |
+| 4–7 | Not started. |
+
+**What the tests prove** (`cargo test --workspace`):
+
+- Each injected fault raises exactly one alert, on the right entity: timeout within 0.6 s of the 12 s deadline, ID conflict by the original sender's next report, position jump on the very next report.
+- Control scenarios raise nothing: clean Remove Entity, simulators restarting on new ports, and a 20 s freeze (with simulators that keep heartbeating and ones that go silent).
+- Only running exercise time counts towards a timeout; frozen time doesn't.
+- A 30-minute clean run with 75 entities raises nothing.
+- Entity counts and rolling rates match generator ground truth exactly.
+- Disabling any suppression (freeze, restart grace, dead reckoning) makes the tests fail.
 
 ## Docs
 
@@ -43,7 +47,7 @@ rulepacks/    base DIS rule pack — not started
 
 ## Build and test
 
-Requires a recent stable Rust. There are no external crate dependencies yet.
+Requires a recent stable Rust (1.87 or later). There are no external crate dependencies yet. CI runs fmt, clippy and the tests on Linux and Windows for every push.
 
 ```
 cargo build --release
@@ -52,10 +56,10 @@ cargo test --workspace
 
 ## Try it
 
-Terminal 1, the console listener:
+Terminal 1, the console listener (`--alerts-only` hides the per-PDU lines):
 
 ```
-./target/release/nn-server listen --port 3000
+./target/release/nn-server listen --port 3000 --alerts-only
 ```
 
 Terminal 2, synthetic traffic with every fault and control scenario:
@@ -72,7 +76,9 @@ Or generate a pcap and replay it without a network:
 ./target/release/nn-server replay demo.pcap --quiet
 ```
 
-Both tools take `--help`. The generator prints ground truth (PDU counts by type, faults and their times) as JSON; the listener's final summary should match it exactly.
+Expected: an ID-conflict alert on 1:1:2, a position-jump on 1:1:3 (resolving a few seconds later), and an entity-timeout on 1:1:1, and nothing for the removed entity, the restarted site or the freeze.
+
+Both tools take `--help`. The generator prints ground truth (PDU counts by type, faults and their times) as JSON; the listener's final summary should match it. `replay` reads pcap and pcapng.
 
 ## License
 

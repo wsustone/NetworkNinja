@@ -21,7 +21,11 @@ impl std::fmt::Display for DecodeError {
                 write!(f, "truncated: needed {needed} bytes, had {available}")
             }
             DecodeError::BadLength { length } => write!(f, "bad length field {length}"),
-            DecodeError::LengthMismatch { pdu_type, length, expected } => write!(
+            DecodeError::LengthMismatch {
+                pdu_type,
+                length,
+                expected,
+            } => write!(
                 f,
                 "{} length field {length} does not match expected {expected}",
                 pdu_type_name(*pdu_type)
@@ -46,7 +50,10 @@ impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
         let end = self.pos + n;
         if end > self.buf.len() {
-            return Err(DecodeError::Truncated { needed: end, available: self.buf.len() });
+            return Err(DecodeError::Truncated {
+                needed: end,
+                available: self.buf.len(),
+            });
         }
         let s = &self.buf[self.pos..end];
         self.pos = end;
@@ -76,10 +83,18 @@ impl<'a> Reader<'a> {
         Ok(f64::from_be_bytes(a))
     }
     fn entity_id(&mut self) -> Result<EntityId, DecodeError> {
-        Ok(EntityId { site: self.u16()?, application: self.u16()?, entity: self.u16()? })
+        Ok(EntityId {
+            site: self.u16()?,
+            application: self.u16()?,
+            entity: self.u16()?,
+        })
     }
     fn event_id(&mut self) -> Result<EventId, DecodeError> {
-        Ok(EventId { site: self.u16()?, application: self.u16()?, event_number: self.u16()? })
+        Ok(EventId {
+            site: self.u16()?,
+            application: self.u16()?,
+            event_number: self.u16()?,
+        })
     }
     fn entity_type(&mut self) -> Result<EntityType, DecodeError> {
         Ok(EntityType {
@@ -93,16 +108,31 @@ impl<'a> Reader<'a> {
         })
     }
     fn vec3f(&mut self) -> Result<Vec3f, DecodeError> {
-        Ok(Vec3f { x: self.f32()?, y: self.f32()?, z: self.f32()? })
+        Ok(Vec3f {
+            x: self.f32()?,
+            y: self.f32()?,
+            z: self.f32()?,
+        })
     }
     fn world(&mut self) -> Result<WorldCoord, DecodeError> {
-        Ok(WorldCoord { x: self.f64()?, y: self.f64()?, z: self.f64()? })
+        Ok(WorldCoord {
+            x: self.f64()?,
+            y: self.f64()?,
+            z: self.f64()?,
+        })
     }
     fn euler(&mut self) -> Result<EulerAngles, DecodeError> {
-        Ok(EulerAngles { psi: self.f32()?, theta: self.f32()?, phi: self.f32()? })
+        Ok(EulerAngles {
+            psi: self.f32()?,
+            theta: self.f32()?,
+            phi: self.f32()?,
+        })
     }
     fn clock(&mut self) -> Result<ClockTime, DecodeError> {
-        Ok(ClockTime { hour: self.i32()?, time_past_hour: self.u32()? })
+        Ok(ClockTime {
+            hour: self.i32()?,
+            time_past_hour: self.u32()?,
+        })
     }
     fn burst(&mut self) -> Result<BurstDescriptor, DecodeError> {
         Ok(BurstDescriptor {
@@ -140,13 +170,21 @@ fn decode_header(r: &mut Reader) -> Result<PduHeader, DecodeError> {
         protocol_family,
         timestamp,
         length,
-        pdu_status: if protocol_version >= PROTOCOL_VERSION_7 { status } else { 0 },
+        pdu_status: if protocol_version >= PROTOCOL_VERSION_7 {
+            status
+        } else {
+            0
+        },
     })
 }
 
 fn check_len(h: &PduHeader, expected: usize) -> Result<(), DecodeError> {
     if h.length as usize != expected {
-        return Err(DecodeError::LengthMismatch { pdu_type: h.pdu_type, length: h.length, expected });
+        return Err(DecodeError::LengthMismatch {
+            pdu_type: h.pdu_type,
+            length: h.length,
+            expected,
+        });
     }
     Ok(())
 }
@@ -164,7 +202,10 @@ pub fn decode_pdu(buf: &[u8]) -> Result<Pdu, DecodeError> {
         return Err(DecodeError::BadLength { length: header.length });
     }
     if len > buf.len() {
-        return Err(DecodeError::Truncated { needed: len, available: buf.len() });
+        return Err(DecodeError::Truncated {
+            needed: len,
+            available: buf.len(),
+        });
     }
     let mut r = Reader::new(&buf[..len]);
     r.take(HEADER_LEN)?;
@@ -307,7 +348,10 @@ pub fn decode_datagram(buf: &[u8]) -> Vec<Result<Pdu, DecodeError>> {
             break;
         }
         if rest.len() < HEADER_LEN {
-            out.push(Err(DecodeError::Truncated { needed: HEADER_LEN, available: rest.len() }));
+            out.push(Err(DecodeError::Truncated {
+                needed: HEADER_LEN,
+                available: rest.len(),
+            }));
             break;
         }
         let length = u16::from_be_bytes([rest[8], rest[9]]);
@@ -316,7 +360,10 @@ pub fn decode_datagram(buf: &[u8]) -> Vec<Result<Pdu, DecodeError>> {
             break;
         }
         if length as usize > rest.len() {
-            out.push(Err(DecodeError::Truncated { needed: length as usize, available: rest.len() }));
+            out.push(Err(DecodeError::Truncated {
+                needed: length as usize,
+                available: rest.len(),
+            }));
             break;
         }
         // The framing is sound, so a body error only affects this PDU.
@@ -410,14 +457,24 @@ impl Writer {
 /// is filled in from the body; everything else is written as given.
 pub fn encode_pdu(pdu: &Pdu) -> Vec<u8> {
     let h = &pdu.header;
-    let mut w = Writer { buf: Vec::with_capacity(ENTITY_STATE_LEN) };
+    let mut w = Writer {
+        buf: Vec::with_capacity(ENTITY_STATE_LEN),
+    };
     w.u8(h.protocol_version);
     w.u8(h.exercise_id);
     w.u8(h.pdu_type);
-    w.u8(if h.protocol_family == 0 { default_family(h.pdu_type) } else { h.protocol_family });
+    w.u8(if h.protocol_family == 0 {
+        default_family(h.pdu_type)
+    } else {
+        h.protocol_family
+    });
     w.u32(h.timestamp.0);
     w.u16(0); // length, patched below
-    w.u8(if h.protocol_version >= PROTOCOL_VERSION_7 { h.pdu_status } else { 0 });
+    w.u8(if h.protocol_version >= PROTOCOL_VERSION_7 {
+        h.pdu_status
+    } else {
+        0
+    });
     w.u8(0);
 
     match &pdu.body {
