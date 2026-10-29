@@ -209,29 +209,82 @@ function render() {
   renderFeed();
 }
 
-// --- map (MapLibre, offline basemap + entity layer) ---
+// --- map (MapLibre, offline Natural Earth basemap + MIL-STD-2525-ish symbols) ---
 let map = null, mapReady = false;
+const icons = new Set();
+
+function graticule() {
+  const features = [];
+  for (let lon = -180; lon <= 180; lon += 10)
+    features.push({type:"Feature", properties:{}, geometry:{type:"LineString", coordinates:[[lon,-85],[lon,85]]}});
+  for (let lat = -80; lat <= 80; lat += 10)
+    features.push({type:"Feature", properties:{}, geometry:{type:"LineString", coordinates:[[-180,lat],[180,lat]]}});
+  return {type:"FeatureCollection", features};
+}
+
+const FORCE_COLOR = {1:"#58a6ff", 2:"#f85149", 3:"#3fb950"};
+const forceColor = f => FORCE_COLOR[f] || "#d29922";
+
+// Canvas-drawn icon: force frame (friendly box / hostile diamond / neutral
+// square / other circle) around a platform glyph keyed on DIS kind+domain.
+function makeIcon(k, d, f) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 30;
+  const x = c.getContext("2d"), m = 15;
+  x.lineWidth = 2;
+  x.strokeStyle = forceColor(f);
+  x.fillStyle = "#0d1117cc";
+  x.beginPath();
+  if (f === 2) { x.moveTo(m,1); x.lineTo(29,m); x.lineTo(m,29); x.lineTo(1,m); x.closePath(); }      // diamond
+  else if (f === 3) x.rect(3,3,24,24);                                                              // square
+  else if (f === 1) x.rect(2,6,26,18);                                                              // rectangle
+  else x.arc(m, m, 12, 0, 7);                                                                       // circle
+  x.fill(); x.stroke();
+  x.strokeStyle = x.fillStyle = "#e6edf3";
+  x.lineWidth = 1.6;
+  x.beginPath();
+  if (k === 1 && d === 1) { x.rect(8,14,14,5); x.moveTo(19,16); x.lineTo(26,14); x.stroke(); }        // tank
+  else if (k === 1 && d === 2) { x.moveTo(m,7); x.lineTo(22,22); x.lineTo(m,19); x.lineTo(8,22); x.closePath(); x.fill(); } // jet
+  else if (k === 1 && d === 3) { x.moveTo(6,18); x.lineTo(24,18); x.lineTo(21,23); x.lineTo(9,23); x.closePath(); x.fill(); x.fillRect(12,10,6,7); } // ship
+  else if (k === 1 && d === 4) { x.ellipse(m,16,9,5,0,0,7); x.stroke(); x.beginPath(); x.moveTo(m,11); x.lineTo(m,7); x.lineTo(m+4,7); x.stroke(); } // sub
+  else if (k === 1 && d === 5) { x.fillRect(12,12,6,6); x.fillRect(5,13,6,4); x.fillRect(19,13,6,4); }           // satellite
+  else if (k === 2) { x.moveTo(m,6); x.lineTo(18,20); x.lineTo(m,17); x.lineTo(12,20); x.closePath(); x.fill(); x.beginPath(); x.moveTo(12,20); x.lineTo(9,24); x.moveTo(18,20); x.lineTo(21,24); x.stroke(); } // missile
+  else if (k === 3) { x.arc(m,9,3.5,0,7); x.fill(); x.beginPath(); x.moveTo(m,13); x.lineTo(m,22); x.stroke(); } // lifeform
+  else { x.moveTo(m,9); x.lineTo(m,21); x.moveTo(9,m); x.lineTo(21,m); x.stroke(); }                             // other: cross
+  return c;
+}
+function iconName(k, d, f) { return `s-${k}-${d}-${f}`; }
+
 function initMap() {
   if (!window.maplibregl) return;
   map = new maplibregl.Map({
     container: "map",
     style: {version: 8, sources: {}, layers: [
-      {id:"bg", type:"background", paint:{"background-color":"#0d1117"}},
+      {id:"bg", type:"background", paint:{"background-color":"#142435"}},
     ]},
     center: [-121.9, 36.6], zoom: 9, attributionControl: {compact: true},
   });
   map.on("load", () => {
     map.addSource("countries", {type:"geojson", data:"/world.geojson"});
+    map.addSource("coast", {type:"geojson", data:"/ne/coastline"});
+    map.addSource("rivers", {type:"geojson", data:"/ne/rivers"});
+    map.addSource("lakes", {type:"geojson", data:"/ne/lakes"});
+    map.addSource("grat", {type:"geojson", data:graticule()});
     map.addSource("ents", {type:"geojson", data:{type:"FeatureCollection", features:[]}});
     map.addLayer({id:"countries", type:"fill", source:"countries",
-      paint:{"fill-color":"#161b22", "fill-outline-color":"#30363d"}});
-    map.addLayer({id:"ents", type:"circle", source:"ents",
-      paint:{"circle-radius":5,
-        "circle-color":["match",["get","st"],"live","#3fb950","frozen","#d29922","silent","#d29922","#8b949e"],
-        "circle-stroke-color":"#e6edf3","circle-stroke-width":1}});
-    map.addLayer({id:"entlbl", type:"symbol", source:"ents",
-      layout:{"text-field":["get","marking"],"text-size":10,"text-offset":[0,0.9]},
-      paint:{"text-color":"#8b949e","text-halo-color":"#0d1117","text-halo-width":1}});
+      paint:{"fill-color":"#2d4156", "fill-outline-color":"#4a6478"}});
+    map.addLayer({id:"lakes", type:"fill", source:"lakes", paint:{"fill-color":"#1b3048"}});
+    map.addLayer({id:"grat", type:"line", source:"grat", paint:{"line-color":"#3a5068","line-width":0.5,"line-opacity":0.6}});
+    map.addLayer({id:"coast", type:"line", source:"coast", paint:{"line-color":"#7ba0c4","line-width":1}});
+    map.addLayer({id:"rivers", type:"line", source:"rivers", paint:{"line-color":"#3d6a9a","line-width":0.8}});
+    map.addLayer({id:"entsel", type:"circle", source:"ents",
+      filter:["==",["get","id"],""],
+      paint:{"circle-radius":13,"circle-color":"#0000","circle-stroke-color":"#e6edf3","circle-stroke-width":2}});
+    map.addLayer({id:"ents", type:"symbol", source:"ents",
+      layout:{"icon-image":["concat","s-",["to-string",["get","k"]],"-",["to-string",["get","d"]],"-",["to-string",["get","f"]]],
+        "icon-allow-overlap":true,
+        "text-field":["get","marking"],"text-size":10,"text-offset":[0,1.9]},
+      paint:{"text-color":"#c9d1d9","text-halo-color":"#0d1117","text-halo-width":1.2}});
     map.on("click", "ents", ev => selectEntity(ev.features[0].properties.id));
     mapReady = true;
     updateMap();
@@ -239,14 +292,17 @@ function initMap() {
 }
 function updateMap() {
   if (!mapReady || !state) return;
-  map.getSource("ents").setData({type:"FeatureCollection", features:
-    state.entities.filter(e => !e.removed).map(e => ({
-      type:"Feature",
-      geometry:{type:"Point", coordinates:[e.lon, e.lat]},
-      properties:{id:e.id, marking:e.marking, st:statusOf(e)},
-    }))});
-  map.setPaintProperty("ents", "circle-stroke-width",
-    ["case", ["==",["get","id"], selected || ""], 3, 1]);
+  const feats = state.entities.filter(e => !e.removed).map(e => ({
+    type:"Feature",
+    geometry:{type:"Point", coordinates:[e.lon, e.lat]},
+    properties:{id:e.id, marking:e.marking, st:statusOf(e), k:e.ek||0, d:e.edom||0, f:e.force||0},
+  }));
+  for (const ft of feats) {
+    const p = ft.properties, name = iconName(p.k, p.d, p.f);
+    if (!icons.has(name)) { map.addImage(name, makeIcon(p.k, p.d, p.f)); icons.add(name); }
+  }
+  map.getSource("ents").setData({type:"FeatureCollection", features:feats});
+  map.setFilter("entsel", ["==",["get","id"], selected || ""]);
 }
 
 function take(s) {
