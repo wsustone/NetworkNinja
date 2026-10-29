@@ -1,8 +1,7 @@
 //! The embedded dashboard server: HTTP/1.1 for the page and `/api/state`,
 //! RFC 6455 WebSocket for the live feed. Hand-rolled like the rest of the
-//! workspace — no dependencies, no TLS yet (milestone 4's later work adds
-//! TLS and accounts on the management interface; until then it binds to
-//! localhost by default).
+//! workspace over plain TCP or, with `serve --cert/--key`, rustls on the
+//! same port (ADR 0006). Binds to localhost by default.
 
 use nn_rules::{AlertEvent, AlertState, Monitor, MuteScope, Severity};
 use nn_state::{geo, secs, EntityKey};
@@ -13,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
 use crate::auth::Auth;
+use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -76,6 +76,16 @@ impl Hub {
 
     /// Bind `addr`, spawn the accept thread, return the bound address and hub.
     pub fn listen(addr: impl ToSocketAddrs) -> io::Result<(SocketAddr, Arc<Hub>)> {
+        Self::listen_with(addr, None)
+    }
+
+    /// [`Hub::listen`] serving HTTPS + WSS: every accepted connection is
+    /// wrapped in a rustls session (handshake runs on the connection thread).
+    pub fn listen_tls(addr: impl ToSocketAddrs, tls: Arc<ServerConfig>) -> io::Result<(SocketAddr, Arc<Hub>)> {
+        Self::listen_with(addr, Some(tls))
+    }
+
+    fn listen_with(addr: impl ToSocketAddrs, tls: Option<Arc<ServerConfig>>) -> io::Result<(SocketAddr, Arc<Hub>)> {
         let listener = TcpListener::bind(addr)?;
         let local = listener.local_addr()?;
         let hub = Arc::new(Hub::new());
@@ -83,7 +93,15 @@ impl Hub {
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let h = Arc::clone(&h);
-                thread::spawn(move || handle_conn(h, stream));
+                let tls = tls.clone();
+                thread::spawn(move || match tls {
+                    None => handle_conn(h, stream),
+                    Some(cfg) => {
+                        if let Ok(c) = ServerConnection::new(cfg) {
+                            handle_conn(h, TlsStream::new(c, stream));
+                        }
+                    }
+                });
             }
         });
         Ok((local, hub))
@@ -340,17 +358,104 @@ fn seq_of(entry: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn respond(mut s: TcpStream, status: &str, content_type: &str, body: &str) -> io::Result<()> {
+// --- Connections ----------------------------------------------------------
+
+type TlsStream = StreamOwned<ServerConnection, TcpStream>;
+
+/// A dashboard connection: plain TCP, or TLS over TCP.
+trait Conn: Read + Write + Send + 'static {
+    fn tcp(&self) -> &TcpStream;
+    /// Independent reader and writer halves for the WebSocket threads.
+    fn split(self) -> io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)>;
+    /// End the session cleanly (TLS close_notify) before the socket drops.
+    fn close(&mut self) {}
+}
+
+impl Conn for TcpStream {
+    fn tcp(&self) -> &TcpStream {
+        self
+    }
+    fn split(self) -> io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)> {
+        let w = self.try_clone()?;
+        Ok((Box::new(self), Box::new(w)))
+    }
+}
+
+impl Conn for TlsStream {
+    fn tcp(&self) -> &TcpStream {
+        &self.sock
+    }
+    fn split(self) -> io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)> {
+        let wait = self.sock.try_clone()?;
+        let s = Arc::new(Mutex::new(self));
+        Ok((
+            Box::new(TlsReader {
+                s: Arc::clone(&s),
+                wait,
+            }),
+            Box::new(TlsWriter(s)),
+        ))
+    }
+    fn close(&mut self) {
+        self.conn.send_close_notify();
+        let _ = self.conn.complete_io(&mut self.sock);
+    }
+}
+
+/// Read half of a shared TLS session. A rustls session can't be cloned like
+/// a socket, so both halves share it behind a lock; the reader only holds
+/// the lock for non-blocking reads and waits for data on a socket clone,
+/// leaving the writer free in between. Idle waits keep the socket's read
+/// timeout, as on plain TCP.
+struct TlsReader {
+    s: Arc<Mutex<TlsStream>>,
+    wait: TcpStream,
+}
+
+impl Read for TlsReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            let r = {
+                let mut s = self.s.lock().unwrap();
+                s.sock.set_nonblocking(true)?;
+                let r = s.read(buf);
+                s.sock.set_nonblocking(false)?;
+                r
+            };
+            match r {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    self.wait.peek(&mut [0u8; 1])?;
+                }
+                r => return r,
+            }
+        }
+    }
+}
+
+struct TlsWriter(Arc<Mutex<TlsStream>>);
+
+impl Write for TlsWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+fn respond(mut s: impl Conn, status: &str, content_type: &str, body: &str) -> io::Result<()> {
     write!(
         s,
         "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: {content_type}\r\nconnection: close\r\n\r\n{body}",
         body.len()
     )?;
-    s.flush()
+    s.flush()?;
+    s.close();
+    Ok(())
 }
 
-fn handle_conn(hub: Arc<Hub>, mut s: TcpStream) {
-    let _ = s.set_read_timeout(Some(Duration::from_secs(30)));
+fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
+    let _ = s.tcp().set_read_timeout(Some(Duration::from_secs(30)));
     let req = match read_request(&mut s) {
         Ok(r) => r,
         Err(_) => return,
@@ -464,7 +569,7 @@ fn is_ws_upgrade(req: &Request) -> bool {
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request, user: String) {
+fn ws_serve(hub: Arc<Hub>, mut s: impl Conn, req: &Request, user: String) {
     let key = req.header("sec-websocket-key").unwrap_or_default();
     let response = format!(
         "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {}\r\n\r\n",
@@ -479,8 +584,8 @@ fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request, user: String) {
         hub.broadcast_to(id, text_frame(&snap));
     }
     // Writer thread: drains the frame queue onto the socket.
-    let mut writer = match s.try_clone() {
-        Ok(w) => w,
+    let (sock, (mut s, mut writer)) = match s.tcp().try_clone().and_then(|t| Ok((t, s.split()?))) {
+        Ok(v) => v,
         Err(_) => {
             hub.remove_client(id);
             return;
@@ -507,7 +612,7 @@ fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request, user: String) {
             Ok(None) | Err(_) => break,
         }
     }
-    let _ = s.shutdown(std::net::Shutdown::Both);
+    let _ = sock.shutdown(std::net::Shutdown::Both);
     hub.remove_client(id);
     let _ = write_done.join();
 }

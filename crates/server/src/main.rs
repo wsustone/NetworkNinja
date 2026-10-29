@@ -27,6 +27,9 @@ USAGE:
     nn-server replay FILE [OPTIONS]   Decode a pcap file
     nn-server serve [OPTIONS]         Receive traffic and serve the dashboard
     nn-server passwd FILE --user U --pass P   Create or update a user account
+    nn-server cert OUT [--host NAME]...       Write a self-signed OUT.crt + OUT.key
+                          (--host: DNS name or IP, repeatable; default
+                          localhost, 127.0.0.1, ::1)
 
 LISTEN / SERVE OPTIONS
     --port N              UDP port (default 3000)
@@ -46,6 +49,8 @@ LISTEN / SERVE OPTIONS
     --runs DIR            Directory of .nnrec files listed at /api/runs
     --users FILE          Require login for /api and /ws (see `passwd`)
                           and switchable from the dashboard (serve only)
+    --cert FILE --key FILE  Serve the dashboard over HTTPS + WSS with this
+                          PEM cert chain and key (serve only; see `cert`)
 
 REPLAY OPTIONS
     --speed X             Replay at X times real time (default: as fast as possible)
@@ -100,6 +105,22 @@ struct Common {
     every: f64,
 }
 
+/// Write a new file (never clobbering an existing cert or key).
+fn write_new(
+    path: &str,
+    contents: &str,
+    #[cfg_attr(not(unix), allow(unused_variables))] mode: u32,
+) -> Result<(), String> {
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, mode);
+    o.open(path)
+        .and_then(|mut f| f.write_all(contents.as_bytes()))
+        .map_err(|e| format!("{path}: {e}"))
+}
+
 fn main() -> ExitCode {
     match real_main() {
         Ok(()) => ExitCode::SUCCESS,
@@ -118,9 +139,9 @@ fn real_main() -> Result<(), String> {
     }
     let command = args.remove(0);
     let mut file = None;
-    if command == "replay" || command == "passwd" {
+    if command == "replay" || command == "passwd" || command == "cert" {
         if args.is_empty() || args[0].starts_with("--") {
-            return Err("replay needs a pcap FILE".into());
+            return Err(format!("{command} needs a FILE (see --help)"));
         }
         file = Some(args.remove(0));
     }
@@ -143,6 +164,9 @@ fn real_main() -> Result<(), String> {
     let mut users_file = None;
     let mut passwd_user = None;
     let mut passwd_pass = None;
+    let mut cert_file: Option<String> = None;
+    let mut key_file: Option<String> = None;
+    let mut cert_hosts: Vec<String> = Vec::new();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{a} needs a value"));
@@ -171,10 +195,18 @@ fn real_main() -> Result<(), String> {
             "--users" => users_file = Some(val()?),
             "--user" => passwd_user = Some(val()?),
             "--pass" => passwd_pass = Some(val()?),
+            "--cert" => cert_file = Some(val()?),
+            "--key" => key_file = Some(val()?),
+            "--host" => cert_hosts.push(val()?),
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
 
+    let tls = match (cert_file.as_deref(), key_file.as_deref()) {
+        (Some(c), Some(k)) => Some(nn_server::tls::load(c.as_ref(), k.as_ref())?),
+        (None, None) => None,
+        _ => return Err("--cert and --key go together".into()),
+    };
     let packs = Merged::load(&pack_files).map_err(|e| e.to_string())?;
     match command.as_str() {
         "listen" => listen(&udp, duration, &common, &packs),
@@ -190,8 +222,22 @@ fn real_main() -> Result<(), String> {
             speed.unwrap_or(1.0),
             runs_dir.as_deref(),
             users_file.as_deref(),
+            tls,
             &packs,
         ),
+        "cert" => {
+            if cert_hosts.is_empty() {
+                cert_hosts = vec!["localhost".into(), "127.0.0.1".into(), "::1".into()];
+            }
+            let out = file.unwrap();
+            let (cert, key) = nn_server::tls::self_signed(&cert_hosts)?;
+            let (cert_path, key_path) = (format!("{out}.crt"), format!("{out}.key"));
+            write_new(&cert_path, &cert, 0o644)?;
+            write_new(&key_path, &key, 0o600)?;
+            println!("cert: {cert_path} + {key_path} for {}", cert_hosts.join(", "));
+            println!("serve with: nn-server serve --cert {cert_path} --key {key_path}");
+            Ok(())
+        }
         "passwd" => {
             let (Some(f), Some(u), Some(p)) = (file.as_deref(), passwd_user.as_deref(), passwd_pass.as_deref()) else {
                 return Err("usage: nn-server passwd FILE --user NAME --pass PASS".into());
@@ -377,6 +423,7 @@ fn serve(
     speed: f64,
     runs_dir: Option<&str>,
     users_file: Option<&str>,
+    tls: Option<std::sync::Arc<rustls::ServerConfig>>,
     packs: &Merged,
 ) -> Result<(), String> {
     let mut src: Src = match replay_file {
@@ -393,13 +440,18 @@ fn serve(
                 .map_err(|e| format!("cannot create recording {p}: {e}"))
         })
         .transpose()?;
-    let (addr, hub) = Hub::listen(http).map_err(|e| format!("cannot bind dashboard on {http}: {e}"))?;
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    let (addr, hub) = match tls {
+        Some(cfg) => Hub::listen_tls(http, cfg),
+        None => Hub::listen(http),
+    }
+    .map_err(|e| format!("cannot bind dashboard on {http}: {e}"))?;
     let desc = match &src {
         Src::Udp(s) => format!("live on {}", s.local_addr()),
         Src::Rec(_) => format!("replaying {} at {}x", replay_file.unwrap(), speed),
     };
     eprintln!("nn-server: {desc} (receive-only)");
-    eprintln!("  dashboard: http://{addr}");
+    eprintln!("  dashboard: {scheme}://{addr}");
     eprintln!("  rule packs: {}", packs.packs.join(" + "));
     for g in &cfg.multicast_groups {
         eprintln!("  joined multicast {g} on {}", cfg.multicast_interface);

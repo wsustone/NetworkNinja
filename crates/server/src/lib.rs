@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod store;
+pub mod tls;
 pub mod web;
 
 use nn_capture::Datagram;
