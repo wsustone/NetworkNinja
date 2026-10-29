@@ -132,6 +132,27 @@ fn speed(v: &nn_decode::Vec3f) -> f64 {
     ((v.x * v.x + v.y * v.y + v.z * v.z) as f64).sqrt()
 }
 
+/// An operator acknowledgement on a firing alert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ack {
+    pub at: f64,
+    pub by: String,
+    pub note: String,
+}
+
+/// What a mute suppresses: one rule id everywhere, or everything on one entity.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MuteScope {
+    Rule(String),
+    Entity(EntityKey),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mute {
+    pub scope: MuteScope,
+    pub until: f64,
+}
+
 /// The entity a PDU is about, for keying alerts that don't track entity
 /// state. `0:0:0` for PDUs with no entity (e.g. an unknown type).
 fn primary_entity(pdu: &Pdu) -> EntityId {
@@ -158,6 +179,10 @@ pub struct Engine {
     /// Last time each (field, entity) violation fired.
     enum_last: BTreeMap<(&'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
+    /// Operator acknowledgements, keyed by (rule_id, entity).
+    acks: BTreeMap<(String, EntityKey), Ack>,
+    /// Active mutes (entity or rule, each with an expiry).
+    mutes: Vec<Mute>,
     last_tick: f64,
 }
 
@@ -181,6 +206,8 @@ impl Engine {
             enum_repeat: p.enum_repeat_seconds,
             enum_last: BTreeMap::new(),
             active: BTreeMap::new(),
+            acks: BTreeMap::new(),
+            mutes: Vec::new(),
             last_tick: f64::NEG_INFINITY,
         }
     }
@@ -197,8 +224,74 @@ impl Engine {
         self.active.contains_key(&(rule, *key))
     }
 
+    /// Is this rule/entity combination muted right now?
+    pub fn muted(&self, rule_id: &str, key: &EntityKey, now: f64) -> bool {
+        self.mutes.iter().any(|m| {
+            m.until > now
+                && match &m.scope {
+                    MuteScope::Rule(r) => r == rule_id,
+                    MuteScope::Entity(k) => k == key,
+                }
+        })
+    }
+
+    /// Acknowledge a firing alert (matched by its rule_id and entity).
+    pub fn ack(&mut self, rule_id: &str, key: EntityKey, by: &str, note: &str, at: f64) -> bool {
+        if !self.active.values().any(|a| a.rule_id == rule_id && a.key == key) {
+            return false;
+        }
+        self.acks.insert(
+            (rule_id.to_string(), key),
+            Ack {
+                at,
+                by: by.to_string(),
+                note: note.to_string(),
+            },
+        );
+        true
+    }
+
+    /// The ack on an active alert, if any.
+    pub fn ack_of(&self, rule_id: &str, key: &EntityKey) -> Option<&Ack> {
+        self.acks.get(&(rule_id.to_string(), *key))
+    }
+
+    /// Mute a rule id (behavioural name or enum field path) everywhere.
+    pub fn mute_rule(&mut self, rule_id: &str, until: f64) {
+        self.mutes.push(Mute {
+            scope: MuteScope::Rule(rule_id.to_string()),
+            until,
+        });
+    }
+
+    /// Mute everything on an entity and resolve its open alerts.
+    pub fn mute_entity(&mut self, key: EntityKey, until: f64, now: f64) -> Vec<AlertEvent> {
+        self.mutes.push(Mute {
+            scope: MuteScope::Entity(key),
+            until,
+        });
+        let mut out = Vec::new();
+        let keys: Vec<(Rule, EntityKey)> = self.active.keys().filter(|(_, k)| *k == key).copied().collect();
+        for (rule, k) in keys {
+            self.resolve(now, rule, k, "muted".into(), &mut out);
+        }
+        out
+    }
+
+    /// Remove mutes matching a scope exactly.
+    pub fn unmute(&mut self, scope: &MuteScope) -> usize {
+        let before = self.mutes.len();
+        self.mutes.retain(|m| &m.scope != scope);
+        before - self.mutes.len()
+    }
+
+    /// Active mutes (for the health/state feed).
+    pub fn mutes(&self) -> &[Mute] {
+        &self.mutes
+    }
+
     fn fire(&mut self, at: f64, rule: Rule, key: EntityKey, message: String, out: &mut Vec<AlertEvent>) {
-        if self.active.contains_key(&(rule, key)) || !self.enabled(rule) {
+        if self.active.contains_key(&(rule, key)) || !self.enabled(rule) || self.muted(rule.name(), &key, at) {
             return;
         }
         let alert = Alert {
@@ -222,6 +315,9 @@ impl Engine {
     /// Enum violations are point events, not states: they fire once and do
     /// not stay open, and repeat at most every `enum_repeat` seconds.
     fn fire_once(&mut self, at: f64, key: EntityKey, check: &EnumCheck, value: u64, out: &mut Vec<AlertEvent>) {
+        if self.muted(check.spec.name, &key, at) {
+            return;
+        }
         let dedup = (check.spec.name, key);
         if self.enum_last.get(&dedup).is_some_and(|t| at - t < self.enum_repeat) {
             return;
@@ -268,6 +364,7 @@ impl Engine {
 
     fn resolve(&mut self, at: f64, rule: Rule, key: EntityKey, reason: String, out: &mut Vec<AlertEvent>) {
         if let Some(alert) = self.active.remove(&(rule, key)) {
+            self.acks.remove(&(alert.rule_id.clone(), key));
             out.push(AlertEvent {
                 at,
                 state: AlertState::Resolved,
@@ -393,6 +490,7 @@ impl Engine {
             return out;
         }
         self.last_tick = now;
+        self.mutes.retain(|m| m.until > now);
         let timeout = self.config.timeout();
 
         if self.enabled(Rule::EntityTimeout) {

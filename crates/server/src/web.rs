@@ -4,8 +4,8 @@
 //! TLS and accounts on the management interface; until then it binds to
 //! localhost by default).
 
-use nn_rules::{AlertEvent, AlertState, Monitor, Severity};
-use nn_state::{geo, secs};
+use nn_rules::{AlertEvent, AlertState, Monitor, MuteScope, Severity};
+use nn_state::{geo, secs, EntityKey};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -35,6 +35,8 @@ pub struct Hub {
     seq: AtomicU64,
     /// `--log` file: every entry appended as one JSON line.
     log_file: Mutex<Option<std::fs::File>>,
+    /// Client commands (ack/mute) forwarded to the serve loop.
+    cmd_tx: Mutex<Option<SyncSender<String>>>,
 }
 
 impl Default for Hub {
@@ -52,6 +54,7 @@ impl Hub {
             log_buf: Mutex::new(VecDeque::new()),
             seq: AtomicU64::new(0),
             log_file: Mutex::new(None),
+            cmd_tx: Mutex::new(None),
         }
     }
 
@@ -154,6 +157,17 @@ impl Hub {
 
     fn remove_client(&self, id: u64) {
         self.clients.lock().unwrap().remove(&id);
+    }
+
+    /// The serve loop's command inbox: every client text frame lands here.
+    pub fn set_command_sink(&self, tx: SyncSender<String>) {
+        *self.cmd_tx.lock().unwrap() = Some(tx);
+    }
+
+    fn send_command(&self, text: String) {
+        if let Some(tx) = self.cmd_tx.lock().unwrap().as_ref() {
+            let _ = tx.try_send(text);
+        }
     }
 }
 
@@ -306,12 +320,13 @@ fn ws_serve(hub: Arc<Hub>, mut s: TcpStream, req: &Request) {
         }
     });
 
-    // Reader: pings, pongs, close. Text/binary frames are client commands
-    // (acknowledge, mute) — handled in milestone 4's operator actions.
+    // Reader: pings, pongs, close, and client commands (ack/mute) forwarded
+    // to the serve loop.
     loop {
         match read_frame(&mut s) {
             Ok(Some(f)) if f.opcode == 0x9 => hub.broadcast_to(id, frame(0xA, &f.payload)),
             Ok(Some(f)) if f.opcode == 0x8 => break,
+            Ok(Some(f)) if f.opcode == 0x1 => hub.send_command(String::from_utf8_lossy(&f.payload).to_string()),
             Ok(Some(_)) => {}
             Ok(None) | Err(_) => break,
         }
@@ -525,6 +540,76 @@ pub fn error_json(at: f64, count: u64, source: &str) -> String {
     )
 }
 
+// --- client commands --------------------------------------------------------
+
+/// `"key": "value"` string extraction from flat JSON (no nesting).
+fn jstr<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    let rest = text.split(&format!("\"{key}\"")).nth(1)?;
+    rest.trim_start()
+        .strip_prefix(':')?
+        .trim_start()
+        .strip_prefix('"')?
+        .split('"')
+        .next()
+}
+
+fn jnum(text: &str, key: &str) -> Option<f64> {
+    let rest = text.split(&format!("\"{key}\"")).nth(1)?;
+    let rest = rest.trim_start().strip_prefix(':')?.trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+/// One client command (ack, mute, unmute) against the monitor.
+/// Returns alert events to log (mute resolutions) plus an info message.
+pub fn apply_command(m: &mut Monitor, text: &str) -> Result<(Vec<AlertEvent>, String), String> {
+    let now = m.now;
+    let cmd = jstr(text, "cmd").ok_or("missing \"cmd\"")?;
+    let entity = |t: &str| -> Result<EntityKey, String> {
+        let id: nn_decode::EntityId = jstr(t, "entity").ok_or("missing \"entity\"")?.parse()?;
+        let exercise = jnum(t, "exercise").unwrap_or(0.0) as u8;
+        Ok(EntityKey { exercise, id })
+    };
+    let dur = |t: &str| jnum(t, "secs").unwrap_or(300.0);
+    match cmd {
+        "ack" => {
+            let rule = jstr(text, "rule").ok_or("missing \"rule\"")?;
+            let key = entity(text)?;
+            let note = jstr(text, "note").unwrap_or("");
+            if m.engine.ack(rule, key, "operator", note, now) {
+                Ok((vec![], format!("acknowledged {rule} on {}", key.id)))
+            } else {
+                Err(format!("no active {rule} alert on {}", key.id))
+            }
+        }
+        "mute" => {
+            let key = entity(text)?;
+            let until = now + dur(text);
+            let events = m.engine.mute_entity(key, until, now);
+            Ok((events, format!("muted {} for {:.0} s", key.id, until - now)))
+        }
+        "mute_rule" => {
+            let rule = jstr(text, "rule").ok_or("missing \"rule\"")?;
+            let until = now + dur(text);
+            m.engine.mute_rule(rule, until);
+            Ok((vec![], format!("muted rule {rule} for {:.0} s", until - now)))
+        }
+        "unmute" => {
+            let key = entity(text)?;
+            let n = m.engine.unmute(&MuteScope::Entity(key));
+            Ok((vec![], format!("removed {n} mute(s) on {}", key.id)))
+        }
+        "unmute_rule" => {
+            let rule = jstr(text, "rule").ok_or("missing \"rule\"")?;
+            let n = m.engine.unmute(&MuteScope::Rule(rule.to_string()));
+            Ok((vec![], format!("removed {n} mute(s) on {rule}")))
+        }
+        other => Err(format!("unknown command '{other}'")),
+    }
+}
+
 /// The once-per-second aggregated state the dashboard renders.
 pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], recent: &VecDeque<String>) -> String {
     let now = m.now;
@@ -608,7 +693,7 @@ pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], re
         }
         first = false;
         s.push_str(&format!(
-            "{{\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"severity\":\"{}\",\"since\":{},\"message\":\"{}\"}}",
+            "{{\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"severity\":\"{}\",\"since\":{},\"message\":\"{}\"",
             esc(&a.pack),
             esc(&a.rule_id),
             esc(&a.key.id.to_string()),
@@ -619,6 +704,15 @@ pub fn state_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], re
             fnum(a.since),
             esc(&a.message),
         ));
+        if let Some(ack) = m.engine.ack_of(&a.rule_id, &a.key) {
+            s.push_str(&format!(
+                ",\"ack\":{{\"by\":\"{}\",\"note\":\"{}\",\"at\":{}}}",
+                esc(&ack.by),
+                esc(&ack.note),
+                fnum(ack.at)
+            ));
+        }
+        s.push('}');
     }
     s.push(']');
     s.push_str(",\"recent\":[");

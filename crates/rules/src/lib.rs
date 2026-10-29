@@ -18,6 +18,6 @@ mod minitoml;
 mod monitor;
 pub mod pack;
 
-pub use engine::{Alert, AlertEvent, AlertState, Engine, Rule, RuleConfig, Severity};
+pub use engine::{Ack, Alert, AlertEvent, AlertState, Engine, Mute, MuteScope, Rule, RuleConfig, Severity};
 pub use monitor::Monitor;
 pub use pack::{builtin as builtin_packs, EnumCheck, FieldSpec, Merged, PackError, RulePack};

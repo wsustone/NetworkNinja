@@ -5,7 +5,8 @@
 use nn_capture::Datagram;
 use nn_decode::{encode_pdu, pdu_type, DisTimestamp, EntityId, EntityState, Pdu, PduBody, PduHeader};
 use nn_generator::{run, Config, Sender, Sink};
-use nn_rules::{AlertState, Merged, Monitor, Rule, RuleConfig, RulePack, Severity};
+use nn_rules::{AlertState, Merged, Monitor, MuteScope, Rule, RuleConfig, RulePack, Severity};
+use nn_state::EntityKey;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::{Duration, SystemTime};
@@ -203,6 +204,48 @@ fn allowed_forms() {
     assert_eq!(check("\"0-3, 7\""), vec![0..=3, 7..=7]);
     assert_eq!(check("[1, 2, 3]"), vec![1..=1, 2..=2, 3..=3]);
     assert_eq!(check("5"), vec![5..=5]);
+}
+
+#[test]
+fn mute_entity_suppresses_then_unmute_restores() {
+    let mut m = Monitor::new(RuleConfig::default());
+    m.ingest(&datagram(&entity_state(1), 0.0));
+    let now = m.now;
+    let key = EntityKey {
+        exercise: 1,
+        id: EntityId::new(1, 1, 1),
+    };
+
+    // Silenced while muted: nothing fires at the 12 s deadline.
+    assert!(m.engine.mute_entity(key, now + 600.0, now).is_empty());
+    let ev = m.tick(now + 20.0);
+    assert!(ev.iter().all(|e| e.alert.rule != Rule::EntityTimeout));
+
+    // Back again after unmute.
+    m.engine.unmute(&MuteScope::Entity(key));
+    let ev = m.tick(now + 40.0);
+    assert!(ev.iter().any(|e| e.alert.rule == Rule::EntityTimeout));
+}
+
+#[test]
+fn ack_marks_an_active_alert_and_clears_on_resolve() {
+    let mut m = Monitor::new(RuleConfig::default());
+    m.ingest(&datagram(&entity_state(1), 0.0));
+    let now = m.now;
+    let key = EntityKey {
+        exercise: 1,
+        id: EntityId::new(1, 1, 1),
+    };
+    m.tick(now + 20.0);
+    assert!(m.engine.is_active(Rule::EntityTimeout, &key));
+
+    assert!(m.engine.ack("entity-timeout", key, "op", "watching it", now));
+    assert_eq!(m.engine.ack_of("entity-timeout", &key).unwrap().note, "watching it");
+    assert!(!m.engine.ack("nope", key, "op", "", now));
+
+    // Reporting again resolves the alert and drops the ack.
+    m.ingest(&datagram(&entity_state(1), 25.0));
+    assert!(m.engine.ack_of("entity-timeout", &key).is_none());
 }
 
 struct Collect {
