@@ -82,6 +82,9 @@ pub struct RuleConfig {
     /// A second sender must still be reporting this long after the first
     /// sender's arrival before it counts as a conflict (allows restarts).
     pub conflict_grace: f64,
+    /// The same PDU bytes from a second sender within this many seconds are
+    /// a relay's copy (gateway, second NIC, SPAN), not a second simulator.
+    pub duplicate_window: f64,
     /// Smallest position-jump tolerance, metres.
     pub jump_min_tolerance: f64,
     /// Assumed sender dead-reckoning threshold, metres, and the multiple of
@@ -100,6 +103,7 @@ impl Default for RuleConfig {
             heartbeat: 5.0,
             timeout_multiplier: 2.4,
             conflict_grace: 2.0,
+            duplicate_window: 1.0,
             jump_min_tolerance: 50.0,
             assumed_dr_threshold: 1.0,
             jump_dr_multiplier: 3.0,
@@ -385,11 +389,11 @@ impl Engine {
             id: es.entity_id,
         };
         let Some(rec) = table.get(&key) else { return out };
-        let last_change = match table.exercises.get(&key.exercise) {
-            Some(ex) if ex.frozen => return out,
-            Some(ex) => ex.last_change,
-            None => 0.0,
-        };
+        let ex = table.state_for(&key);
+        if ex.frozen {
+            return out;
+        }
+        let last_change = ex.last_change;
         let timeout = self.config.timeout();
 
         // Position jump: compare with this sender's own previous report.
@@ -469,12 +473,27 @@ impl Engine {
                 }
             }
             PduBody::RemoveEntity(r) => {
+                // Wildcards address every matching entity; alerts on a key
+                // already pruned from the table are matched directly.
+                let keys: Vec<EntityKey> = self
+                    .active
+                    .keys()
+                    .map(|(_, k)| *k)
+                    .filter(|k| k.exercise == exercise && nn_state::table::id_matches(&r.receiving, &k.id))
+                    .collect();
+                for key in keys {
+                    for rule in [Rule::EntityTimeout, Rule::PositionJump, Rule::IdConflict] {
+                        self.resolve(now, rule, key, "entity removed".into(), &mut out);
+                    }
+                }
+            }
+            PduBody::Detonation(d) => {
                 let key = EntityKey {
                     exercise,
-                    id: r.receiving,
+                    id: d.munition_id,
                 };
-                for rule in [Rule::EntityTimeout, Rule::PositionJump, Rule::IdConflict] {
-                    self.resolve(now, rule, key, "entity removed".into(), &mut out);
+                for rule in [Rule::EntityTimeout, Rule::PositionJump] {
+                    self.resolve(now, rule, key, "munition detonated".into(), &mut out);
                 }
             }
             _ => {}
@@ -494,12 +513,11 @@ impl Engine {
         let timeout = self.config.timeout();
 
         if self.enabled(Rule::EntityTimeout) {
-            let running = nn_state::ExerciseState::default();
             for (key, rec) in &table.entities {
-                let ex = table.exercises.get(&key.exercise).unwrap_or(&running);
                 if rec.removed || rec.deactivated() {
                     continue;
                 }
+                let ex = table.state_for(key);
                 if ex.frozen {
                     continue;
                 }
@@ -530,8 +548,10 @@ impl Engine {
                         self.resolve(now, rule, key, "only one sender left".into(), &mut out);
                     }
                 }
+                // A record expired from the table is not a removal: the alert
+                // stays open until the entity returns or is removed.
                 Rule::EntityTimeout => {
-                    if rec.is_none_or(|r| r.removed || r.deactivated()) {
+                    if rec.is_some_and(|r| r.removed || r.deactivated()) {
                         self.resolve(now, rule, key, "entity removed or deactivated".into(), &mut out);
                     }
                 }

@@ -98,13 +98,13 @@ Every sample is tagged from one dimension set (exercise, site, entity, sender, P
 
 ## Alert rules
 
-The MVP ships three rules, each defined so that it stays quiet on a healthy exercise. No rule fires while the exercise is frozen.
+The MVP ships three rules, each defined so that it stays quiet on a healthy exercise. No rule fires on an entity while it is frozen: a Stop/Freeze applies to the exercise, site or application its receiving ID addresses (65535 = all), and a Start/Resume resumes every freeze it covers. Rule timing runs on a steady clock for live capture, so an NTP or PTP step on the monitor host doesn't look like every entity going silent.
 
 | Rule | Fires when | Suppressed when | Default |
 | --- | --- | --- | --- |
-| Entity timeout | No Entity State from an entity for longer than its heartbeat × multiplier | Remove Entity received; deactivated appearance bit set; frozen time doesn't count, and senders get one heartbeat of grace after a resume | 5 s heartbeat × 2.4 = 12 s |
-| Entity ID conflict | The same site/application/entity triple arrives from two different source IP:port pairs, or with a different entity type | A single source whose port changes after a restart (no overlap within 2 s) | Any overlap |
-| Position jump | The reported position differs from the dead-reckoned prediction by more than the tolerance | First report from a sender; an entity reappearing after a timeout; the first report after a freeze or resume | 3× sender DR threshold, plus a physical speed cap per entity kind |
+| Entity timeout | No Entity State from an entity for longer than its heartbeat × multiplier | Remove Entity received (wildcards expand to every matching entity); deactivated appearance bit set; a tracked munition's Detonation; frozen time doesn't count, and senders get one heartbeat of grace after a resume. An open timeout stays open when the silent entity ages out of the table | 5 s heartbeat × 2.4 = 12 s |
+| Entity ID conflict | The same site/application/entity triple arrives from two different source IP:port pairs, or with a different entity type | A single source whose port changes after a restart (no overlap within 2 s); byte-identical copies from a relay within 1 s (`duplicate_window`; counted as `pdu.duplicates`) | Any overlap |
+| Position jump | The reported position differs from the dead-reckoned prediction by more than the tolerance | First report from a sender; an entity reappearing after a timeout; the first report after a freeze or resume. Body-axis DR (algorithms 6–9) rotates velocity and acceleration from body to world axes | 3× sender DR threshold, plus a physical speed cap per entity kind |
 
 **Why these definitions**
 

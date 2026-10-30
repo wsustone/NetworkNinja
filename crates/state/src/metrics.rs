@@ -23,6 +23,7 @@ const HISTORY_SLOTS: usize = HISTORY_SECS / SLOT_SECS as usize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Metric {
     PduCount,
+    PduDuplicates,
     BytesCount,
     DatagramCount,
     DecodeErrors,
@@ -34,8 +35,9 @@ pub enum Metric {
 }
 
 impl Metric {
-    pub const ALL: [Metric; 9] = [
+    pub const ALL: [Metric; 10] = [
         Metric::PduCount,
+        Metric::PduDuplicates,
         Metric::BytesCount,
         Metric::DatagramCount,
         Metric::DecodeErrors,
@@ -49,6 +51,7 @@ impl Metric {
     pub fn name(self) -> &'static str {
         match self {
             Metric::PduCount => "pdu.count",
+            Metric::PduDuplicates => "pdu.duplicates",
             Metric::BytesCount => "bytes.count",
             Metric::DatagramCount => "datagram.count",
             Metric::DecodeErrors => "decode.errors",
@@ -83,7 +86,7 @@ impl Metric {
 
     pub fn unit(self) -> &'static str {
         match self {
-            Metric::PduCount => "PDUs",
+            Metric::PduCount | Metric::PduDuplicates => "PDUs",
             Metric::BytesCount => "bytes",
             Metric::DatagramCount => "datagrams",
             Metric::DecodeErrors => "errors",
@@ -99,6 +102,7 @@ impl Metric {
         use Dim::*;
         match self {
             Metric::PduCount => &[Exercise, PduType, Site, Kind, Domain, Sender],
+            Metric::PduDuplicates => &[Exercise, PduType, Sender],
             Metric::BytesCount | Metric::DatagramCount | Metric::DecodeErrors => &[Sender],
             Metric::EntityActive => &[Exercise, Site, Kind, Force],
             Metric::HeartbeatMean | Metric::HeartbeatJitter => &[Exercise, Entity, Sender],

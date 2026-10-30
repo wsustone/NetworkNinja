@@ -369,6 +369,7 @@ impl<R: Read> PcapReader<R> {
                         source: SocketAddr::V4(src),
                         destination: Some(SocketAddr::V4(dst)),
                         payload: payload.to_vec(),
+                        monotonic: None,
                     }));
                 }
                 Parsed::Fragment => self.stats.fragments += 1,

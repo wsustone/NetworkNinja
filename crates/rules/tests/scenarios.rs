@@ -30,6 +30,7 @@ impl Sink for Collect {
             source,
             destination: None,
             payload: d.to_vec(),
+            monotonic: None,
         });
         Ok(())
     }

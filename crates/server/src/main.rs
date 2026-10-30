@@ -365,7 +365,7 @@ fn listen(cfg: &UdpConfig, duration: Option<f64>, common: &Common, packs: &Merge
     }
     let start = Instant::now();
     let mut p = Pipeline::new(packs);
-    p.origin = secs(SystemTime::now());
+    p.origin = nn_capture::steady_now();
     let mut next_summary = common.every;
     loop {
         let t = start.elapsed().as_secs_f64();
@@ -373,18 +373,18 @@ fn listen(cfg: &UdpConfig, duration: Option<f64>, common: &Common, packs: &Merge
             break;
         }
         if t >= next_summary {
-            eprint!("--- {t:.0} s: {}", p.summary(secs(SystemTime::now())));
+            eprint!("--- {t:.0} s: {}", p.summary(nn_capture::steady_now()));
             next_summary += common.every;
         }
         match src.recv().map_err(|e| format!("receive failed: {e}"))? {
             Some(d) => show(&mut p, &d, start.elapsed().as_secs_f64(), common),
             None => {
-                let events = p.monitor.tick(secs(SystemTime::now()));
+                let events = p.monitor.tick(nn_capture::steady_now());
                 p.print_alerts(&events);
             }
         }
     }
-    eprint!("=== final: {}", p.summary(secs(SystemTime::now())));
+    eprint!("=== final: {}", p.summary(nn_capture::steady_now()));
     eprintln!("  alerts fired: {}", p.alerts_fired);
     Ok(())
 }
@@ -713,7 +713,7 @@ fn serve(
                 if matches!(src, Src::Rec(_)) {
                     break; // end of recording
                 }
-                m.tick(now_secs())
+                m.tick(nn_capture::steady_now())
             }
         };
         for e in &events {

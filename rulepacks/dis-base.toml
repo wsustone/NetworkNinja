@@ -35,6 +35,9 @@ severity = "warning"
 # A second sender must still be reporting this long after the first sender
 # arrived before it counts as a conflict (allows simulator restarts).
 conflict_grace = 2.0
+# Byte-identical PDUs from a second sender within this many seconds are a
+# relay's copy (gateway, second NIC, both legs of a SPAN), not a conflict.
+duplicate_window = 1.0
 severity = "critical"
 
 [rules.position-jump]

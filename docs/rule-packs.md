@@ -32,7 +32,7 @@ severity = "warning"         # warning | critical | off
 heartbeat = 5.0              # threshold overrides; each rule has its own set
 
 # Rules: entity-timeout (heartbeat, timeout_multiplier),
-#        id-conflict (conflict_grace),
+#        id-conflict (conflict_grace, duplicate_window),
 #        position-jump (jump_min_tolerance, assumed_dr_threshold,
 #                       jump_dr_multiplier, jump_timing_slack)
 
