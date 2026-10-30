@@ -45,6 +45,12 @@ LISTEN / SERVE OPTIONS
                           search via /api/log, plus 10 s metric rollups
                           for /api/query (serve only)
     --metrics-retention DAYS  Keep metric rollups this long (default 7)
+    --capture FILE        Persist PDUs to SQLite FILE by the rule packs'
+                          [[capture]] tiers: every report from fast movers,
+                          a thinned stream from slow and static entities
+                          (serve only, live capture only; ADR 0009)
+    --capture-budget MB   Size cap for --capture; oldest PDUs are evicted
+                          first (default 1024)
     --record FILE         Record every datagram to FILE (native format)
     --replay FILE         Replay a --record file through the dashboard
                           instead of live capture (serve only)
@@ -165,6 +171,8 @@ fn real_main() -> Result<(), String> {
     let mut log_file: Option<String> = None;
     let mut db_file: Option<String> = None;
     let mut retention_days = 7.0;
+    let mut capture_file: Option<String> = None;
+    let mut capture_budget_mb = 1024.0;
     let mut record_file: Option<String> = None;
     let mut replay_file: Option<String> = None;
     let mut runs_dir: Option<String> = None;
@@ -203,6 +211,8 @@ fn real_main() -> Result<(), String> {
             "--log" => log_file = Some(val()?),
             "--db" => db_file = Some(val()?),
             "--metrics-retention" => retention_days = val()?.parse::<f64>().map_err(|e| bad(&e))?,
+            "--capture" => capture_file = Some(val()?),
+            "--capture-budget" => capture_budget_mb = val()?.parse::<f64>().map_err(|e| bad(&e))?,
             "--record" => record_file = Some(val()?),
             "--replay" => replay_file = Some(val()?),
             "--runs" => runs_dir = Some(val()?),
@@ -232,6 +242,9 @@ fn real_main() -> Result<(), String> {
             log_file.as_deref(),
             db_file.as_deref(),
             retention_days * 86_400.0,
+            capture_file
+                .as_deref()
+                .map(|f| (f, (capture_budget_mb.max(1.0) * 1024.0 * 1024.0) as u64)),
             record_file.as_deref(),
             replay_file.as_deref(),
             speed.unwrap_or(1.0),
@@ -434,6 +447,7 @@ fn serve(
     log_file: Option<&str>,
     db_file: Option<&str>,
     retention: f64,
+    capture_file: Option<(&str, u64)>,
     record_file: Option<&str>,
     replay_file: Option<&str>,
     speed: f64,
@@ -520,7 +534,29 @@ fn serve(
         eprintln!("  users: {f} ({} accounts)", a.len());
         hub.set_auth(std::sync::Arc::new(a));
     }
-    let mut m = Monitor::with_packs(packs);
+    let pdu_store = match capture_file {
+        Some((path, budget)) => {
+            let st = nn_server::pdustore::PduStore::open(std::path::Path::new(path), budget)
+                .map_err(|e| format!("cannot open capture {path}: {e}"))?;
+            hub.set_capture(st.path.clone(), std::sync::Arc::clone(&st.stats));
+            eprintln!(
+                "  pdu capture: {path} (budget {} MB, {} rows stored)",
+                budget / (1024 * 1024),
+                st.stats.rows.load(std::sync::atomic::Ordering::Relaxed)
+            );
+            Some(st)
+        }
+        None => None,
+    };
+    // PDU capture follows live traffic only, like metric rollups.
+    let new_monitor = |live: bool| {
+        let mut m = Monitor::with_packs(packs);
+        if live && pdu_store.is_some() {
+            m.capture = Some(nn_rules::Capture::new(packs.capture.clone()));
+        }
+        m
+    };
+    let mut m = new_monitor(matches!(src, Src::Udp(_)));
     let mut recent: VecDeque<String> = VecDeque::new();
     let mut prev_ents = std::collections::BTreeMap::new();
     let mut speed = speed;
@@ -610,7 +646,7 @@ fn serve(
                             }
                         };
                         if switched {
-                            m = Monitor::with_packs(packs);
+                            m = new_monitor(matches!(src, Src::Udp(_)));
                             prev_ents.clear();
                             recent.clear();
                             next_full = 0.0;
@@ -661,6 +697,10 @@ fn serve(
                     let _ = w.record(&d);
                 }
                 let (.., events) = m.ingest(&d);
+                if let (Some(st), Some(c)) = (&pdu_store, m.capture.as_mut()) {
+                    st.submit(c.drain());
+                    st.stats.skipped.store(c.skipped, std::sync::atomic::Ordering::Relaxed);
+                }
                 if m.decode_errors > errs_before {
                     hub.log(
                         "error",
@@ -726,6 +766,9 @@ fn serve(
     ) {
         let upto = slot_of(m.now.floor() as i64) + nn_state::metrics::SLOT_SECS;
         hub.write_rollup(&m.metrics.rollup(from, upto), upto);
+    }
+    if let Some(st) = pdu_store {
+        st.close();
     }
     if let Some(w) = rec_w.as_mut() {
         let _ = w.flush();

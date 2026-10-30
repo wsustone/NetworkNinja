@@ -219,7 +219,7 @@ The MVP ships as one self-contained binary that runs on the exercise LAN. A host
 
 **Recording handling**
 
-- No PDU payloads are persisted by default; recording is opt-in
+- No PDU payloads are persisted by default; recording is opt-in, and so is tiered PDU capture (`--capture`, ADR 0009), which writes its own file under a byte budget
 - Each recording carries the exercise's classification marking and a retention period
 - Secure deletion on expiry or on request; encryption at rest, configurable per site
 

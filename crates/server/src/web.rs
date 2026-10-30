@@ -60,6 +60,8 @@ pub struct Hub {
     query_tx: Mutex<Option<SyncSender<QueryReq>>>,
     /// Rollups are in the store for every slot before this second.
     metrics_flushed: Mutex<Option<i64>>,
+    /// `--capture` file and its writer's counters (ADR 0009).
+    capture: Mutex<Option<(std::path::PathBuf, Arc<crate::pdustore::CaptureStats>)>>,
 }
 
 /// A query for the serve loop and where to send the memory cells back.
@@ -103,6 +105,7 @@ impl Hub {
             auth: Mutex::new(None),
             query_tx: Mutex::new(None),
             metrics_flushed: Mutex::new(None),
+            capture: Mutex::new(None),
         }
     }
 
@@ -341,6 +344,11 @@ impl Hub {
             cells.extend(store.metric_cells(q.metric.name(), q.from, q.to.min(boundary), |t| q.matches(t))?);
         }
         Ok(evaluate(q, cells))
+    }
+
+    /// Serve `/api/capture` and `/api/pdus` from this capture file.
+    pub fn set_capture(&self, path: std::path::PathBuf, stats: Arc<crate::pdustore::CaptureStats>) {
+        *self.capture.lock().unwrap() = Some((path, stats));
     }
 
     /// The directory `/api/runs` lists `.nnrec` recordings from.
@@ -719,6 +727,42 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                 ),
             };
         }
+        ("GET", "/api/capture") => {
+            let body = match hub.capture.lock().unwrap().as_ref() {
+                Some((path, stats)) => stats.json(path),
+                None => "{\"enabled\":false}".into(),
+            };
+            let _ = respond(s, "200 OK", "application/json", &body);
+        }
+        ("GET", "/api/pdus") => {
+            let cap = hub.capture.lock().unwrap().as_ref().map(|(p, _)| p.clone());
+            let r = match cap {
+                None => Err("PDU capture is off (start serve with --capture FILE)".to_string()),
+                Some(path) => {
+                    let f = |k: &str| qparam(k).and_then(|v| v.parse::<f64>().ok());
+                    let to = f("to").unwrap_or_else(now_secs);
+                    let limit = f("limit").unwrap_or(1000.0).clamp(1.0, 10_000.0) as usize;
+                    crate::pdustore::read_pdus(
+                        &path,
+                        qparam("ex").and_then(|v| v.parse().ok()),
+                        qparam("id").as_deref(),
+                        f("from").unwrap_or(to - 600.0),
+                        to,
+                        limit,
+                    )
+                    .map(|rows| pdus_json(&rows))
+                }
+            };
+            let _ = match r {
+                Ok(body) => respond(s, "200 OK", "application/json", &body),
+                Err(e) => respond(
+                    s,
+                    "400 Bad Request",
+                    "application/json",
+                    &format!("{{\"error\":\"{}\"}}", esc(&e)),
+                ),
+            };
+        }
         ("GET", "/api/runs") => {
             let body = hub.runs_list();
             let _ = respond(s, "200 OK", "application/json", &body);
@@ -1053,6 +1097,46 @@ pub fn query_json(q: &Query, series: &[nn_state::Series]) -> String {
         s.push_str(&format!("\"series\":[{}]}}", g.join(",")));
     }
     s
+}
+
+/// `/api/pdus` answer: one record per stored PDU, Entity State with its
+/// position, speed and appearance decoded for track drill-down.
+fn pdus_json(rows: &[crate::pdustore::StoredPdu]) -> String {
+    let items: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            let mut s = format!(
+                "{{\"at\":{},\"sender\":\"{}\",\"tier\":\"{}\"",
+                fnum(r.at),
+                esc(&r.sender),
+                esc(&r.tier)
+            );
+            match &r.pdu {
+                Ok(p) => {
+                    s.push_str(&format!(",\"type\":\"{}\"", p.type_name()));
+                    if let Some(id) = nn_state::metrics::entity_of(p) {
+                        s.push_str(&format!(",\"entity\":\"{id}\""));
+                    }
+                    if let nn_decode::PduBody::EntityState(es) = &p.body {
+                        let (lat, lon, alt) = geo::ecef_to_lla(&es.location);
+                        let v = es.linear_velocity;
+                        s.push_str(&format!(
+                            ",\"lat\":{},\"lon\":{},\"alt\":{},\"speed\":{},\"appearance\":{}",
+                            fnum(lat),
+                            fnum(lon),
+                            fnum(alt),
+                            fnum(((v.x * v.x + v.y * v.y + v.z * v.z) as f64).sqrt()),
+                            es.appearance
+                        ));
+                    }
+                }
+                Err(e) => s.push_str(&format!(",\"error\":\"{}\"", esc(e))),
+            }
+            s.push('}');
+            s
+        })
+        .collect();
+    format!("{{\"count\":{},\"pdus\":[{}]}}", items.len(), items.join(","))
 }
 
 /// A server event log entry body (`kind = "info"`).

@@ -54,6 +54,12 @@ over `QueryReq` and reads the SQLite `series`/`samples` rollups for slots
 before the last flush. Rollups are written every 10 s **live only** (not
 during replay) and on clean exit; `--metrics-retention DAYS` (default 7).
 Query string: `name=pdu.count&where.site=7&by=sender&agg=rate&window=10&from=&to=`.
+PDU capture (ADR 0009): `serve --capture cap.db --capture-budget MB` (live
+only, opt-in). `[[capture]]` tiers in packs (`type` prefix, `min_speed`,
+`every`; highest min_speed then longest prefix wins) are applied by
+`nn_rules::Capture` inside `Monitor::ingest`; `pdustore.rs` writes on its
+own thread and evicts oldest rows by SQLite page counts. Inspect with
+`/api/capture`, `/api/pdus?ex=&id=&from=&to=`, or `sqlite3 cap.db`.
 
 ## Architecture map
 

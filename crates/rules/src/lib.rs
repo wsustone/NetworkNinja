@@ -13,11 +13,13 @@
 //! on every PDU all come from layered rule packs ([`pack`], ADR 0003): the
 //! base DIS pack ships in the binary and site packs layer on top.
 
+pub mod capture;
 mod engine;
 mod minitoml;
 mod monitor;
 pub mod pack;
 
+pub use capture::{Capture, Captured};
 pub use engine::{Ack, Alert, AlertEvent, AlertState, Engine, Mute, MuteScope, Rule, RuleConfig, Severity};
 pub use monitor::Monitor;
-pub use pack::{builtin as builtin_packs, EnumCheck, FieldSpec, Merged, PackError, RulePack};
+pub use pack::{builtin as builtin_packs, CaptureRule, EnumCheck, FieldSpec, Merged, PackError, RulePack};

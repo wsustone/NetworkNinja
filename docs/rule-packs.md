@@ -55,6 +55,28 @@ severity = "warning"              # optional; "off" removes a lower layer's chec
 - `detonation.result`
 - `stop-freeze.reason`, `stop-freeze.frozen_behavior`
 
+## PDU capture tiers
+
+With `nn-server serve --capture FILE`, these entries decide how much Entity
+State traffic is persisted (ADR 0009):
+
+```toml
+[[capture]]
+type = "1.2"        # entity type prefix, kind first ("*" = any type)
+min_speed = 0.0     # optional, m/s: only while moving at least this fast
+every = 0           # seconds between kept reports per entity and sender;
+                    # 0 = every PDU, "off" = none
+```
+
+- The matching entry with the highest `min_speed` wins, then the longest
+  `type` prefix. Observed speed therefore outranks declared type.
+- A later pack replaces an entry with the same `type` and `min_speed`;
+  other entries from lower layers stay.
+- Always kept regardless of tier: Fire, Detonation, Start/Resume,
+  Stop/Freeze, Remove Entity, and every report from an entity with an
+  open alert. Undecoded PDU types are never captured.
+- The base pack's tiers are at the end of `rulepacks/dis-base.toml`.
+
 ## Semantics
 
 - A `[[enum]]` entry replaces the lower layer's check **for the same field**;

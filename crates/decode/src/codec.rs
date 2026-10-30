@@ -340,6 +340,13 @@ pub fn decode_pdu(buf: &[u8]) -> Result<Pdu, DecodeError> {
 /// makes the rest of the datagram unreadable (a bad or overlong length field).
 /// Trailing zero padding after the last PDU is ignored.
 pub fn decode_datagram(buf: &[u8]) -> Vec<Result<Pdu, DecodeError>> {
+    decode_datagram_spans(buf).into_iter().map(|(_, r)| r).collect()
+}
+
+/// [`decode_datagram`], with each PDU's byte range in `buf` — so a caller
+/// can keep a PDU's exact wire bytes without decoding it twice. A framing
+/// error's range is the unreadable rest of the datagram.
+pub fn decode_datagram_spans(buf: &[u8]) -> Vec<(std::ops::Range<usize>, Result<Pdu, DecodeError>)> {
     let mut out = Vec::new();
     let mut offset = 0;
     while offset < buf.len() {
@@ -347,28 +354,36 @@ pub fn decode_datagram(buf: &[u8]) -> Vec<Result<Pdu, DecodeError>> {
         if rest.iter().all(|&b| b == 0) {
             break;
         }
+        let tail = offset..buf.len();
         if rest.len() < HEADER_LEN {
-            out.push(Err(DecodeError::Truncated {
-                needed: HEADER_LEN,
-                available: rest.len(),
-            }));
+            out.push((
+                tail,
+                Err(DecodeError::Truncated {
+                    needed: HEADER_LEN,
+                    available: rest.len(),
+                }),
+            ));
             break;
         }
         let length = u16::from_be_bytes([rest[8], rest[9]]);
         if (length as usize) < HEADER_LEN {
-            out.push(Err(DecodeError::BadLength { length }));
+            out.push((tail, Err(DecodeError::BadLength { length })));
             break;
         }
         if length as usize > rest.len() {
-            out.push(Err(DecodeError::Truncated {
-                needed: length as usize,
-                available: rest.len(),
-            }));
+            out.push((
+                tail,
+                Err(DecodeError::Truncated {
+                    needed: length as usize,
+                    available: rest.len(),
+                }),
+            ));
             break;
         }
         // The framing is sound, so a body error only affects this PDU.
-        out.push(decode_pdu(&rest[..length as usize]));
-        offset += length as usize;
+        let end = offset + length as usize;
+        out.push((offset..end, decode_pdu(&buf[offset..end])));
+        offset = end;
     }
     out
 }
