@@ -49,6 +49,26 @@ jump_dr_multiplier = 3.0
 jump_timing_slack = 0.5
 severity = "warning"
 
+# --- Structure (ADR 0010 tier S) -------------------------------------------
+# Every PDU's length is checked against its IEEE 1278.1 layout and the
+# record counts it declares (crates/decode/src/structure.rs). Findings are
+# point events that repeat at most every enum_repeat_seconds per rule, PDU
+# type and sender, and cite the layout clause.
+
+[rules.pdu-structure]
+# Data missing or misdescribed: a count overruns the PDU, the datagram cuts
+# it off, or a record's own length disagrees with its contents.
+severity = "critical"
+
+[rules.pdu-padding]
+# Bytes the layout doesn't account for, or missing alignment padding. The
+# data is readable, so some sites turn this off for known senders.
+severity = "warning"
+
+[rules.pdu-family]
+# The Protocol Family field doesn't match the PDU type.
+severity = "warning"
+
 # --- Enumeration checks ----------------------------------------------------
 # field:    a path from the registry (header.* applies to every PDU)
 # allowed:  integer, "lo-hi" range, "a, b-c" list, or an array of those
@@ -60,16 +80,16 @@ severity = "warning"
 field = "header.protocol_version"
 allowed = "1-7"
 
-# PDU types assigned in DIS v6 and v7 up to the sim-management family.
-# Later types (directed energy, information operations, etc.) are not in
-# this base list yet — widen it in a site pack if your range uses them.
+# PDU types 1-72 and protocol families 0-13 are assigned in IEEE 1278.1-2012
+# (docs/pdu-coverage.md). Experimental types and families (129-255) are
+# flagged; allow them in a site pack if your simulators use them.
 [[enum]]
 field = "header.pdu_type"
-allowed = "1-38"
+allowed = "1-72"
 
 [[enum]]
 field = "header.protocol_family"
-allowed = "0-8"
+allowed = "0-13"
 
 # Entity State.
 [[enum]]

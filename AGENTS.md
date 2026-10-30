@@ -66,6 +66,15 @@ only, opt-in). `[[capture]]` tiers in packs (`type` prefix, `min_speed`,
 own thread and evicts oldest rows by SQLite page counts. Inspect with
 `/api/capture`, `/api/pdus?ex=&id=&from=&to=`, or `sqlite3 cap.db`.
 
+Tier S structure (ADR 0010): `nn_decode::structure::check(rest_of_datagram)`
+runs on every PDU span in `Monitor::ingest`, decoded or not, and feeds
+`Engine::check_structure` → point events `pdu-structure` / `pdu-padding` /
+`pdu-family` (deduped per rule, PDU type and sender for `enum_repeat_seconds`).
+Layouts: one table entry per type, offsets absolute from the PDU start
+(header included). Generator: `--all-types SECS` sends a minimal valid PDU
+of every type not otherwise generated; `--defect KIND:TYPE[@T]` and
+`--all-defects` inject the structural faults from the first site.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

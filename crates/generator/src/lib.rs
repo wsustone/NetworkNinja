@@ -48,6 +48,18 @@ pub enum EventKind {
     Freeze,
     /// Control: Start/Resume after a freeze.
     Resume,
+    /// Structural fault (ADR 0010 tier S): a PDU missing its last 4 bytes,
+    /// with a length field that agrees.
+    ShortPdu,
+    /// Structural fault: a count claims one record that isn't there.
+    CountOverrun,
+    /// Structural fault: 8 bytes the layout doesn't account for.
+    PaddedPdu,
+    /// Structural fault: a Protocol Family that doesn't match the type.
+    WrongFamily,
+    /// Structural fault: the datagram ends 4 bytes before the length field
+    /// says the PDU does.
+    TruncatedPdu,
 }
 
 impl EventKind {
@@ -60,13 +72,37 @@ impl EventKind {
             EventKind::RestartPort => "restart-port",
             EventKind::Freeze => "freeze",
             EventKind::Resume => "resume",
+            EventKind::ShortPdu => "short-pdu",
+            EventKind::CountOverrun => "count-overrun",
+            EventKind::PaddedPdu => "padded-pdu",
+            EventKind::WrongFamily => "wrong-family",
+            EventKind::TruncatedPdu => "truncated-pdu",
         }
+    }
+    /// The structural faults, in preset order.
+    pub const STRUCTURAL: [EventKind; 5] = [
+        EventKind::ShortPdu,
+        EventKind::CountOverrun,
+        EventKind::PaddedPdu,
+        EventKind::WrongFamily,
+        EventKind::TruncatedPdu,
+    ];
+    /// The structural fault called `name`.
+    pub fn structural(name: &str) -> Option<EventKind> {
+        EventKind::STRUCTURAL.into_iter().find(|k| k.name() == name)
     }
     /// True for faults that an alert rule should catch.
     pub fn is_fault(self) -> bool {
         matches!(
             self,
-            EventKind::DropHeartbeat | EventKind::CloneId | EventKind::Teleport
+            EventKind::DropHeartbeat
+                | EventKind::CloneId
+                | EventKind::Teleport
+                | EventKind::ShortPdu
+                | EventKind::CountOverrun
+                | EventKind::PaddedPdu
+                | EventKind::WrongFamily
+                | EventKind::TruncatedPdu
         )
     }
 }
@@ -77,6 +113,11 @@ pub enum Target {
     Entity(EntityId),
     Site(u16),
     Exercise,
+    /// A PDU of this type from this site's simulator.
+    Pdu {
+        site: u16,
+        pdu_type: u8,
+    },
 }
 
 impl std::fmt::Display for Target {
@@ -85,6 +126,7 @@ impl std::fmt::Display for Target {
             Target::Entity(e) => write!(f, "{e}"),
             Target::Site(s) => write!(f, "site {s}"),
             Target::Exercise => write!(f, "exercise"),
+            Target::Pdu { site, pdu_type } => write!(f, "site {site} {}", pdu_type_name(*pdu_type)),
         }
     }
 }
@@ -113,6 +155,9 @@ pub struct Config {
     pub seed: u64,
     /// Seconds between Fire events (each followed by a Detonation 2 s later).
     pub fire_every: Option<f64>,
+    /// Seconds between rounds of every PDU type the other families don't
+    /// send, each a minimal valid PDU from the first site (ADR 0010 tier S).
+    pub all_types: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -137,6 +182,7 @@ impl Default for Config {
             dr_threshold: 1.0,
             seed: 1,
             fire_every: None,
+            all_types: None,
             bundle: false,
             silent_when_frozen: false,
             events: Vec::new(),

@@ -64,38 +64,15 @@ impl PduHeader {
     }
 }
 
-/// The standard protocol family for a PDU type, for the types we encode.
+/// The standard protocol family for a PDU type (0 for types outside
+/// IEEE 1278.1).
 pub fn default_family(pdu_type: u8) -> u8 {
-    match pdu_type {
-        pdu_type::ENTITY_STATE => family::ENTITY_INFORMATION,
-        pdu_type::FIRE | pdu_type::DETONATION => family::WARFARE,
-        pdu_type::REMOVE_ENTITY | pdu_type::START_RESUME | pdu_type::STOP_FREEZE => family::SIMULATION_MANAGEMENT,
-        _ => 0,
-    }
+    crate::structure::layout(pdu_type).map_or(0, |l| l.family)
 }
 
 /// Human-readable name for a PDU type number, for logs and the console.
 pub fn pdu_type_name(pdu_type: u8) -> &'static str {
-    match pdu_type {
-        1 => "EntityState",
-        2 => "Fire",
-        3 => "Detonation",
-        4 => "Collision",
-        11 => "CreateEntity",
-        12 => "RemoveEntity",
-        13 => "StartResume",
-        14 => "StopFreeze",
-        15 => "Acknowledge",
-        20 => "Data",
-        21 => "Comment",
-        23 => "ElectromagneticEmission",
-        24 => "Designator",
-        25 => "Transmitter",
-        26 => "Signal",
-        27 => "Receiver",
-        28 => "IFF",
-        _ => "Other",
-    }
+    crate::structure::layout(pdu_type).map_or("Other", |l| l.name)
 }
 
 /// Site / application / entity triple.

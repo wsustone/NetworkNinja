@@ -3,7 +3,7 @@
 use crate::capture::Capture;
 use crate::engine::{AlertEvent, Engine, RuleConfig};
 use nn_capture::Datagram;
-use nn_decode::{decode_datagram_spans, EntityType, Pdu, PduBody};
+use nn_decode::{decode_datagram_spans, structure, EntityType, Pdu, PduBody};
 use nn_state::metrics::entity_of;
 use nn_state::{extrapolate, geo, secs, EntityKey, EntityTable, Metric, Metrics, Tags};
 use std::collections::HashMap;
@@ -65,6 +65,9 @@ impl Monitor {
         let mut pdus = Vec::new();
         let mut events = Vec::new();
         for (span, result) in decode_datagram_spans(&d.payload) {
+            // Tier S (ADR 0010): structure is checked on the raw bytes, so a
+            // PDU the decoder rejects is still reported against its sender.
+            let structure = structure::check(&d.payload[span.start..]);
             match result {
                 Ok(pdu) => {
                     self.pdus += 1;
@@ -80,6 +83,7 @@ impl Monitor {
                         pdus.push(pdu);
                         continue;
                     }
+                    events.extend(self.engine.check_structure(now, d.source, &structure));
                     events.extend(self.engine.check_enums(now, d.source, &pdu));
                     events.extend(self.engine.before_apply(now, d.source, &pdu, &self.table));
                     self.record_dr_error(now, d.source, &pdu);
@@ -100,6 +104,7 @@ impl Monitor {
                     pdus.push(pdu);
                 }
                 Err(_) => {
+                    events.extend(self.engine.check_structure(now, d.source, &structure));
                     self.decode_errors += 1;
                     self.metrics.record_error(now, d.source);
                 }
