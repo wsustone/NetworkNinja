@@ -7,6 +7,7 @@
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --crit:#f85149; --warn:#d29922; --ok:#3fb950; }
   * { box-sizing: border-box; }
+  [hidden] { display:none !important; }  /* beats main{display:grid} etc. */
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; }
   header { display:flex; gap:1em; align-items:center; padding:.6em 1em; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
   header b { font-size:16px; letter-spacing:.5px; }
@@ -115,10 +116,33 @@
   #ttable { padding:0 .9em .6em; font-size:11px; }
   #tchart .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
   @media (max-width:1100px) { #traffic { grid-column:1/-1; } }
+  /* Conformance view (ADR 0008 slice 2). Heat: one hue, light→dark by count. */
+  .tabs { display:flex; gap:2px; }
+  .tabs button { background:none; color:var(--dim); border:1px solid var(--line); padding:.15em .7em; font:inherit; font-size:12px; cursor:pointer; }
+  .tabs button:first-child { border-radius:4px 0 0 4px; } .tabs button:last-child { border-radius:0 4px 4px 0; }
+  .tabs button.on { color:var(--fg); background:#21262d; border-color:var(--dim); }
+  #conf { margin:1em; }
+  #conf .ctl { display:flex; gap:1em; flex-wrap:wrap; align-items:center; padding:.6em .9em; border-bottom:1px solid var(--line); color:var(--dim); font-size:12px; }
+  #conf .tiles { display:flex; gap:1px; background:var(--line); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  #conf .tile { flex:1 1 140px; background:var(--panel); padding:.6em .9em; }
+  #conf .tile b { display:block; font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #conf .tile span { color:var(--dim); font-size:11px; }
+  #conf .tablewrap { max-height:none; }
+  #conf td.n, #conf th.n { text-align:right; }
+  #conf td.cell { text-align:right; cursor:pointer; min-width:4.5em; }
+  #conf td.cell:hover { outline:1px solid var(--dim); outline-offset:-1px; }
+  #conf td.zero { color:#484f58; cursor:default; }
+  #conf .who b { font-family:ui-monospace,monospace; font-weight:500; }
+  #conf .who span { display:block; color:var(--dim); font-size:11px; }
+  #conf .clean { color:var(--ok); font-size:11px; }
+  .open { display:inline-block; margin-left:.35em; padding:0 .4em; border-radius:8px; font-size:10px; border:1px solid var(--crit); color:var(--crit); }
+  #conf .hint { padding:.5em .9em; color:var(--dim); font-size:11px; }
+  #detail .viol span { color:var(--dim); }
 </style>
 
 <header>
   <b>NetworkNinja</b>
+  <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button></span>
   <span id="conn" class="down">connecting…</span>
   <span class="stat">exercise <b id="hEx">–</b></span>
   <span class="stat">entities <b id="hEnt">0</b></span>
@@ -133,6 +157,25 @@
 </header>
 <div id="tlrow"><b>replay</b><span id="seekt">0:00</span><input type="range" id="seek" min="0" max="0" step="0.1"><span id="seekd">0:00</span></div>
 
+<section id="conf" hidden>
+  <h2>Conformance <span id="confNote"></span></h2>
+  <div class="ctl">
+    <label>view <select id="cpivot">
+      <option value="sender">sender × rule</option>
+      <option value="site">site × rule</option>
+      <option value="entity">entity × rule</option>
+      <option value="rule">by rule</option>
+    </select></label>
+    <label>since <select id="csince"><option value="600">10 min</option><option value="3600" selected>1 h</option><option value="86400">24 h</option><option value="run">run</option></select></label>
+  </div>
+  <div class="tiles">
+    <div class="tile"><b id="cTotal">0</b><span>violations</span></div>
+    <div class="tile"><b id="cBad">0</b><span>non-compliant senders</span></div>
+    <div class="tile"><b id="cOpen">0</b><span>alerts open now</span></div>
+  </div>
+  <div class="tablewrap"><table id="ctable"></table></div>
+  <div class="hint">Counts are alert firings and decode errors attributed to each sender. Click a count to see those events in the live log.</div>
+</section>
 <main>
   <section id="sidebar">
     <h2>Entities</h2>
@@ -227,9 +270,11 @@ function entryHtml(e) {
 }
 
 function renderFeed() {
-  const f = $("filter").value.trim().toLowerCase();
+  // Every whitespace-separated term must match somewhere in the entry.
+  const terms = $("filter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = e => [e.entity, e.rule, e.message, e.pack, e.state, e.sender, e.source, e.kind === "error" ? "decode-error" : ""].join(" ").toLowerCase();
   const items = feed
-    .filter(e => !f || [e.entity, e.rule, e.message, e.pack, e.state].join(" ").toLowerCase().includes(f))
+    .filter(e => !terms.length || terms.every(t => hay(e).includes(t)))
     .slice(-500);
   $("alerts").innerHTML = items.map(e => {
     const {cls, ent, html} = entryHtml(e);
@@ -244,7 +289,7 @@ const STATUS_COLOR = {live:"#3fb950", frozen:"#d29922", silent:"#d29922", deacti
 // pans the map. Clicking it again (or Esc / the panel's close) deselects.
 function selectEntity(id) {
   if (selected === id) return clearSelection();
-  selected = id; detail = null;
+  selected = id; detail = null; violations = null; violationsAt = 0;
   render(); updateMap(); fetchDetail();
   const row = document.querySelector(`#rows tr[data-id="${CSS.escape(id)}"]`);
   if (row) {
@@ -259,7 +304,17 @@ function clearSelection() {
   render(); updateMap();
 }
 
-let detail = null;
+let detail = null, violations = null, violationsAt = 0;
+// The selected entity's violation counts by rule (ADR 0008 summary), every 10 s.
+function fetchViolations(force) {
+  if (!selected || !state || (!force && Date.now() - violationsAt < 10000)) return;
+  violationsAt = Date.now();
+  const id = selected, e = byId[id];
+  const q = new URLSearchParams({by:"rule", entity:id, since:Math.floor(state.at - 3600)});
+  if (e) q.set("exercise", e.exercise);
+  fetch("/api/events/summary?" + q, auth()).then(r => r.ok ? r.json() : null)
+    .then(d => { if (d && selected === id) { violations = {id, groups:d.groups}; renderDetail(); } }).catch(() => {});
+}
 function fetchDetail() {
   if (!selected) return;
   const id = selected, e = byId[id];
@@ -267,6 +322,7 @@ function fetchDetail() {
     .then(r => r.ok ? r.json() : null)
     .then(d => { if (selected === id) { detail = d; renderDetail(); } })
     .catch(() => {});
+  fetchViolations(false);
 }
 setInterval(fetchDetail, 1000);
 
@@ -312,6 +368,12 @@ function renderDetail() {
     + (d ? row("appearance", "0x" + (d.appearance >>> 0).toString(16).padStart(8, "0")) : "")
     + (d ? row("last sender", esc(d.last_source)) : row("senders", e.senders))
     + `</div>`;
+  if (violations && violations.id === e.id) {
+    const v = violations.groups;
+    h += `<h3>violations, last hour</h3><div class="viol">` + (v.length
+      ? v.map(g => `${esc(g.tags.rule)} <b>${g.total}</b>${g.open ? '<span class="open">open</span>' : ""}`).join(" · ")
+      : '<span>none</span>') + `</div>`;
+  }
   if (alerts.length) {
     h += `<h3>open alerts (${alerts.length})</h3>` + alerts.map(a => {
       const btns = a.ack ? `<span class="acked">· acked by ${esc(a.ack.by)}</span>`
@@ -589,6 +651,92 @@ function loadRuns() {
       (d.runs || []).map(r => `<option value="${esc(r.name)}" ${r.name === cur ? "selected" : ""}>${esc(r.name)}</option>`).join("");
   }).catch(() => {});
 }
+// --- conformance view: /api/events/summary pivots (ADR 0008 slice 2) ---
+let conf = null;
+function showView(v) {
+  const isConf = v === "conf";
+  $("conf").hidden = !isConf;
+  document.querySelector("main").hidden = isConf;
+  $("tabConf").classList.toggle("on", isConf);
+  $("tabLive").classList.toggle("on", !isConf);
+  if (isConf) confQuery(); else { renderTraffic(); if (map) map.resize(); }
+}
+function confSince() {
+  const v = $("csince").value, now = state ? state.at : Date.now() / 1000;
+  return Math.floor(now - (v === "run" ? (state ? state.uptime : 3600) : +v));
+}
+function confQuery() {
+  if ($("conf").hidden) return;
+  const pivot = $("cpivot").value;
+  const by = pivot === "rule" ? "rule" : pivot + ",rule";
+  fetch("/api/events/summary?" + new URLSearchParams({by, since: confSince()}), auth())
+    .then(r => r.ok ? r.json() : null).then(d => { if (d) { conf = {pivot, d}; renderConf(); } }).catch(() => {});
+}
+const fmtAgo = t => state && t ? fmtAge(Math.max(0, state.at - t)) + " ago" : "–";
+function renderConf() {
+  if (!conf) return;
+  const {pivot, d} = conf, G = d.groups;
+  const open = G.reduce((a, g) => a + g.open, 0);
+  $("cTotal").textContent = d.total;
+  $("cOpen").textContent = open;
+  const senders = d.senders || {};
+  const bad = new Set(G.filter(g => g.total || g.open).map(g => g.tags.sender));
+  $("cBad").textContent = pivot === "sender" ? `${[...bad].filter(s => s !== "unknown").length} / ${Object.keys(senders).length}` : "–";
+  $("confNote").textContent = `since ${new Date(d.since * 1000).toLocaleTimeString()}`;
+  const t = $("ctable");
+  if (pivot === "rule") {
+    t.innerHTML = `<thead><tr><th>rule</th><th class="n">total</th><th class="n">critical</th><th class="n">warning</th><th class="n">decode errors</th><th class="n">entities</th><th>last</th></tr></thead><tbody>`
+      + (G.map(g => `<tr><td>${esc(g.tags.rule)}${g.open ? '<span class="open">' + g.open + ' open</span>' : ""}</td>`
+        + `<td class="n cell" data-a="${esc(g.tags.rule)}" data-ents="${esc(g.entities.join(" "))}" data-n="${g.entity_count}">${g.total}</td>`
+        + `<td class="n">${g.critical}</td><td class="n">${g.warning}</td><td class="n">${g.errors}</td><td class="n">${g.entity_count}</td><td>${fmtAgo(g.last)}</td></tr>`).join("")
+        || '<tr><td colspan="7" class="empty">no violations in this window</td></tr>') + "</tbody>";
+    return;
+  }
+  // Pivot: rows = pivot values, columns = rules, biggest first.
+  const colTotals = {}, rows = {};
+  for (const g of G) {
+    const r = g.tags[pivot], c = g.tags.rule;
+    colTotals[c] = (colTotals[c] || 0) + g.total + g.open;
+    const row = rows[r] || (rows[r] = {key: r, total: 0, open: 0, last: 0, cells: {}});
+    row.cells[c] = g; row.total += g.total; row.open += g.open; row.last = Math.max(row.last, g.last);
+  }
+  if (pivot === "sender") for (const s in senders) rows[s] = rows[s] || {key: s, total: 0, open: 0, last: 0, cells: {}};
+  const cols = Object.keys(colTotals).sort((a, b) => colTotals[b] - colTotals[a]);
+  const list = Object.values(rows).sort((a, b) => (b.total + b.open) - (a.total + a.open) || a.key.localeCompare(b.key));
+  const max = Math.max(1, ...G.map(g => g.total));
+  const heat = n => n ? `background:rgba(57,135,229,${(0.12 + 0.6 * n / max).toFixed(2)})` : "";
+  const label = r => {
+    if (pivot !== "sender") return `<b>${esc(r.key)}</b>`;
+    const s = senders[r.key];
+    return `<b>${esc(r.key)}</b><span>${s ? `claims ${s.claims.map(esc).join(", ")} · ${s.entities} entities` : "no longer reporting"}</span>`;
+  };
+  t.innerHTML = `<thead><tr><th>${pivot}</th>${cols.map(c => `<th class="n">${esc(c)}</th>`).join("")}<th class="n">total</th><th>last violation</th></tr></thead><tbody>`
+    + (list.map(r => `<tr><td class="who">${label(r)}</td>`
+      + cols.map(c => {
+          const g = r.cells[c];
+          if (!g) return `<td class="n cell zero">·</td>`;
+          return `<td class="n cell" style="${heat(g.total)}" data-a="${esc(r.key)}" data-b="${esc(c)}" data-ents="${esc(g.entities.join(" "))}" data-n="${g.entity_count}">${g.total}${g.open ? '<span class="open">open</span>' : ""}</td>`;
+        }).join("")
+      + `<td class="n">${r.total}</td><td>${r.total || r.open ? fmtAgo(r.last) : '<span class="clean">clean</span>'}</td></tr>`).join("")
+      || `<tr><td colspan="${cols.length + 3}" class="empty">no violations in this window</td></tr>`) + "</tbody>";
+}
+// A count opens the live log filtered to it, and selects the entity if there is just one.
+$("ctable").onclick = ev => {
+  const td = ev.target.closest("td.cell:not(.zero)");
+  if (!td) return;
+  const pivot = conf.pivot;
+  const terms = pivot === "site" ? [td.dataset.b] : [td.dataset.a, td.dataset.b];
+  showView("live");
+  $("filter").value = terms.filter(Boolean).join(" ");
+  renderFeed();
+  const ents = (td.dataset.ents || "").split(" ").filter(Boolean);
+  if (+td.dataset.n === 1 && ents[0] !== selected) selectEntity(ents[0]);
+};
+$("tabLive").onclick = () => showView("live");
+$("tabConf").onclick = () => showView("conf");
+$("cpivot").onchange = $("csince").onchange = confQuery;
+setInterval(confQuery, 5000);
+
 // --- traffic chart: PDU/s from /api/query, split by type / site / sender ---
 const SERIES = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9"], OTHER = "#8b949e";
 const MAX_SERIES = SERIES.length;

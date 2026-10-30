@@ -61,6 +61,10 @@ pub struct Alert {
     /// When the alert started firing.
     pub since: f64,
     pub message: String,
+    /// The sender the alert is attributed to (ADR 0008 conformance view):
+    /// the PDU's source for enum checks and jumps, the silent sender for a
+    /// timeout, the later arrival for an ID conflict.
+    pub sender: Option<SocketAddr>,
 }
 
 /// A change in an alert's state, at time `at`.
@@ -294,7 +298,15 @@ impl Engine {
         &self.mutes
     }
 
-    fn fire(&mut self, at: f64, rule: Rule, key: EntityKey, message: String, out: &mut Vec<AlertEvent>) {
+    fn fire(
+        &mut self,
+        at: f64,
+        rule: Rule,
+        key: EntityKey,
+        sender: Option<SocketAddr>,
+        message: String,
+        out: &mut Vec<AlertEvent>,
+    ) {
         if self.active.contains_key(&(rule, key)) || !self.enabled(rule) || self.muted(rule.name(), &key, at) {
             return;
         }
@@ -306,6 +318,7 @@ impl Engine {
             severity: self.severities.get(&rule).copied().unwrap_or(Severity::Warning),
             since: at,
             message: message.clone(),
+            sender,
         };
         self.active.insert((rule, key), alert.clone());
         out.push(AlertEvent {
@@ -318,7 +331,15 @@ impl Engine {
 
     /// Enum violations are point events, not states: they fire once and do
     /// not stay open, and repeat at most every `enum_repeat` seconds.
-    fn fire_once(&mut self, at: f64, key: EntityKey, check: &EnumCheck, value: u64, out: &mut Vec<AlertEvent>) {
+    fn fire_once(
+        &mut self,
+        at: f64,
+        key: EntityKey,
+        sender: SocketAddr,
+        check: &EnumCheck,
+        value: u64,
+        out: &mut Vec<AlertEvent>,
+    ) {
         if self.muted(check.spec.name, &key, at) {
             return;
         }
@@ -345,13 +366,14 @@ impl Engine {
                 severity: check.severity,
                 since: at,
                 message: message.clone(),
+                sender: Some(sender),
             },
             reason: message,
         });
     }
 
     /// The packs' enumeration checks on one decoded PDU.
-    pub fn check_enums(&mut self, now: f64, pdu: &Pdu) -> Vec<AlertEvent> {
+    pub fn check_enums(&mut self, now: f64, source: SocketAddr, pdu: &Pdu) -> Vec<AlertEvent> {
         let mut out = Vec::new();
         let key = EntityKey {
             exercise: pdu.header.exercise_id,
@@ -360,7 +382,7 @@ impl Engine {
         for i in 0..self.enum_checks.len() {
             if let Some(v) = self.enum_checks[i].violation(pdu) {
                 let check = self.enum_checks[i].clone();
-                self.fire_once(now, key, &check, v, &mut out);
+                self.fire_once(now, key, source, &check, v, &mut out);
             }
         }
         out
@@ -418,7 +440,7 @@ impl Engine {
                         "{} jumped {:.0} m from its dead-reckoned position after {:.1} s (tolerance {:.0} m)",
                         key.id, error, dt, tolerance
                     );
-                    self.fire(now, Rule::PositionJump, key, msg, &mut out);
+                    self.fire(now, Rule::PositionJump, key, Some(source), msg, &mut out);
                 } else {
                     self.resolve(
                         now,
@@ -451,7 +473,9 @@ impl Engine {
                     "at the same time".to_string()
                 };
                 let msg = format!("{} is claimed by {} and {} {}", key.id, other, source, why);
-                self.fire(now, Rule::IdConflict, key, msg, &mut out);
+                // Blame the later arrival: it took an ID already in use.
+                let blamed = if track.first_seen > my_first { *other } else { source };
+                self.fire(now, Rule::IdConflict, key, Some(blamed), msg, &mut out);
                 break;
             }
         }
@@ -530,7 +554,8 @@ impl Engine {
                         "{} ({}) sent no Entity State for {:.1} s of exercise time (timeout {:.1} s)",
                         key.id, rec.marking, silent, timeout
                     );
-                    self.fire(now, Rule::EntityTimeout, *key, msg, &mut out);
+                    let silent_sender = Some(rec.last_source);
+                    self.fire(now, Rule::EntityTimeout, *key, silent_sender, msg, &mut out);
                 }
             }
         }
