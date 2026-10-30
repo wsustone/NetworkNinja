@@ -41,6 +41,11 @@ out after 12 h, and `POST /api/logout` ends it. TLS (ADR 0006): `nn-server cert 
 nn.key` → HTTPS + WSS on the `--http` port; no flags = plaintext as before.
 TLS WebSockets share one rustls session between the reader/writer threads
 (`TlsReader`/`TlsWriter` in `web.rs`) since it can't be `try_clone`d.
+Entity detail: `GET /api/entity?ex=N&id=S:A:E` returns the row's fields
+plus type breakdown, first seen, DR algorithm, appearance, mute and a
+per-sender list (reports, heartbeat mean/jitter) — rebuilt each state tick
+into `Hub::details`, kept out of the delta feed on purpose. The dashboard
+polls it for the selected row's panel under the entity table.
 
 ## Architecture map
 

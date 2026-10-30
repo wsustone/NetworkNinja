@@ -78,7 +78,25 @@
   select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:3px; font:inherit; font-size:11px; padding:.15em .3em; }
   #filter, #efilter { width:100%; padding:.4em .9em; background:var(--bg); color:var(--fg); border:none; border-bottom:1px solid var(--line); outline:none; font:inherit; }
   #filter::placeholder, #efilter::placeholder { color:var(--dim); }
-  .tablewrap { max-height:70vh; overflow:auto; }
+  .tablewrap { max-height:70vh; overflow:auto; position:relative; }
+  .tablewrap.short { max-height:32vh; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover td { background:#1c2129; }
+  #detail { border-top:1px solid var(--line); padding:.6em .9em .8em; font-size:12px; }
+  #detail .dh { display:flex; gap:.7em; align-items:baseline; flex-wrap:wrap; margin-bottom:.5em; }
+  #detail .dh b { font-size:15px; }
+  #detail .dh .id { color:var(--dim); font-family:ui-monospace,monospace; }
+  #detail .st { font-size:11px; padding:0 .55em; border-radius:9px; border:1px solid currentColor; }
+  #detail .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:.2em 1.2em; }
+  #detail .grid span { color:var(--dim); }
+  #detail .grid div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #detail h3 { margin:.7em 0 .2em; font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--dim); font-weight:500; }
+  #detail table { font-size:11px; }
+  #detail .conflict td { color:var(--crit); }
+  #detail .al { padding:.2em 0; } #detail .al.crit b { color:var(--crit); } #detail .al.warn b { color:var(--warn); }
+  #detail .acts { display:flex; gap:.4em; margin-left:auto; }
+  #detail .acts .albtn { margin:0; font-size:11px; padding:.2em .6em; }
+  #detail .gone { color:var(--warn); }
   .empty { padding:1em; color:var(--dim); }
   #map { grid-column:2 / -1; height:420px; position:relative; }
   .maplibregl-ctrl-attrib { font-size:10px; }
@@ -112,10 +130,11 @@
       <thead><tr>
         <th data-k="id">ID</th><th data-k="marking">Marking</th><th data-k="etype">Type</th>
         <th data-k="force">Force</th><th data-k="lat">Lat</th><th data-k="lon">Lon</th>
-        <th data-k="speed">m/s</th><th data-k="age">Age</th><th data-k="senders">Src</th><th>Status</th>
+        <th data-k="speed">m/s</th><th data-k="age">Age</th><th data-k="senders">Src</th><th data-k="status">Status</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
+    <div id="detail" hidden></div>
   </section>
   <section>
     <h2>Event log <span id="aCount"></span></h2>
@@ -196,15 +215,93 @@ function renderFeed() {
 
 const STATUS_COLOR = {live:"#3fb950", frozen:"#d29922", silent:"#d29922", deactivated:"#8b949e", removed:"#8b949e"};
 
+// Selecting an entity highlights it everywhere, opens the detail panel and
+// pans the map. Clicking it again (or Esc / the panel's close) deselects.
 function selectEntity(id) {
-  selected = id;
-  render();
-  const row = document.querySelector(`tr[data-id="${CSS.escape(id)}"]`);
-  if (row) row.scrollIntoView({block:"center", behavior:"smooth"});
-  if (mapReady && state) {
-    const e = state.entities.find(x => x.id === id);
-    if (e) map.easeTo({center:[e.lon, e.lat], zoom: Math.max(map.getZoom(), 10)});
+  if (selected === id) return clearSelection();
+  selected = id; detail = null;
+  render(); updateMap(); fetchDetail();
+  const row = document.querySelector(`#rows tr[data-id="${CSS.escape(id)}"]`);
+  if (row) {
+    const wrap = row.closest(".tablewrap");
+    wrap.scrollTo({top: row.offsetTop - wrap.clientHeight / 2 + row.offsetHeight / 2, behavior:"smooth"});
   }
+  const e = byId[id];
+  if (mapReady && e) map.easeTo({center:[e.lon, e.lat], zoom: Math.max(map.getZoom(), 10)});
+}
+function clearSelection() {
+  selected = null; detail = null;
+  render(); updateMap();
+}
+
+let detail = null;
+function fetchDetail() {
+  if (!selected) return;
+  const id = selected, e = byId[id];
+  fetch(`/api/entity?ex=${e ? e.exercise : 0}&id=${encodeURIComponent(id)}`, auth())
+    .then(r => r.ok ? r.json() : null)
+    .then(d => { if (selected === id) { detail = d; renderDetail(); } })
+    .catch(() => {});
+}
+setInterval(fetchDetail, 1000);
+
+const KIND = {0:"other",1:"platform",2:"munition",3:"life form",4:"environmental",5:"cultural feature",6:"supply",7:"radio",8:"expendable",9:"sensor/emitter"};
+const DOMAIN = {0:"other",1:"land",2:"air",3:"surface",4:"subsurface",5:"space"};
+const FORCE = {0:"other",1:"friendly",2:"opposing",3:"neutral"};
+const DR = ["other","static","FPW","RPW","RVW","FVW","FPB","RPB","RVB","FVB"];
+const fmtWhen = s => s ? new Date(s*1000).toLocaleTimeString() : "–";
+
+function renderDetail() {
+  const box = $("detail"), wrap = document.querySelector(".tablewrap");
+  if (!selected) { box.hidden = true; wrap.classList.remove("short"); return; }
+  box.hidden = false; wrap.classList.add("short");
+  const e = byId[selected];
+  if (!e) {
+    box.innerHTML = `<div class="dh"><b class="id">${esc(selected)}</b><span class="gone">no longer in the entity table</span>`
+      + `<span class="acts"><button class="albtn" data-act="events">show its events</button><button class="albtn" data-act="close">close</button></span></div>`;
+    return;
+  }
+  const d = detail && detail.id === e.id ? detail : null;
+  const st = statusOf(e), now = state ? state.at : 0;
+  const kd = (e.ek === 1 ? DOMAIN[e.edom] : KIND[e.ek]) || "";
+  const muted = d && d.muted_until > now;
+  const row = (k, v) => `<div><span>${k}</span> ${v}</div>`;
+  const alerts = (state ? state.alerts : []).filter(a => a.entity === e.id);
+  let h = `<div class="dh"><b>${esc(e.marking) || "(no marking)"}</b><span class="id">${esc(e.id)}</span>`
+    + `<span class="st" style="color:${STATUS_COLOR[st]}">${st}</span>`
+    + (muted ? `<span class="st" style="color:var(--dim)">muted ${fmtAge(d.muted_until - now)}</span>` : "")
+    + `<span class="acts"><button class="albtn" data-act="events">show its events</button>`
+    + (muted ? `<button class="albtn" data-act="unmute">unmute</button>` : `<button class="albtn" data-act="mute">mute 5m</button>`)
+    + `<button class="albtn" data-act="close">close</button></span></div>`;
+  h += `<div class="grid">`
+    + row("exercise", e.exercise)
+    + row("type", `${esc(e.etype)} <span>${kd}</span>`)
+    + row("force", `${e.force} <span>${FORCE[e.force] || ""}</span>`)
+    + row("position", `${e.lat.toFixed(5)}, ${e.lon.toFixed(5)}`)
+    + row("altitude", `${e.alt.toFixed(0)} m`)
+    + row("heading", `${((e.heading % 360) + 360) % 360 | 0}°`)
+    + row("speed", `${e.speed.toFixed(1)} m/s`)
+    + row("last seen", `${fmtWhen(e.seen)} <span>${fmtAge(e.age || 0)} ago</span>`)
+    + (d ? row("first seen", fmtWhen(d.first_seen)) : "")
+    + (d ? row("dead reckoning", DR[d.dr] || d.dr) : "")
+    + (d ? row("appearance", "0x" + (d.appearance >>> 0).toString(16).padStart(8, "0")) : "")
+    + (d ? row("last sender", esc(d.last_source)) : row("senders", e.senders))
+    + `</div>`;
+  if (alerts.length) {
+    h += `<h3>open alerts (${alerts.length})</h3>` + alerts.map(a => {
+      const btns = a.ack ? `<span class="acked">· acked by ${esc(a.ack.by)}</span>`
+        : `<button class="albtn" data-cmd="ack" data-rule="${esc(a.rule)}" data-ent="${esc(a.entity)}" data-ex="${e.exercise}">ack</button>`;
+      return `<div class="al ${a.severity === "critical" ? "crit" : "warn"}"><b>${esc(a.rule)}</b> ${esc(a.message)} <span class="t">since ${fmtWhen(a.since)}</span>${btns}</div>`;
+    }).join("");
+  }
+  if (d && d.sources) {
+    h += `<h3>senders (${d.sources.length})</h3><table><thead><tr><th>address</th><th>reports</th><th>heartbeat</th><th>jitter</th><th>last</th><th>type</th></tr></thead><tbody>`
+      + d.sources.map(s => `<tr class="${s.etype !== e.etype ? "conflict" : ""}"><td>${esc(s.addr)}</td><td>${s.reports}</td>`
+        + `<td>${s.hb_mean ? s.hb_mean.toFixed(2) + " s" : "–"}</td><td>${s.hb_sd ? "±" + s.hb_sd.toFixed(2) + " s" : "–"}</td>`
+        + `<td>${fmtAge(Math.max(0, now - s.seen))} ago</td><td>${esc(s.etype)}</td></tr>`).join("")
+      + `</tbody></table>`;
+  }
+  box.innerHTML = h;
 }
 
 function statusOf(e) {
@@ -229,7 +326,7 @@ function render() {
   $("hFrozen").innerHTML = anyFrozen ? '<span class="frozen">FROZEN</span>' : "";
   const ef = $("efilter").value.trim().toLowerCase();
   const rows = [...state.entities]
-    .map(e => { e.age = Math.max(0, state.at - (e.seen || state.at)); return e; })
+    .map(e => { e.age = Math.max(0, state.at - (e.seen || state.at)); e.status = statusOf(e); return e; })
     .filter(e => !ef || [e.id, e.marking, e.etype, e.force, e.exercise].join(" ").toLowerCase().includes(ef))
     .sort((a,b) => {
     let x = a[sortKey], y = b[sortKey];
@@ -239,11 +336,11 @@ function render() {
   $("rows").innerHTML = rows.map(e => {
     const cls = e.removed ? "removed" : (e.stale ? "stale" : (e.frozen ? "frozen" : ""));
     const sel = selected === e.id ? " sel" : "";
-    return `<tr class="${cls}${sel}" data-id="${esc(e.id)}" onclick="selectEntity('${e.id}')">
-      <td>${e.id}</td><td>${esc(e.marking)}</td><td>${e.etype}</td><td>${e.force}</td>
+    return `<tr class="${cls}${sel}" data-id="${esc(e.id)}">
+      <td>${esc(e.id)}</td><td>${esc(e.marking)}</td><td>${esc(e.etype)}</td><td>${e.force}</td>
       <td>${e.lat.toFixed(4)}</td><td>${e.lon.toFixed(4)}</td>
       <td>${e.speed.toFixed(0)}</td><td>${fmtAge(e.age)}</td><td>${e.senders}</td>
-      <td>${statusOf(e)}</td></tr>`;
+      <td>${e.status}</td></tr>`;
   }).join("") || '<tr><td colspan="10" class="empty">waiting for traffic…</td></tr>';
   const tl = $("tlrow");
   if (state.replay) {
@@ -255,9 +352,10 @@ function render() {
   } else tl.classList.remove("on");
   $("eCount").textContent = ef ? `${rows.length} / ${state.entities.length}` : state.entities.length;
   $("sidelist").innerHTML = rows.map(e =>
-    `<li ${selected === e.id ? 'class="sel"' : ""} onclick="selectEntity('${e.id}')"><span class="dot" style="background:${STATUS_COLOR[statusOf(e)]}"></span>${esc(e.marking)}<span class="id">${e.id}</span></li>`
+    `<li ${selected === e.id ? 'class="sel"' : ""} data-id="${esc(e.id)}"><span class="dot" style="background:${STATUS_COLOR[e.status]}"></span>${esc(e.marking)}<span class="id">${esc(e.id)}</span></li>`
   ).join("") || '<li class="empty">–</li>';
   renderFeed();
+  renderDetail();
 }
 
 // --- map (MapLibre, offline Natural Earth basemap + MIL-STD-2525-ish symbols) ---
@@ -416,22 +514,43 @@ document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = true; }
   render();
 });
+// ack/mute buttons carry their command in data attributes (alert feed + detail panel).
+function cmdButton(btn) {
+  const o = {cmd: btn.dataset.cmd};
+  if (btn.dataset.rule) o.rule = btn.dataset.rule;
+  if (btn.dataset.ent) o.entity = btn.dataset.ent;
+  if (btn.dataset.ex) o.exercise = +btn.dataset.ex;
+  if (btn.dataset.secs) o.secs = +btn.dataset.secs;
+  if (o.cmd === "ack") o.note = prompt("Note (optional):", "") || "";
+  cmd(o);
+}
 $("alerts").onclick = ev => {
   const btn = ev.target.closest("button[data-cmd]");
-  if (btn) {
-    ev.stopPropagation();
-    const o = {cmd: btn.dataset.cmd};
-    if (btn.dataset.rule) o.rule = btn.dataset.rule;
-    if (btn.dataset.ent) o.entity = btn.dataset.ent;
-    if (btn.dataset.ex) o.exercise = +btn.dataset.ex;
-    if (btn.dataset.secs) o.secs = +btn.dataset.secs;
-    if (o.cmd === "ack") o.note = prompt("Note (optional):", "") || "";
-    cmd(o);
-    return;
-  }
+  if (btn) { ev.stopPropagation(); cmdButton(btn); return; }
   const li = ev.target.closest("li[data-ent]");
-  if (li) selectEntity(li.dataset.ent);
+  if (li && selected !== li.dataset.ent) selectEntity(li.dataset.ent);
 };
+$("rows").onclick = ev => {
+  const tr = ev.target.closest("tr[data-id]");
+  if (tr) selectEntity(tr.dataset.id);
+};
+$("sidelist").onclick = ev => {
+  const li = ev.target.closest("li[data-id]");
+  if (li) selectEntity(li.dataset.id);
+};
+$("detail").onclick = ev => {
+  const btn = ev.target.closest("button");
+  if (!btn || !selected) return;
+  if (btn.dataset.cmd) return cmdButton(btn);
+  const e = byId[selected], ex = e ? e.exercise : 0;
+  switch (btn.dataset.act) {
+    case "close": clearSelection(); break;
+    case "events": $("filter").value = selected; renderFeed(); break;
+    case "mute": cmd({cmd:"mute", entity:selected, exercise:ex, secs:300}); setTimeout(fetchDetail, 300); break;
+    case "unmute": cmd({cmd:"unmute", entity:selected, exercise:ex}); setTimeout(fetchDetail, 300); break;
+  }
+};
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && selected && !$("login").classList.contains("on")) clearSelection(); });
 $("filter").oninput = renderFeed;
 $("efilter").oninput = render;
 $("runsel").onchange = ev => cmd(ev.target.value ? {cmd:"replay", file:ev.target.value} : {cmd:"live"});
