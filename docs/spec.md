@@ -135,7 +135,7 @@ Rules are data, not code. Each message set has a versioned rule pack that the en
 - Signed and versioned like license files, delivered in the same offline update bundles. A new SISO-REF-010 release becomes a pack update, not a product release.
 - Packs are validated on load; a bad pack is rejected and the previous one keeps running
 
-**Conformance view:** shows rule hits per sender (site/application), so integration events can see which simulator is non-compliant and why. This is also a selling point for the Pro tier.
+**Conformance view:** shows rule hits per sender (site/application), so integration events can see which simulator is non-compliant and why. This is also a selling point for the Pro tier. Each alert and decode error is attributed to a sender: the PDU's source, the silent sender for a timeout, the later arrival for an ID conflict. `GET /api/events/summary?by=sender,rule&since=&exercise=&entity=` returns violation counts per severity, first and last seen, and open alerts, plus each live sender's claimed site:application pairs. A count click in the dashboard opens the matching events in the live log.
 
 **Coverage by PDU family:** each family (Entity Information, Warfare, Simulation Management, Logistics, Radio Communications, Distributed Emission Regeneration, and the rest) gets its own section in the base pack. Enumeration checks apply to every PDU on day one, because they are generated. Behavioural rules are added family by family, starting with Entity Information and Warfare.
 
