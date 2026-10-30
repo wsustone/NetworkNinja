@@ -59,7 +59,7 @@ Metric catalogue (names are stable API, like Datadog's `system.cpu.*`):
 
 | Metric | Unit | Dimensions |
 | --- | --- | --- |
-| `pdu.count` | PDUs | exercise, pdu_type, site, sender |
+| `pdu.count` | PDUs | exercise, pdu_type, site, kind, domain, sender (kind/domain: ADR 0009) |
 | `bytes.count` | bytes | sender |
 | `datagram.count` | datagrams | sender |
 | `decode.errors` | errors | sender |
@@ -194,6 +194,31 @@ Slices 1 and 2 are ready to execute; 3–5 are sequenced but not yet
 broken down.
 
 ### Slice 1 — tagged metrics, `/api/query`, persistence
+
+**Done (2026-10-30).** Decisions taken while building it:
+
+- Per-entity gauges (heartbeat mean/jitter, DR error) live in 10 s slots,
+  not 1 s buckets: at the 10,000-entity target a 1 s ring of them would
+  hold millions of entries. DR error is recorded per Entity State report
+  and folded into its slot; heartbeat stats are sampled once per slot.
+- Gauges fold in two steps: series within a time cell add up (each
+  series' mean in that cell), then cells in a point average. So `sum`
+  of `entity.active` by site is "entities on that site" whether the cell
+  is a 1 s bucket or a 10 s disk row. Counters zero-fill empty points;
+  gauges leave gaps. `rate` on a gauge is rejected.
+- `/api/query` takes a query string only (`where.DIM=…`, the dotted form
+  §3 already suggests); the JSON body waits for the monitor editor.
+  Responses echo the query and carry the metric's unit.
+- The serve loop owns the metrics, so the HTTP thread asks it for the
+  matching memory cells over a channel and reads SQLite itself for every
+  slot before the last flush; the loop never waits on disk.
+- Rollups are written for live capture only: a replay's timestamps are the
+  recording's, and would land in today's history. A clean exit flushes the
+  partial last slot.
+- Retention is `serve --metrics-retention DAYS` (default 7) until the ADR
+  0007 `config.toml` exists; swept on start and hourly.
+- Not yet: `sender.clock_skew` and `capture.drops` (no source for either
+  yet), and events gaining `sender`/`pack` columns (slice 2, item 1).
 
 1. `nn_state::Metrics`: add a `sender` split to `Bucket` and the gauges
    `entity.active` (by exercise/site/kind/force) and per-entity

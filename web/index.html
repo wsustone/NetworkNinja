@@ -100,6 +100,21 @@
   .empty { padding:1em; color:var(--dim); }
   #map { grid-column:2 / -1; height:420px; position:relative; }
   .maplibregl-ctrl-attrib { font-size:10px; }
+  /* Traffic chart (ADR 0008 /api/query). Series hues: validated dark palette, fixed order. */
+  #traffic { grid-column:2 / -1; }
+  #traffic h2 select { margin-left:.4em; text-transform:none; letter-spacing:0; }
+  #tlegend { display:flex; flex-wrap:wrap; gap:.25em 1em; padding:.5em .9em 0; font-size:11px; color:var(--dim); }
+  #tlegend span { white-space:nowrap; } #tlegend b { color:var(--fg); font-weight:500; }
+  #tlegend i { display:inline-block; width:10px; height:2px; vertical-align:middle; margin-right:5px; border-radius:1px; }
+  #tchart { position:relative; padding:.3em .4em .2em; }
+  #tchart svg { display:block; width:100%; height:190px; }
+  #tchart .grid line { stroke:#21262d; } #tchart .ax { fill:var(--dim); font-size:10px; }
+  #tchart .xh { stroke:var(--dim); stroke-width:1; }
+  #ttip { position:absolute; pointer-events:none; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:.35em .6em; font-size:11px; white-space:nowrap; z-index:2; }
+  #ttip i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; }
+  #ttable { padding:0 .9em .6em; font-size:11px; }
+  #tchart .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  @media (max-width:1100px) { #traffic { grid-column:1/-1; } }
 </style>
 
 <header>
@@ -142,6 +157,16 @@
     <ul id="alerts"></ul>
   </section>
   <section id="map"></section>
+  <section id="traffic">
+    <h2>Traffic <span>
+      split<select id="tsplit"><option value="">total</option><option value="pdu_type">PDU type</option><option value="site">site</option><option value="sender">sender</option></select>
+      window<select id="twin"><option value="600">10 min</option><option value="3600">1 h</option><option value="run">run</option></select>
+      <select id="tview"><option value="chart">chart</option><option value="table">table</option></select>
+    </span></h2>
+    <div id="tlegend"></div>
+    <div id="tchart"><div id="ttip" hidden></div></div>
+    <div id="ttable" hidden></div>
+  </section>
 </main>
 <script src="/vendor/maplibre-gl.js"></script>
 
@@ -564,6 +589,100 @@ function loadRuns() {
       (d.runs || []).map(r => `<option value="${esc(r.name)}" ${r.name === cur ? "selected" : ""}>${esc(r.name)}</option>`).join("");
   }).catch(() => {});
 }
+// --- traffic chart: PDU/s from /api/query, split by type / site / sender ---
+const SERIES = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9"], OTHER = "#8b949e";
+const MAX_SERIES = SERIES.length;
+const tColor = {};   // color follows the entity, not its rank: first-seen order, kept across refreshes
+let tNext = 0, traffic = null;
+function colorFor(key) {
+  if (key === "other") return OTHER;
+  if (!(key in tColor)) tColor[key] = tNext < MAX_SERIES ? SERIES[tNext++] : OTHER;
+  return tColor[key];
+}
+function resetColors() { for (const k in tColor) delete tColor[k]; tNext = 0; }
+function trafficQuery() {
+  if (!state) return;
+  const split = $("tsplit").value, wsel = $("twin").value, to = Math.ceil(state.at || Date.now()/1000);
+  const span = wsel === "run" ? Math.max(60, state.replay ? state.replay.pos : state.uptime) : +wsel;
+  const from = Math.floor(to - span), win = Math.max(5, Math.ceil(span / 240 / 5) * 5);
+  const q = new URLSearchParams({name:"pdu.count", agg:"rate", window:win, from, to});
+  if (split) q.set("by", split);
+  fetch("/api/query?" + q, auth()).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    // Biggest groups keep their own line; the rest fold into "other" (rates add).
+    let series = d.series.map(x => ({key: split ? (x.tags[split] ?? "–") : "total", points: x.points,
+      total: x.points.reduce((a, p) => a + p[1], 0)})).sort((a, b) => b.total - a.total);
+    if (series.length > MAX_SERIES) {
+      const rest = series.slice(MAX_SERIES - 1);
+      const pts = rest[0].points.map((p, i) => [p[0], rest.reduce((a, s) => a + (s.points[i] ? s.points[i][1] : 0), 0)]);
+      series = series.slice(0, MAX_SERIES - 1).concat([{key:"other", points:pts, total:0, n:rest.length}]);
+    }
+    traffic = {series, from: d.from, to: d.to, window: d.window};
+    renderTraffic();
+  }).catch(() => {});
+}
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v))), f = v / e;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * e;
+}
+const fmtRate = v => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+const fmtClock = t => new Date(t*1000).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second: traffic && traffic.to - traffic.from <= 900 ? "2-digit" : undefined});
+function renderTraffic() {
+  const box = $("tchart"), tip = $("ttip");
+  box.querySelectorAll("svg,.empty").forEach(n => n.remove());
+  if (!traffic) return;
+  const S = traffic.series, label = s => s.key === "other" ? `other (${s.n})` : s.key;
+  const last = s => s.points.length ? s.points[s.points.length - 1][1] : 0;
+  $("tlegend").innerHTML = S.length > 1 ? S.map(s => `<span><i style="background:${colorFor(s.key)}"></i>${esc(label(s))} <b>${fmtRate(last(s))}</b></span>`).join("") : "";
+  $("ttable").innerHTML = `<table><thead><tr><th>${esc($("tsplit").selectedOptions[0].text)}</th><th>now PDU/s</th><th>avg</th><th>peak</th></tr></thead><tbody>`
+    + S.map(s => { const v = s.points.map(p => p[1]);
+        return `<tr><td>${esc(label(s))}</td><td>${fmtRate(last(s))}</td><td>${fmtRate(v.reduce((a,b)=>a+b,0)/(v.length||1))}</td><td>${fmtRate(Math.max(0,...v))}</td></tr>`; }).join("")
+    + `</tbody></table>`;
+  const table = $("tview").value === "table";
+  $("ttable").hidden = !table; box.hidden = table; $("tlegend").hidden = table;
+  if (table) return;
+  if (!S.length) { box.insertAdjacentHTML("beforeend", '<div class="empty">no traffic in this window</div>'); return; }
+  const W = box.clientWidth - 8 || 600, H = 190, L = 42, R = 8, T = 8, B = 20;
+  const ymax = niceMax(Math.max(...S.flatMap(s => s.points.map(p => p[1]))) * 1.05);
+  const x = t => L + (t - traffic.from) / (traffic.to - traffic.from) * (W - L - R);
+  const y = v => T + (1 - v / ymax) * (H - T - B);
+  let g = '<g class="grid">';
+  for (let i = 0; i <= 4; i++) {
+    const v = ymax * i / 4;
+    g += `<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"/><text class="ax" x="${L-6}" y="${y(v)+3}" text-anchor="end">${fmtRate(v)}</text>`;
+  }
+  for (let i = 0; i <= 4; i++) {
+    const t = traffic.from + (traffic.to - traffic.from) * i / 4;
+    g += `<text class="ax" x="${x(t)}" y="${H-5}" text-anchor="${i === 0 ? "start" : i === 4 ? "end" : "middle"}">${fmtClock(t)}</text>`;
+  }
+  g += "</g>";
+  // Draw "other" first and the biggest group last so it sits on top.
+  const lines = [...S].reverse().map(s => `<polyline fill="none" stroke="${colorFor(s.key)}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${s.points.map(p => `${x(p[0] + traffic.window/2).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ")}"/>`).join("");
+  box.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="PDU rate">${g}${lines}<line class="xh" y1="${T}" y2="${H-B}" visibility="hidden"/></svg>`);
+  const svg = box.querySelector("svg"), xh = svg.querySelector(".xh"), pts = S[0].points;
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width;
+    let i = Math.round(((px - L) / (W - L - R) * (traffic.to - traffic.from) - traffic.window/2) / traffic.window);
+    i = Math.max(0, Math.min(pts.length - 1, i));
+    if (!pts[i]) return;
+    const cx = x(pts[i][0] + traffic.window/2);
+    xh.setAttribute("x1", cx); xh.setAttribute("x2", cx); xh.setAttribute("visibility", "visible");
+    tip.hidden = false;
+    tip.innerHTML = `<b>${fmtClock(pts[i][0])}</b> · PDU/s<br>` + S.map(s => [s, s.points[i] ? s.points[i][1] : 0])
+      .sort((a, b) => b[1] - a[1]).map(([s, v]) => `<i style="background:${colorFor(s.key)}"></i>${esc(label(s))} <b>${fmtRate(v)}</b>`).join("<br>");
+    const left = cx * r.width / W + 16;
+    tip.style.left = (left + tip.offsetWidth > r.width ? left - tip.offsetWidth - 28 : left) + "px";
+    tip.style.top = "8px";
+  };
+  svg.onmouseleave = () => { tip.hidden = true; xh.setAttribute("visibility", "hidden"); };
+}
+$("tsplit").onchange = () => { resetColors(); traffic = null; renderTraffic(); trafficQuery(); };
+$("twin").onchange = $("tview").onchange = () => { renderTraffic(); trafficQuery(); };
+window.addEventListener("resize", renderTraffic);
+setInterval(trafficQuery, 5000);
+setTimeout(trafficQuery, 800);
+
 loadRuns();
 initMap();
 fetch("/api/log?limit=500", auth()).then(r => {

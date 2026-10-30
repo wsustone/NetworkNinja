@@ -4,12 +4,14 @@
 //! same port (ADR 0006). Binds to localhost by default.
 
 use nn_rules::{AlertEvent, AlertState, Monitor, MuteScope, Severity};
-use nn_state::{geo, secs, EntityKey};
+use nn_state::metrics::{slot_of, Cell, Rollup};
+use nn_state::query::{evaluate, Query};
+use nn_state::{geo, secs, EntityKey, Metrics};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 
 use crate::auth::Auth;
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -54,6 +56,31 @@ pub struct Hub {
     /// Client commands (ack/mute) forwarded to the serve loop.
     cmd_tx: Mutex<Option<SyncSender<(String, String)>>>,
     auth: Mutex<Option<Arc<Auth>>>,
+    /// `/api/query` requests to the serve loop, which owns the metrics.
+    query_tx: Mutex<Option<SyncSender<QueryReq>>>,
+    /// Rollups are in the store for every slot before this second.
+    metrics_flushed: Mutex<Option<i64>>,
+    /// `--capture` file and its writer's counters (ADR 0009).
+    capture: Mutex<Option<(std::path::PathBuf, Arc<crate::pdustore::CaptureStats>)>>,
+}
+
+/// A query for the serve loop and where to send the memory cells back.
+pub type QueryReq = (Query, Sender<MemCells>);
+
+/// The in-memory half of a query: matching cells, and the first second
+/// memory still covers for the queried metric.
+#[derive(Debug, Default)]
+pub struct MemCells {
+    pub cells: Vec<Cell>,
+    pub oldest: Option<i64>,
+}
+
+/// Answer the in-memory half of a query (run on the serve loop's thread).
+pub fn memory_cells(m: &Metrics, q: &Query) -> MemCells {
+    MemCells {
+        cells: m.cells(q.metric, q.from, q.to, |t| q.matches(t)),
+        oldest: m.oldest(q.metric),
+    }
 }
 
 impl Default for Hub {
@@ -76,6 +103,9 @@ impl Hub {
             runs_dir: Mutex::new(None),
             cmd_tx: Mutex::new(None),
             auth: Mutex::new(None),
+            query_tx: Mutex::new(None),
+            metrics_flushed: Mutex::new(None),
+            capture: Mutex::new(None),
         }
     }
 
@@ -253,6 +283,72 @@ impl Hub {
         if let Some(tx) = self.cmd_tx.lock().unwrap().as_ref() {
             let _ = tx.try_send((user, text));
         }
+    }
+
+    /// The serve loop's query inbox (see [`memory_cells`]).
+    pub fn set_query_sink(&self, tx: SyncSender<QueryReq>) {
+        *self.query_tx.lock().unwrap() = Some(tx);
+    }
+
+    /// Persist rollup rows for every slot before `upto`; with no store
+    /// this is a no-op. Errors land in the event log.
+    pub fn write_rollup(&self, rows: &[Rollup], upto: i64) {
+        let r = match self.store.lock().unwrap().as_ref() {
+            Some((store, _)) => store.write_rollup(rows),
+            None => return,
+        };
+        match r {
+            Ok(()) => *self.metrics_flushed.lock().unwrap() = Some(upto),
+            Err(e) => {
+                self.log("error", &info_json(now_secs(), &format!("metric rollup failed: {e}")));
+            }
+        }
+    }
+
+    /// The in-memory metrics were reset (capture source switched): until the
+    /// next flush, queries read memory from its oldest slot on.
+    pub fn reset_metrics_flush(&self) {
+        *self.metrics_flushed.lock().unwrap() = None;
+    }
+
+    /// Delete stored metric samples older than `before`; returns how many.
+    pub fn sweep_metrics(&self, before: f64) -> usize {
+        match self.store.lock().unwrap().as_ref() {
+            Some((store, _)) => store.sweep_samples(before as i64).unwrap_or(0),
+            None => 0,
+        }
+    }
+
+    /// Evaluate a query: memory (from the serve loop) for recent slots, the
+    /// store for anything older than the last flush.
+    pub fn query(&self, q: &Query) -> Result<Vec<nn_state::Series>, String> {
+        let tx = self.query_tx.lock().unwrap().clone();
+        let mem = match tx {
+            Some(tx) => {
+                let (rtx, rrx) = channel();
+                tx.try_send((q.clone(), rtx)).map_err(|_| "server busy, try again")?;
+                rrx.recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| "metrics did not answer in time")?
+            }
+            None => MemCells::default(),
+        };
+        let store = self.store.lock().unwrap();
+        let Some((store, _)) = store.as_ref() else {
+            return Ok(evaluate(q, mem.cells));
+        };
+        let boundary = (*self.metrics_flushed.lock().unwrap())
+            .or(mem.oldest.map(slot_of))
+            .unwrap_or(i64::MAX);
+        let mut cells: Vec<Cell> = mem.cells.into_iter().filter(|c| c.at >= boundary).collect();
+        if q.from < boundary {
+            cells.extend(store.metric_cells(q.metric.name(), q.from, q.to.min(boundary), |t| q.matches(t))?);
+        }
+        Ok(evaluate(q, cells))
+    }
+
+    /// Serve `/api/capture` and `/api/pdus` from this capture file.
+    pub fn set_capture(&self, path: std::path::PathBuf, stats: Arc<crate::pdustore::CaptureStats>) {
+        *self.capture.lock().unwrap() = Some((path, stats));
     }
 
     /// The directory `/api/runs` lists `.nnrec` recordings from.
@@ -611,6 +707,62 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                 }
             }
         }
+        ("GET", "/api/query") => {
+            let pairs: Vec<(String, String)> = query
+                .split('&')
+                .filter(|kv| !kv.is_empty())
+                .map(|kv| {
+                    let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                    (pct_decode(k), pct_decode(v))
+                })
+                .collect();
+            let r = Query::parse(&pairs, now_secs()).and_then(|q| hub.query(&q).map(|s| query_json(&q, &s)));
+            let _ = match r {
+                Ok(body) => respond(s, "200 OK", "application/json", &body),
+                Err(e) => respond(
+                    s,
+                    "400 Bad Request",
+                    "application/json",
+                    &format!("{{\"error\":\"{}\"}}", esc(&e)),
+                ),
+            };
+        }
+        ("GET", "/api/capture") => {
+            let body = match hub.capture.lock().unwrap().as_ref() {
+                Some((path, stats)) => stats.json(path),
+                None => "{\"enabled\":false}".into(),
+            };
+            let _ = respond(s, "200 OK", "application/json", &body);
+        }
+        ("GET", "/api/pdus") => {
+            let cap = hub.capture.lock().unwrap().as_ref().map(|(p, _)| p.clone());
+            let r = match cap {
+                None => Err("PDU capture is off (start serve with --capture FILE)".to_string()),
+                Some(path) => {
+                    let f = |k: &str| qparam(k).and_then(|v| v.parse::<f64>().ok());
+                    let to = f("to").unwrap_or_else(now_secs);
+                    let limit = f("limit").unwrap_or(1000.0).clamp(1.0, 10_000.0) as usize;
+                    crate::pdustore::read_pdus(
+                        &path,
+                        qparam("ex").and_then(|v| v.parse().ok()),
+                        qparam("id").as_deref(),
+                        f("from").unwrap_or(to - 600.0),
+                        to,
+                        limit,
+                    )
+                    .map(|rows| pdus_json(&rows))
+                }
+            };
+            let _ = match r {
+                Ok(body) => respond(s, "200 OK", "application/json", &body),
+                Err(e) => respond(
+                    s,
+                    "400 Bad Request",
+                    "application/json",
+                    &format!("{{\"error\":\"{}\"}}", esc(&e)),
+                ),
+            };
+        }
         ("GET", "/api/runs") => {
             let body = hub.runs_list();
             let _ = respond(s, "200 OK", "application/json", &body);
@@ -893,6 +1045,98 @@ pub fn alert_json(e: &AlertEvent) -> String {
         e.alert.key.exercise,
         esc(&e.alert.message),
     )
+}
+
+fn tags_json(tags: &[(nn_state::Dim, String)]) -> String {
+    let body: Vec<String> = tags
+        .iter()
+        .map(|(d, v)| format!("\"{}\":\"{}\"", d.name(), esc(v)))
+        .collect();
+    format!("{{{}}}", body.join(","))
+}
+
+/// `/api/query` answer (ADR 0008 §2): the query echoed back, then
+/// `"series":[{"tags":{…},"points":[[t,v],…]}]`, or for a toplist
+/// `"groups":[{"tags":{…},"value":v}]` largest first.
+pub fn query_json(q: &Query, series: &[nn_state::Series]) -> String {
+    let mut s = format!(
+        "{{\"name\":\"{}\",\"unit\":\"{}\",\"agg\":\"{}\",\"window\":{},\"from\":{},\"to\":{},",
+        q.metric.name(),
+        q.metric.unit(),
+        q.agg.name(),
+        q.window,
+        q.from,
+        q.to
+    );
+    let num = |v: f64| {
+        if v.is_finite() {
+            format!("{}", (v * 1e6).round() / 1e6)
+        } else {
+            "null".into()
+        }
+    };
+    if q.is_toplist() {
+        let mut groups: Vec<(&nn_state::Series, f64)> = series
+            .iter()
+            .map(|x| (x, x.points.first().map_or(0.0, |p| p.1)))
+            .collect();
+        groups.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let g: Vec<String> = groups
+            .iter()
+            .map(|(x, v)| format!("{{\"tags\":{},\"value\":{}}}", tags_json(&x.tags), num(*v)))
+            .collect();
+        s.push_str(&format!("\"groups\":[{}]}}", g.join(",")));
+    } else {
+        let g: Vec<String> = series
+            .iter()
+            .map(|x| {
+                let pts: Vec<String> = x.points.iter().map(|(t, v)| format!("[{t},{}]", num(*v))).collect();
+                format!("{{\"tags\":{},\"points\":[{}]}}", tags_json(&x.tags), pts.join(","))
+            })
+            .collect();
+        s.push_str(&format!("\"series\":[{}]}}", g.join(",")));
+    }
+    s
+}
+
+/// `/api/pdus` answer: one record per stored PDU, Entity State with its
+/// position, speed and appearance decoded for track drill-down.
+fn pdus_json(rows: &[crate::pdustore::StoredPdu]) -> String {
+    let items: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            let mut s = format!(
+                "{{\"at\":{},\"sender\":\"{}\",\"tier\":\"{}\"",
+                fnum(r.at),
+                esc(&r.sender),
+                esc(&r.tier)
+            );
+            match &r.pdu {
+                Ok(p) => {
+                    s.push_str(&format!(",\"type\":\"{}\"", p.type_name()));
+                    if let Some(id) = nn_state::metrics::entity_of(p) {
+                        s.push_str(&format!(",\"entity\":\"{id}\""));
+                    }
+                    if let nn_decode::PduBody::EntityState(es) = &p.body {
+                        let (lat, lon, alt) = geo::ecef_to_lla(&es.location);
+                        let v = es.linear_velocity;
+                        s.push_str(&format!(
+                            ",\"lat\":{},\"lon\":{},\"alt\":{},\"speed\":{},\"appearance\":{}",
+                            fnum(lat),
+                            fnum(lon),
+                            fnum(alt),
+                            fnum(((v.x * v.x + v.y * v.y + v.z * v.z) as f64).sqrt()),
+                            es.appearance
+                        ));
+                    }
+                }
+                Err(e) => s.push_str(&format!(",\"error\":\"{}\"", esc(e))),
+            }
+            s.push('}');
+            s
+        })
+        .collect();
+    format!("{{\"count\":{},\"pdus\":[{}]}}", items.len(), items.join(","))
 }
 
 /// A server event log entry body (`kind = "info"`).

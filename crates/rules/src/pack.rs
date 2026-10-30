@@ -287,6 +287,83 @@ pub struct EnumEntry {
     pub off: bool,
 }
 
+/// One `[[capture]]` entry: how much Entity State traffic to persist for
+/// entities of a type (ADR 0009). Packs layer these like `[[enum]]`: a
+/// later pack's entry replaces a lower one with the same `type` and
+/// `min_speed`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureRule {
+    /// Entity type prefix, kind first: empty = every type, `[1, 2]` = air
+    /// platforms, `[2]` = munitions.
+    pub prefix: Vec<u16>,
+    /// Applies only while the entity moves at least this fast, m/s.
+    pub min_speed: f64,
+    /// Seconds between kept reports per entity and sender: `Some(0.0)` keeps
+    /// every PDU, `None` (`every = "off"`) keeps none.
+    pub every: Option<f64>,
+    pub pack: String,
+}
+
+impl CaptureRule {
+    /// The pack spelling of the type: `*` or `1.2`.
+    pub fn type_label(&self) -> String {
+        if self.prefix.is_empty() {
+            "*".into()
+        } else {
+            self.prefix.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(".")
+        }
+    }
+
+    fn matches(&self, t: &EntityType, speed: f64) -> bool {
+        let parts = [
+            t.kind as u16,
+            t.domain as u16,
+            t.country,
+            t.category as u16,
+            t.subcategory as u16,
+            t.specific as u16,
+            t.extra as u16,
+        ];
+        speed >= self.min_speed && self.prefix.iter().zip(parts).all(|(a, b)| *a == b)
+    }
+}
+
+/// See [`Merged::capture_rule`].
+pub fn pick_capture<'a>(rules: &'a [CaptureRule], t: &EntityType, speed: f64) -> Option<&'a CaptureRule> {
+    rules.iter().filter(|c| c.matches(t, speed)).max_by(|a, b| {
+        a.min_speed
+            .total_cmp(&b.min_speed)
+            .then(a.prefix.len().cmp(&b.prefix.len()))
+    })
+}
+
+fn parse_type_prefix(s: &str, origin: &str) -> Result<Vec<u16>, PackError> {
+    let s = s.trim();
+    if s == "*" {
+        return Ok(Vec::new());
+    }
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() > 7 {
+        return Err(PackError::at(
+            origin,
+            0,
+            format!("capture type '{s}' has more than 7 parts"),
+        ));
+    }
+    parts
+        .iter()
+        .map(|p| {
+            p.trim().parse::<u16>().map_err(|_| {
+                PackError::at(
+                    origin,
+                    0,
+                    format!("capture type '{s}' must be \"*\" or dotted numbers, kind first (e.g. \"1.2\")"),
+                )
+            })
+        })
+        .collect()
+}
+
 /// One parsed pack file.
 #[derive(Debug)]
 pub struct RulePack {
@@ -300,6 +377,7 @@ pub struct RulePack {
     pub tick_interval: Option<f64>,
     pub rules: BTreeMap<Rule, RuleOverlay>,
     pub enums: Vec<EnumEntry>,
+    pub captures: Vec<CaptureRule>,
 }
 
 fn num(v: &Value) -> Option<f64> {
@@ -405,7 +483,12 @@ impl RulePack {
     /// Parse a pack file's text. `origin` names it in error messages.
     pub fn parse(src: &str, origin: &str) -> Result<RulePack, PackError> {
         let root = minitoml::parse(src).map_err(|e| PackError::at(origin, e.line, e.message))?;
-        check_keys(&root, &["pack", "defaults", "rules", "enum"], origin, "pack file")?;
+        check_keys(
+            &root,
+            &["pack", "defaults", "rules", "enum", "capture"],
+            origin,
+            "pack file",
+        )?;
 
         // [pack] metadata.
         let meta = table_only(
@@ -442,6 +525,7 @@ impl RulePack {
             tick_interval: None,
             rules: BTreeMap::new(),
             enums: Vec::new(),
+            captures: Vec::new(),
         };
         if pack.name.is_empty() {
             pack.name = pack.id.clone();
@@ -592,6 +676,66 @@ impl RulePack {
                 });
             }
         }
+
+        // [[capture]].
+        if let Some(v) = root.get("capture") {
+            let entries = match v {
+                Value::Tables(ts) => ts,
+                _ => return Err(PackError::at(origin, 0, "'capture' must be a [[section]]")),
+            };
+            for t in entries {
+                check_keys(t, &["type", "min_speed", "every"], origin, "[[capture]]")?;
+                let prefix = match t.get("type") {
+                    Some(Value::String(s)) => parse_type_prefix(s, origin)?,
+                    _ => {
+                        return Err(PackError::at(
+                            origin,
+                            0,
+                            "[[capture]] needs type = \"*\" or e.g. \"1.2\"",
+                        ))
+                    }
+                };
+                let min_speed = match t.get("min_speed") {
+                    None => 0.0,
+                    Some(v) => num(v)
+                        .filter(|n| *n >= 0.0 && n.is_finite())
+                        .ok_or_else(|| PackError::at(origin, 0, "capture min_speed must be a number >= 0"))?,
+                };
+                let every = match t.get("every") {
+                    Some(Value::String(s)) if s == "off" => None,
+                    Some(v) => Some(num(v).filter(|n| *n >= 0.0 && n.is_finite()).ok_or_else(|| {
+                        PackError::at(
+                            origin,
+                            0,
+                            "capture every must be seconds >= 0 (0 = every PDU) or \"off\"",
+                        )
+                    })?),
+                    None => return Err(PackError::at(origin, 0, "[[capture]] needs every = seconds or \"off\"")),
+                };
+                let rule = CaptureRule {
+                    prefix,
+                    min_speed,
+                    every,
+                    pack: pack.id.clone(),
+                };
+                if pack
+                    .captures
+                    .iter()
+                    .any(|c| c.prefix == rule.prefix && c.min_speed == rule.min_speed)
+                {
+                    return Err(PackError::at(
+                        origin,
+                        0,
+                        format!(
+                            "duplicate [[capture]] for type '{}' at min_speed {}",
+                            rule.type_label(),
+                            rule.min_speed
+                        ),
+                    ));
+                }
+                pack.captures.push(rule);
+            }
+        }
         Ok(pack)
     }
 }
@@ -609,6 +753,8 @@ pub struct Merged {
     /// Effective enum checks, keyed by field.
     pub enum_checks: Vec<EnumCheck>,
     pub enum_repeat_seconds: f64,
+    /// Effective `[[capture]]` tiers (ADR 0009).
+    pub capture: Vec<CaptureRule>,
 }
 
 impl Merged {
@@ -650,6 +796,7 @@ impl Merged {
             rule_pack: BTreeMap::new(),
             enum_checks: Vec::new(),
             enum_repeat_seconds: DEFAULT_ENUM_REPEAT,
+            capture: Vec::new(),
         };
         let mut checks: BTreeMap<&'static str, EnumCheck> = BTreeMap::new();
         for p in packs {
@@ -674,6 +821,11 @@ impl Merged {
                     }
                 }
             }
+            for c in p.captures {
+                m.capture
+                    .retain(|o| !(o.prefix == c.prefix && o.min_speed == c.min_speed));
+                m.capture.push(c);
+            }
             for e in p.enums {
                 if e.off {
                     checks.remove(e.spec.name);
@@ -696,6 +848,13 @@ impl Merged {
         }
         m.enum_checks = checks.into_values().collect();
         m
+    }
+
+    /// The capture tier for an entity of type `t` moving at `speed` m/s:
+    /// among matching entries, the highest `min_speed` wins (observed
+    /// behaviour beats declared type), then the longest type prefix.
+    pub fn capture_rule(&self, t: &EntityType, speed: f64) -> Option<&CaptureRule> {
+        pick_capture(&self.capture, t, speed)
     }
 }
 

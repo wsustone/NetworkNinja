@@ -7,9 +7,17 @@
 //!
 //! `runs` marks run boundaries so the UI can tell yesterday's exercise from
 //! today's; `recordings`/`pdus` from the ADR land with milestone 5.
+//!
+//! Metric rollups (ADR 0008): `series(id, name, tags)` names each tagged
+//! series once; `samples(series, at, n, sum, min, max)` holds one row per
+//! series per ten-second slot, swept after the retention period.
 
+use nn_state::metrics::{decode_tags, encode_tags, Agg, Cell, Rollup};
 use rusqlite::{params, Connection};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Default)]
 pub struct EventQuery {
@@ -25,6 +33,8 @@ pub struct EventQuery {
 
 pub struct EventStore {
     conn: Connection,
+    /// `name|tags` → series id, so a flush doesn't look each one up.
+    series_ids: RefCell<HashMap<String, i64>>,
 }
 
 impl EventStore {
@@ -52,10 +62,24 @@ impl EventStore {
             CREATE INDEX IF NOT EXISTS ev_seq ON events(seq);
             CREATE INDEX IF NOT EXISTS ev_kind ON events(kind);
             CREATE INDEX IF NOT EXISTS ev_entity ON events(entity);
-            CREATE INDEX IF NOT EXISTS ev_at ON events(at);",
+            CREATE INDEX IF NOT EXISTS ev_at ON events(at);
+            CREATE TABLE IF NOT EXISTS series(
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                tags TEXT NOT NULL,
+                UNIQUE(name, tags));
+            CREATE TABLE IF NOT EXISTS samples(
+                series INTEGER NOT NULL,
+                at INTEGER NOT NULL,
+                n INTEGER, sum REAL, min REAL, max REAL);
+            CREATE INDEX IF NOT EXISTS sm_series_at ON samples(series, at);
+            CREATE INDEX IF NOT EXISTS sm_at ON samples(at);",
         )
         .map_err(|e| e.to_string())?;
-        Ok(EventStore { conn })
+        Ok(EventStore {
+            conn,
+            series_ids: RefCell::new(HashMap::new()),
+        })
     }
 
     /// Start a new run row; returns its id (used as `run` on events).
@@ -132,5 +156,107 @@ impl EventStore {
             Err(_) => return Vec::new(),
         };
         rows.flatten().collect()
+    }
+
+    fn series_id(&self, name: &str, tags: &str) -> rusqlite::Result<i64> {
+        let key = format!("{name}|{tags}");
+        if let Some(id) = self.series_ids.borrow().get(&key) {
+            return Ok(*id);
+        }
+        self.conn.execute(
+            "INSERT OR IGNORE INTO series(name, tags) VALUES(?1, ?2)",
+            params![name, tags],
+        )?;
+        let id = self.conn.query_row(
+            "SELECT id FROM series WHERE name = ?1 AND tags = ?2",
+            params![name, tags],
+            |r| r.get(0),
+        )?;
+        self.series_ids.borrow_mut().insert(key, id);
+        Ok(id)
+    }
+
+    /// Write one flush of ten-second rollups in a single transaction.
+    pub fn write_rollup(&self, rows: &[Rollup]) -> Result<(), String> {
+        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        {
+            let mut ins = tx
+                .prepare_cached("INSERT INTO samples(series, at, n, sum, min, max) VALUES(?1,?2,?3,?4,?5,?6)")
+                .map_err(|e| e.to_string())?;
+            for r in rows {
+                let id = self
+                    .series_id(r.metric.name(), &encode_tags(&r.tags))
+                    .map_err(|e| e.to_string())?;
+                ins.execute(params![id, r.at, r.agg.n as i64, r.agg.sum, r.agg.min, r.agg.max])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+
+    /// Stored cells of metric `name` with `from <= at < to` whose tags pass
+    /// `keep` (decoded once per series).
+    pub fn metric_cells(
+        &self,
+        name: &str,
+        from: i64,
+        to: i64,
+        keep: impl Fn(&nn_state::metrics::TagPairs) -> bool,
+    ) -> Result<Vec<Cell>, String> {
+        let mut st = self
+            .conn
+            .prepare_cached(
+                "SELECT s.id, s.tags, m.at, m.n, m.sum, m.min, m.max
+                 FROM series s JOIN samples m ON m.series = s.id
+                 WHERE s.name = ?1 AND m.at >= ?2 AND m.at < ?3",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut rows = st.query(params![name, from, to]).map_err(|e| e.to_string())?;
+        let mut tags: HashMap<i64, Option<Arc<nn_state::metrics::TagPairs>>> = HashMap::new();
+        let mut out = Vec::new();
+        while let Some(r) = rows.next().map_err(|e| e.to_string())? {
+            let id: i64 = r.get(0).map_err(|e| e.to_string())?;
+            let t = match tags.get(&id) {
+                Some(t) => t.clone(),
+                None => {
+                    let p = decode_tags(&r.get::<_, String>(1).map_err(|e| e.to_string())?);
+                    let t = keep(&p).then(|| Arc::new(p));
+                    tags.insert(id, t.clone());
+                    t
+                }
+            };
+            let Some(t) = t else { continue };
+            let get = |i| r.get::<_, f64>(i).map_err(|e| e.to_string());
+            out.push(Cell {
+                at: r.get(2).map_err(|e| e.to_string())?,
+                tags: t,
+                agg: Agg {
+                    n: r.get::<_, i64>(3).map_err(|e| e.to_string())? as u64,
+                    sum: get(4)?,
+                    min: get(5)?,
+                    max: get(6)?,
+                },
+            });
+        }
+        Ok(out)
+    }
+
+    /// Drop samples older than `before` and series left without any.
+    /// Returns the samples removed.
+    pub fn sweep_samples(&self, before: i64) -> Result<usize, String> {
+        let n = self
+            .conn
+            .execute("DELETE FROM samples WHERE at < ?1", params![before])
+            .map_err(|e| e.to_string())?;
+        if n > 0 {
+            self.conn
+                .execute(
+                    "DELETE FROM series WHERE NOT EXISTS (SELECT 1 FROM samples WHERE samples.series = series.id)",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+            self.series_ids.borrow_mut().clear();
+        }
+        Ok(n)
     }
 }

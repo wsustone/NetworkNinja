@@ -7,7 +7,8 @@ use nn_capture::Datagram;
 use nn_decode::{decode_datagram, EntityId, PduBody};
 use nn_generator::{run, Config, Event, EventKind, Sender, Sink, Target};
 use nn_rules::{AlertEvent, AlertState, Monitor, Rule, RuleConfig};
-use nn_state::{secs, EntityKey};
+use nn_state::query::evaluate;
+use nn_state::{secs, EntityKey, Query};
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
@@ -419,6 +420,50 @@ fn entity_counts_and_rates_match_ground_truth() {
     assert_eq!(w.pdus, pdus);
     assert_eq!(w.bytes, bytes);
     assert_eq!(w.errors, 0);
+
+    // The query API agrees, split by sender (ADR 0008): one toplist value
+    // per source address over the same 60 s.
+    let mut per_sender: std::collections::BTreeMap<String, u64> = Default::default();
+    for d in &datagrams {
+        let t = secs(d.received_at);
+        if t >= window_start && t <= end {
+            *per_sender.entry(d.source.to_string()).or_default() += decode_datagram(&d.payload).len() as u64;
+        }
+    }
+    let from = window_start as i64;
+    let q = Query::parse(
+        &[
+            ("name".into(), "pdu.count".into()),
+            ("by".into(), "sender".into()),
+            ("agg".into(), "sum".into()),
+            ("from".into(), from.to_string()),
+            ("to".into(), (from + 60).to_string()),
+            ("window".into(), "60".into()),
+        ],
+        end,
+    )
+    .unwrap();
+    let got: std::collections::BTreeMap<String, u64> =
+        evaluate(&q, m.metrics.cells(q.metric, q.from, q.to, |t| q.matches(t)))
+            .into_iter()
+            .map(|s| (s.tags[0].1.clone(), s.points[0].1 as u64))
+            .collect();
+    assert_eq!(got, per_sender);
+
+    // entity.active summed over every tag is the active count at the end.
+    let q = Query::parse(
+        &[
+            ("name".into(), "entity.active".into()),
+            ("agg".into(), "sum".into()),
+            ("window".into(), "1".into()),
+            ("from".into(), (end.floor() as i64 - 1).to_string()),
+            ("to".into(), (end.floor() as i64 + 1).to_string()),
+        ],
+        end,
+    )
+    .unwrap();
+    let s = evaluate(&q, m.metrics.cells(q.metric, q.from, q.to, |_| true));
+    assert_eq!(s[0].points.last().unwrap().1, 118.0, "{s:?}");
 
     // Heartbeat interval stats per entity are close to the configured 5 s or less.
     for rec in m.table.entities.values() {
