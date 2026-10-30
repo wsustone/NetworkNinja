@@ -99,6 +99,9 @@ defects, for one-process reproducible runs. Two acceptance tests hold the line:
    structure-checked so far.
 3. Generate SISO-REF-010 enumerations (tier E), with enumeration defects.
 4. Vendor profiles and the multi-process harness: the silence and exact-detection tests.
+   *Done:* `--profile` (standard, legacy, body-axis, gateway), `scripts/multi-vendor.sh`, and
+   the two acceptance tests in `crates/rules/tests/scenarios.rs`. Heartbeat intervals other
+   than the pack's are not a profile: they need the site pack's `heartbeat` to match.
 5. Tier D family by family, most common first: Simulation Management handshakes, Radio,
    Emissions/IFF, Entity Damage Status and Collision, then the rest. Each brings its semantic
    defects.

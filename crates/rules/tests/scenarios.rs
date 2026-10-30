@@ -5,7 +5,7 @@
 
 use nn_capture::Datagram;
 use nn_decode::{decode_datagram, EntityId, PduBody};
-use nn_generator::{run, Config, Event, EventKind, Sender, Sink, Target};
+use nn_generator::{profile, run, Config, Event, EventKind, Sender, Sink, Target};
 use nn_rules::{AlertEvent, AlertState, Monitor, Rule, RuleConfig};
 use nn_state::query::evaluate;
 use nn_state::{secs, EntityKey, Query};
@@ -20,7 +20,7 @@ struct Collect {
 
 impl Sink for Collect {
     fn emit(&mut self, t: f64, s: Sender, d: &[u8]) -> io::Result<()> {
-        let host = if s.rogue { 250 } else { 10 };
+        let host = s.host();
         let source = SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(10, 0, s.site as u8, host),
             40_000 + s.generation,
@@ -505,7 +505,7 @@ fn generate_process(cfg: &Config, p: u16) -> Vec<Datagram> {
     struct Proc(std::time::SystemTime, u16, Vec<Datagram>);
     impl Sink for Proc {
         fn emit(&mut self, t: f64, s: Sender, d: &[u8]) -> io::Result<()> {
-            let host = if s.rogue { 250 } else { 10 };
+            let host = s.host();
             self.2.push(Datagram {
                 received_at: self.0 + Duration::from_secs_f64(t),
                 source: SocketAddr::V4(SocketAddrV4::new(
@@ -644,4 +644,108 @@ fn each_structural_fault_fires_its_rule_on_its_sender() {
         // Each cites the layout clause it checks.
         assert!(events[0].reason.contains("Collision") && events[0].reason.contains("7.2.3"));
     }
+}
+
+// ------------------------------------------- vendor profiles (ADR 0010)
+
+/// Four vendors side by side, each a separate generator process with its
+/// own profile, sites and application, all following one exercise freeze.
+/// Vendor `p` (0-3) runs sites 2p+1 and 2p+2 as application p+1.
+fn multi_vendor(faults: &[(usize, Event)]) -> Vec<Datagram> {
+    let mut all = Vec::new();
+    for (p, name) in ["standard", "legacy", "body-axis", "gateway"].into_iter().enumerate() {
+        let mut cfg = Config {
+            duration: 60.0,
+            site_base: 2 * p as u16 + 1,
+            application: p as u16 + 1,
+            sites: 2,
+            entities_per_site: 8,
+            fire_every: Some(6.0),
+            all_types: (p % 2 == 0).then_some(10.0),
+            seed: 11 + p as u64,
+            events: vec![
+                Event {
+                    kind: EventKind::Freeze,
+                    target: Target::Exercise,
+                    at: 20.0,
+                },
+                Event {
+                    kind: EventKind::Resume,
+                    target: Target::Exercise,
+                    at: 35.0,
+                },
+            ],
+            ..Default::default()
+        };
+        profile(name).unwrap().apply(&mut cfg);
+        if p == 0 {
+            cfg.events.push(Event {
+                kind: EventKind::Remove,
+                target: Target::Entity(EntityId::new(1, 1, 1)),
+                at: 10.0,
+            });
+            cfg.events.push(Event {
+                kind: EventKind::RestartPort,
+                target: Target::Site(2),
+                at: 15.0,
+            });
+        }
+        cfg.events
+            .extend(faults.iter().filter(|(v, _)| *v == p).map(|(_, e)| *e));
+        all.extend(generate_process(&cfg, p as u16));
+    }
+    all.sort_by_key(|d| d.received_at); // stable: each process keeps its order
+    all
+}
+
+#[test]
+fn multi_vendor_run_without_defects_is_silent() {
+    let (m, events) = monitor(&multi_vendor(&[]));
+    assert!(events.is_empty(), "{}", describe(&events));
+    assert_eq!(m.decode_errors, 0);
+    assert_eq!(m.table.entities.len(), 64);
+    // The gateway's copies were recognised as copies, not a second simulator.
+    assert!(m.duplicates > 100, "{} duplicates", m.duplicates);
+}
+
+#[test]
+fn multi_vendor_run_raises_exactly_the_injected_defects() {
+    let ev = |kind, target, at| Event { kind, target, at };
+    let faults = [
+        (
+            0,
+            ev(EventKind::DropHeartbeat, Target::Entity(EntityId::new(1, 1, 2)), 12.0),
+        ),
+        (1, ev(EventKind::Teleport, Target::Entity(EntityId::new(3, 2, 3)), 14.0)),
+        (
+            1,
+            ev(EventKind::WrongFamily, Target::Pdu { site: 3, pdu_type: 26 }, 15.0),
+        ),
+        (2, ev(EventKind::CloneId, Target::Entity(EntityId::new(5, 3, 2)), 16.0)),
+        (3, ev(EventKind::ShortPdu, Target::Pdu { site: 7, pdu_type: 4 }, 18.0)),
+    ];
+    let (_, events) = monitor(&multi_vendor(&faults));
+    let mut got: Vec<(String, String, String)> = firing(&events)
+        .iter()
+        .map(|e| {
+            (
+                e.alert.rule.name().to_string(),
+                e.alert.key.id.to_string(),
+                e.alert.sender.unwrap().to_string(),
+            )
+        })
+        .collect();
+    got.sort();
+    let mut want: Vec<(String, String, String)> = [
+        ("entity-timeout", "1:1:2", "10.0.1.10:41000"),
+        ("id-conflict", "5:3:2", "10.0.5.250:41200"),
+        ("pdu-family", "3:2:0", "10.0.3.10:41100"),
+        ("pdu-structure", "7:4:0", "10.0.7.10:41300"),
+        ("position-jump", "3:2:3", "10.0.3.10:41100"),
+    ]
+    .iter()
+    .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string()))
+    .collect();
+    want.sort();
+    assert_eq!(got, want, "{}", describe(&events));
 }
