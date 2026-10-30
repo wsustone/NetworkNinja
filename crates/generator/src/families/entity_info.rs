@@ -18,11 +18,20 @@ fn entity_state(
     tick: &Tick,
     frozen: bool,
     e: &SimEntity,
-    pos: WorldCoord,
-    vel: Vec3f,
-    heading: f32,
+    (pos, vel, orientation): (WorldCoord, Vec3f, EulerAngles),
     marking: Marking,
+    dr_algorithm: u8,
 ) -> Pdu {
+    // Body-axis algorithms (6-9) report velocity in the body frame: the
+    // vehicles drive nose first, so it is all along body x.
+    let velocity = match (frozen, dr_algorithm) {
+        (true, _) => Vec3f::default(),
+        (false, 6..=9) => Vec3f {
+            x: e.speed as f32,
+            ..Default::default()
+        },
+        (false, _) => vel,
+    };
     Pdu {
         header: tick.header(pdu_type::ENTITY_STATE),
         body: PduBody::EntityState(EntityState {
@@ -30,16 +39,12 @@ fn entity_state(
             force_id: e.force,
             entity_type: e.entity_type,
             alternative_entity_type: e.entity_type,
-            linear_velocity: if frozen { Vec3f::default() } else { vel },
+            linear_velocity: velocity,
             location: pos,
-            orientation: EulerAngles {
-                psi: heading,
-                theta: 0.0,
-                phi: 0.0,
-            },
+            orientation,
             appearance: if frozen { appearance::FROZEN } else { 0 },
             dead_reckoning: DeadReckoning {
-                algorithm: 2,
+                algorithm: dr_algorithm,
                 ..Default::default()
             },
             marking,
@@ -75,11 +80,11 @@ impl Family for EntityInfo {
             if !e.sending || silent {
                 continue;
             }
-            let (pos, vel, heading) = e.kinematics(motion);
+            let kin @ (pos, vel, _) = e.kinematics(motion);
             let heartbeat_due = t - e.last_sent >= cfg.heartbeat;
             let dr_due = !frozen && e.last_sent >= 0.0 && e.dr_error(t, &pos) > cfg.dr_threshold;
             if heartbeat_due || dr_due {
-                let pdu = entity_state(tick, frozen, e, pos, vel, heading, e.marking);
+                let pdu = entity_state(tick, frozen, e, kin, e.marking, cfg.dr_algorithm);
                 e.last_sent = t;
                 e.last_pos = pos;
                 e.last_vel = if frozen { Vec3f::default() } else { vel };
@@ -90,13 +95,14 @@ impl Family for EntityInfo {
         if let Some((i, last)) = self.clone_of {
             if t - last >= cfg.heartbeat && !silent {
                 let e = &w.entities[i];
-                let (mut pos, vel, heading) = e.kinematics(motion);
-                pos.z += 500.0; // a different simulator's idea of the same entity
-                let pdu = entity_state(tick, frozen, e, pos, vel, heading, Marking::ascii("CLONE"));
+                let mut kin = e.kinematics(motion);
+                kin.0.z += 500.0; // a different simulator's idea of the same entity
+                let pdu = entity_state(tick, frozen, e, kin, Marking::ascii("CLONE"), cfg.dr_algorithm);
                 let rogue = Sender {
                     site: e.id.site,
                     generation: 0,
                     rogue: true,
+                    relay: false,
                 };
                 out.push((rogue, pdu));
                 self.clone_of = Some((i, t));

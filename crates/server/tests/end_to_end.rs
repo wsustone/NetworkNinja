@@ -71,10 +71,7 @@ fn assert_matches_truth(tally: &Tally, truth: &Truth) {
 struct PcapSink(PcapWriter<Vec<u8>>, std::time::SystemTime);
 impl Sink for PcapSink {
     fn emit(&mut self, t: f64, s: Sender, d: &[u8]) -> io::Result<()> {
-        let src = SocketAddrV4::new(
-            Ipv4Addr::new(10, 0, s.site as u8, if s.rogue { 250 } else { 10 }),
-            40_000 + s.generation,
-        );
+        let src = SocketAddrV4::new(Ipv4Addr::new(10, 0, s.site as u8, s.host()), 40_000 + s.generation);
         let dst = SocketAddrV4::new(Ipv4Addr::new(10, 255, 255, 255), 3000);
         self.0.write_udp(self.1 + Duration::from_secs_f64(t), src, dst, d)
     }

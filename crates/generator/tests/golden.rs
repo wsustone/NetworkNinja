@@ -160,11 +160,13 @@ fn dense_faults_fast_heartbeat() {
     assert_eq!(digest(&cfg), (GOLDEN_C_COUNT, GOLDEN_C));
 }
 
-// Recorded from the single-loop generator (main 13b548f) before the ADR 0010
-// restructure, which reproduces them; identical on macOS, Linux and Windows.
+// First recorded from the single-loop generator (main 13b548f) before the
+// ADR 0010 restructure. Updated once since, on purpose: Entity State
+// orientation became true geocentric Euler angles (it carried the local
+// heading as psi). With orientation left out, the new and old hashes match.
 const GOLDEN_A_COUNT: u64 = 719;
-const GOLDEN_A: u64 = 6257440943991091363;
+const GOLDEN_A: u64 = 16904129802815097642;
 const GOLDEN_B_COUNT: u64 = 994;
-const GOLDEN_B: u64 = 2011724329581801927;
+const GOLDEN_B: u64 = 5356590278330725382;
 const GOLDEN_C_COUNT: u64 = 673;
-const GOLDEN_C: u64 = 10657536439052893928;
+const GOLDEN_C: u64 = 18341859899650548216;

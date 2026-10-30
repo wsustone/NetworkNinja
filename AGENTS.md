@@ -33,6 +33,11 @@ Several generators at once (each its own sockets, like separate simulators):
 give each a non-overlapping site range, e.g. `--site-base 1 --sites 2` and
 `--site-base 3 --sites 2 --application 7`; overlapping ranges are real ID
 conflicts. `--all-faults`/`--all-controls` use the first/second site.
+Vendor profiles (`--profile standard|legacy|body-axis|gateway`,
+`--list-profiles`) are legitimate variation; `scripts/multi-vendor.sh
+[TARGET] [SECS] [-- flags]` runs all four side by side and must stay silent.
+Entity State orientation is true geocentric Euler (`geo::heading_to_euler`),
+so body-axis DR (algorithm 6) round-trips through `dr::body_to_world`.
 
 Recordings: `--record x.nnrec` while serving; pick it from the header
 run dropdown (`--runs DIR` for `/api/runs`); scrub bar + `--speed`.
