@@ -11,3 +11,4 @@ Short records of decisions that shape the product. Add a new numbered file for e
 | [0005](0005-event-storage-sqlite.md) | Event and run storage in embedded SQLite | Accepted |
 | [0006](0006-tls-rustls.md) | TLS via rustls + self-signed certs | Accepted |
 | [0007](0007-install-licensing-sessions.md) | Installed service, offline license file, member sessions | Proposed |
+| [0008](0008-signals-monitors-query-model.md) | Signals, monitors and one query model (tagged metrics, user monitors, conformance view) | Proposed |
