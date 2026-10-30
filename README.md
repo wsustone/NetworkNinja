@@ -24,6 +24,9 @@ The core loop works end to end on the console: synthetic or captured DIS traffic
 - A 30-minute clean run with 75 entities raises nothing.
 - Entity counts and rolling rates match generator ground truth exactly.
 - Disabling any suppression (freeze, restart grace, dead reckoning) makes the tests fail.
+- Mutated pcap files and PDUs never crash the readers.
+
+**Known issues** (`cargo test --workspace -- --include-ignored`): `crates/rules/tests/field_scenarios.rs` and one decoder test cover traffic the generator doesn't produce yet: body-axis dead reckoning, host clock steps, long outages, single-application freezes, gateway duplicates, tracked munitions, wildcard Entity IDs and padded PDUs. They assert the correct behaviour and currently fail, so they are `#[ignore]`d with the review finding they belong to; remove the attribute when the fix lands.
 
 ## Docs
 
