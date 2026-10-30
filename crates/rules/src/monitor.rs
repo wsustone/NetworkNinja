@@ -80,7 +80,7 @@ impl Monitor {
                         pdus.push(pdu);
                         continue;
                     }
-                    events.extend(self.engine.check_enums(now, &pdu));
+                    events.extend(self.engine.check_enums(now, d.source, &pdu));
                     events.extend(self.engine.before_apply(now, d.source, &pdu, &self.table));
                     self.record_dr_error(now, d.source, &pdu);
                     self.table.apply(now, d.source, &pdu);

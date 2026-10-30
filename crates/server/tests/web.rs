@@ -108,6 +108,7 @@ fn alert_and_state_json() {
             severity: Severity::Critical,
             since: 123.5,
             message: "claimed by \"two\" senders".into(),
+            sender: Some("10.0.0.7:4000".parse().unwrap()),
         },
         reason: String::new(),
     };
@@ -552,6 +553,157 @@ fn pdu_capture_stays_inside_its_budget() {
         r.contains("\"type\":\"EntityState\"") && r.contains("\"entity\":\"1:1:7\"") && r.contains("\"lat\":"),
         "{r}"
     );
+    drop(hub);
+    for ext in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+    }
+}
+
+#[test]
+fn events_summary_groups_violations_by_sender_and_migrates_old_stores() {
+    let path = std::env::temp_dir().join(format!("nn-summary-test-{}.db", std::process::id()));
+    for ext in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+    }
+    // A store from before slice 2: no sender/pack/state columns, one alert.
+    {
+        let c = rusqlite::Connection::open(&path).unwrap();
+        c.execute_batch(
+            "CREATE TABLE events(id INTEGER PRIMARY KEY, run INTEGER, seq INTEGER, at REAL, kind TEXT,
+                entity TEXT, rule TEXT, severity TEXT, exercise INTEGER, message TEXT, json TEXT);
+             INSERT INTO events(run,seq,at,kind,entity,rule,severity,exercise,message,json) VALUES
+               (1, 1, 100.0, 'alert', '1:1:9', 'entity-timeout', 'warning', 1, 'old',
+                '{\"seq\":1,\"kind\":\"alert\",\"at\":100,\"state\":\"firing\",\"rule\":\"entity-timeout\"}');",
+        )
+        .unwrap();
+    }
+    let (addr, hub) = Hub::listen("127.0.0.1:0").unwrap();
+    hub.open_db(&path, "test").unwrap();
+
+    let ev = |rule: &str, entity: &str, sender: &str, sev: Severity, at: f64, state: AlertState| AlertEvent {
+        at,
+        state,
+        alert: Alert {
+            rule: Rule::PositionJump,
+            pack: "dis-base".into(),
+            rule_id: rule.into(),
+            key: EntityKey {
+                exercise: 1,
+                id: entity.parse().unwrap(),
+            },
+            severity: sev,
+            since: at,
+            message: "m".into(),
+            sender: Some(sender.parse().unwrap()),
+        },
+        reason: String::new(),
+    };
+    let a = "10.0.1.10:40000";
+    let b = "10.0.2.10:40000";
+    for (rule, ent, snd, sev, at) in [
+        ("position-jump", "1:1:3", a, Severity::Warning, 200.0),
+        ("position-jump", "1:1:4", a, Severity::Warning, 210.0),
+        ("id-conflict", "1:1:2", a, Severity::Critical, 220.0),
+        ("entity-state.force_id", "2:1:1", b, Severity::Warning, 230.0),
+    ] {
+        hub.log("alert", &alert_json(&ev(rule, ent, snd, sev, at, AlertState::Firing)));
+    }
+    // A resolution is not a violation; a decode error is.
+    hub.log(
+        "alert",
+        &alert_json(&ev(
+            "position-jump",
+            "1:1:3",
+            a,
+            Severity::Warning,
+            205.0,
+            AlertState::Resolved,
+        )),
+    );
+    hub.log("error", &web::error_json(240.0, 1, b));
+    // Live state: the conflict is still open; a third sender is clean.
+    let mut senders = std::collections::BTreeMap::new();
+    for (s, claim) in [(a, "1:1"), (b, "2:1"), ("10.0.3.10:40000", "3:1")] {
+        senders.insert(
+            s.to_string(),
+            nn_server::summary::SenderInfo {
+                claims: [claim.to_string()].into(),
+                entities: 20,
+                last_seen: 250.0,
+            },
+        );
+    }
+    let open = nn_server::store::Violation {
+        at: 220.0,
+        kind: "alert".into(),
+        rule: Some("id-conflict".into()),
+        entity: Some("1:1:2".into()),
+        sender: Some(a.into()),
+        severity: Some("critical".into()),
+        exercise: Some(1),
+        ..Default::default()
+    };
+    hub.set_conformance(vec![open], senders);
+
+    let body = |q: &str| {
+        let r = http_get(addr, &format!("/api/events/summary?{q}"));
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+        r.split("\r\n\r\n").nth(1).unwrap().to_string()
+    };
+    let j = body("by=sender&since=0");
+    assert!(
+        j.contains(&format!("{{\"tags\":{{\"sender\":\"{a}\"}},\"total\":3,\"critical\":1,\"warning\":2,\"errors\":0,\"open\":1,\"first\":200.000,\"last\":220.000")),
+        "{j}"
+    );
+    assert!(
+        j.contains(&format!("{{\"tags\":{{\"sender\":\"{b}\"}},\"total\":2,")),
+        "{j}"
+    );
+    // The pre-migration alert counts, under an unknown sender.
+    assert!(j.contains("{\"tags\":{\"sender\":\"unknown\"},\"total\":1,"), "{j}");
+    // Every live sender is listed with its claims, compliant ones included.
+    assert!(
+        j.contains("\"10.0.3.10:40000\":{\"claims\":[\"3:1\"],\"entities\":20"),
+        "{j}"
+    );
+    assert!(j.contains("\"total\":6,"), "{j}");
+
+    let j = body("by=sender,rule&since=150");
+    assert!(
+        j.contains(&format!(
+            "{{\"tags\":{{\"sender\":\"{b}\",\"rule\":\"decode-error\"}},\"total\":1,"
+        )),
+        "{j}"
+    );
+    assert!(
+        j.contains(&format!(
+            "{{\"tags\":{{\"sender\":\"{a}\",\"rule\":\"position-jump\"}},\"total\":2,"
+        )),
+        "{j}"
+    );
+    assert!(!j.contains("unknown"), "since filters out the old alert: {j}");
+
+    let j = body("by=rule&since=0&entity=1:1:2");
+    assert!(
+        j.contains(
+            "{\"tags\":{\"rule\":\"id-conflict\"},\"total\":1,\"critical\":1,\"warning\":0,\"errors\":0,\"open\":1"
+        ),
+        "{j}"
+    );
+    assert!(
+        !j.contains("\"senders\""),
+        "senders only ride along when grouping by sender: {j}"
+    );
+
+    let r = http_get(addr, "/api/events/summary?by=colour");
+    assert!(
+        r.starts_with("HTTP/1.1 400") && r.contains("unknown dimension 'colour'"),
+        "{r}"
+    );
+    // /api/log filters on the new sender column too.
+    let r = http_get(addr, &format!("/api/log?sender={b}"));
+    assert!(r.contains("force_id") && !r.contains("position-jump"), "{r}");
+
     drop(hub);
     for ext in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
