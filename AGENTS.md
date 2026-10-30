@@ -77,6 +77,15 @@ own thread and evicts oldest rows by SQLite page counts. Inspect with
   `munition_id` entity; a timeout alert survives the entity's expiry.
 - Padded PDUs decode (length field may exceed the body); short ones don't.
 
+## Conformance (ADR 0008 slice 2)
+
+`Alert::sender` is who an alert is pinned on (see the ADR for the rules).
+`events` has `sender`/`pack`/`state` columns, added by `ALTER TABLE` on
+open for old files. `summary.rs` is pure aggregation (unit-tested);
+`Hub::events_summary` feeds it store rows (or the ring without `--db`) plus
+`conformance_state(&m)` pushed each tick. Try:
+`curl 'localhost:8080/api/events/summary?by=sender,rule&since=0'`.
+
 ## Architecture map
 
 `crates/` — capture (UDP/pcap), decode (DIS codec), state (entities+geo),

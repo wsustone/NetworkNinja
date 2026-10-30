@@ -744,6 +744,8 @@ fn serve(
                 hub.set_snapshot(state_json(&m, t, hub.client_count(), &packs.packs, &recent, replay_pos));
             }
             hub.set_details(entity_details(&m));
+            let (open, senders) = nn_server::web::conformance_state(&m);
+            hub.set_conformance(open, senders);
             if db_file.is_some() && matches!(src, Src::Udp(_)) {
                 let upto = slot_of(m.now.floor() as i64);
                 let from = flushed.or(m.metrics.oldest(Metric::PduCount).map(slot_of));

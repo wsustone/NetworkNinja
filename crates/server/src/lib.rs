@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod pdustore;
 pub mod store;
+pub mod summary;
 pub mod tls;
 pub mod web;
 
