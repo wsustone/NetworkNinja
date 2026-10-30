@@ -15,6 +15,6 @@ mod codec;
 mod pdu;
 mod time;
 
-pub use codec::{decode_datagram, decode_pdu, encode_pdu, DecodeError};
+pub use codec::{decode_datagram, decode_datagram_spans, decode_pdu, encode_pdu, DecodeError};
 pub use pdu::*;
 pub use time::DisTimestamp;

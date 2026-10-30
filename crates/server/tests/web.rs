@@ -381,3 +381,178 @@ fn entity_detail_map_and_endpoint() {
     let r = http_get(addr, "/api/entity?id=1:1:1");
     assert!(r.starts_with("HTTP/1.1 404"), "wrong exercise must not match: {r}");
 }
+
+#[test]
+fn query_endpoint_reads_memory_then_store() {
+    use nn_state::metrics::{Agg, Dim, Metric, Rollup};
+    let (addr, hub) = Hub::listen("127.0.0.1:0").unwrap();
+    let body = |r: &str| r.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
+
+    // Validation errors are 400s that say what was wrong.
+    let r = http_get(addr, "/api/query?name=pdu.count&by=force");
+    assert!(
+        r.starts_with("HTTP/1.1 400") && r.contains("pdu.count has no dimension 'force'"),
+        "{r}"
+    );
+    assert!(http_get(addr, "/api/query").contains("missing name"));
+
+    // A stand-in serve loop answering from a Monitor's metrics: 60 s of
+    // traffic from 10.0.0.1:5000, the last 30 s of it in memory.
+    let mut m = Monitor::new(RuleConfig::default());
+    for i in 0..60 {
+        m.ingest(&datagram(&entity_state(1), i as f64));
+    }
+    let t0 = 1_800_000_000i64;
+    let (tx, rx) = std::sync::mpsc::sync_channel::<web::QueryReq>(4);
+    hub.set_query_sink(tx);
+    let metrics = m.metrics.clone();
+    std::thread::spawn(move || {
+        while let Ok((q, reply)) = rx.recv() {
+            let _ = reply.send(web::memory_cells(&metrics, &q));
+        }
+    });
+    let r = http_get(
+        addr,
+        &format!(
+            "/api/query?name=pdu.count&by=sender&agg=sum&window=60&from={t0}&to={}",
+            t0 + 60
+        ),
+    );
+    let b = body(&r);
+    assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    assert!(
+        b.contains("\"groups\":[{\"tags\":{\"sender\":\"10.0.0.1:5000\"},\"value\":60}]"),
+        "{b}"
+    );
+    let r = http_get(
+        addr,
+        &format!(
+            "/api/query?name=pdu.count&where.site=1&window=30&from={t0}&to={}",
+            t0 + 60
+        ),
+    );
+    assert!(
+        body(&r).contains(&format!("\"points\":[[{t0},1],[{},1]]", t0 + 30)),
+        "{r}"
+    );
+
+    // With a store: slots before the last flush come from SQLite, not memory.
+    let path = std::env::temp_dir().join(format!("nn-query-test-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    hub.open_db(&path, "test").unwrap();
+    let old = t0 - 3600;
+    hub.write_rollup(
+        &[Rollup {
+            metric: Metric::PduCount,
+            tags: vec![(Dim::Sender, "10.0.0.9:7000".into())],
+            at: old,
+            agg: Agg {
+                n: 50,
+                sum: 50.0,
+                min: 1.0,
+                max: 1.0,
+            },
+        }],
+        t0 + 30,
+    );
+    let r = http_get(
+        addr,
+        &format!(
+            "/api/query?name=pdu.count&by=sender&agg=sum&window=4000&from={old}&to={}",
+            t0 + 60
+        ),
+    );
+    let b = body(&r);
+    // The old sender from disk, and only memory's last 30 s for the live one.
+    assert!(
+        b.contains("{\"tags\":{\"sender\":\"10.0.0.9:7000\"},\"value\":50}"),
+        "{b}"
+    );
+    assert!(
+        b.contains("{\"tags\":{\"sender\":\"10.0.0.1:5000\"},\"value\":30}"),
+        "{b}"
+    );
+    assert_eq!(hub.sweep_metrics((old + 1) as f64), 1);
+    std::fs::remove_file(&path).ok();
+
+    // Behind --users the endpoint is gated like the rest of /api.
+    hub.set_auth(std::sync::Arc::new(nn_server::auth::Auth::empty()));
+    assert!(http_get(addr, "/api/query?name=pdu.count").starts_with("HTTP/1.1 401"));
+}
+
+#[test]
+fn pdu_capture_stays_inside_its_budget() {
+    use nn_server::pdustore::{read_pdus, PduStore};
+    use std::sync::atomic::Ordering;
+    let path = std::env::temp_dir().join(format!("nn-capture-test-{}.db", std::process::id()));
+    for ext in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+    }
+    let budget = 256 * 1024;
+    let store = PduStore::open(&path, budget).unwrap();
+    let stats = std::sync::Arc::clone(&store.stats);
+    let raw = nn_decode::encode_pdu(&entity_state(7));
+    // ~20,000 Entity State PDUs (~3 MB) in batches, well over the budget.
+    for b in 0..100 {
+        let rows = (0..200)
+            .map(|i| nn_rules::Captured {
+                at: 1_800_000_000.0 + (b * 200 + i) as f64 * 0.01,
+                sender: "10.0.0.1:5000".parse().unwrap(),
+                exercise: 1,
+                pdu_type: nn_decode::pdu_type::ENTITY_STATE,
+                entity: Some(nn_decode::EntityId::new(1, 1, 7)),
+                tier: "1.2 all".into(),
+                raw: raw.clone(),
+            })
+            .collect();
+        store.submit(rows);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let hub = Hub::new();
+    hub.set_capture(path.clone(), std::sync::Arc::clone(&stats));
+    store.close();
+
+    let (used, rows, evicted, written) = (
+        stats.used.load(Ordering::Relaxed),
+        stats.rows.load(Ordering::Relaxed),
+        stats.evicted.load(Ordering::Relaxed),
+        stats.written.load(Ordering::Relaxed),
+    );
+    assert_eq!(written + stats.dropped.load(Ordering::Relaxed), 20_000);
+    assert!(used <= budget, "used {used} > budget {budget}");
+    assert!(
+        evicted > 0 && rows + evicted == written,
+        "rows {rows} evicted {evicted} written {written}"
+    );
+
+    // What's left is the newest stretch, and it decodes.
+    let all = read_pdus(&path, Some(1), Some("1:1:7"), 0.0, f64::MAX, 100_000).unwrap();
+    assert_eq!(all.len() as u64, rows);
+    assert!(all[0].at > 1_800_000_000.0, "oldest rows were evicted first");
+    assert_eq!(all.last().unwrap().at, 1_800_000_000.0 + 19_999.0 * 0.01);
+    assert!(all.iter().all(|p| p.pdu.is_ok() && p.tier == "1.2 all"));
+    assert!(read_pdus(&path, Some(1), Some("9:9:9"), 0.0, f64::MAX, 10)
+        .unwrap()
+        .is_empty());
+
+    // Over HTTP: stats and a drill-down for the entity.
+    let (addr, h2) = Hub::listen("127.0.0.1:0").unwrap();
+    assert!(http_get(addr, "/api/capture").contains("\"enabled\":false"));
+    assert!(http_get(addr, "/api/pdus?id=1:1:7").starts_with("HTTP/1.1 400"));
+    h2.set_capture(path.clone(), stats);
+    let r = http_get(addr, "/api/capture");
+    assert!(
+        r.contains(&format!("\"budget\":{budget}")) && r.contains("\"evicted\":"),
+        "{r}"
+    );
+    let r = http_get(addr, "/api/pdus?ex=1&id=1:1:7&from=1800000190&to=1800000200&limit=5");
+    assert!(r.starts_with("HTTP/1.1 200") && r.contains("\"count\":5"), "{r}");
+    assert!(
+        r.contains("\"type\":\"EntityState\"") && r.contains("\"entity\":\"1:1:7\"") && r.contains("\"lat\":"),
+        "{r}"
+    );
+    drop(hub);
+    for ext in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+    }
+}
