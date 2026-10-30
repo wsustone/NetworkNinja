@@ -400,7 +400,8 @@ function makeIcon(k, d, f) {
   else if (k === 2) { x.moveTo(m,6); x.lineTo(18,20); x.lineTo(m,17); x.lineTo(12,20); x.closePath(); x.fill(); x.beginPath(); x.moveTo(12,20); x.lineTo(9,24); x.moveTo(18,20); x.lineTo(21,24); x.stroke(); } // missile
   else if (k === 3) { x.arc(m,9,3.5,0,7); x.fill(); x.beginPath(); x.moveTo(m,13); x.lineTo(m,22); x.stroke(); } // lifeform
   else { x.moveTo(m,9); x.lineTo(m,21); x.moveTo(9,m); x.lineTo(21,m); x.stroke(); }                             // other: cross
-  return c;
+  // addImage takes ImageData, not a canvas (a canvas has no .data → "mismatched image size").
+  return x.getImageData(0, 0, 30, 30);
 }
 function iconName(k, d, f) { return `s-${k}-${d}-${f}`; }
 
@@ -431,9 +432,9 @@ function initMap() {
       paint:{"circle-radius":13,"circle-color":"#0000","circle-stroke-color":"#e6edf3","circle-stroke-width":2}});
     map.addLayer({id:"ents", type:"symbol", source:"ents",
       layout:{"icon-image":["concat","s-",["to-string",["get","k"]],"-",["to-string",["get","d"]],"-",["to-string",["get","f"]]],
-        "icon-allow-overlap":true,
-        "text-field":["get","marking"],"text-size":10,"text-offset":[0,1.9]},
-      paint:{"text-color":"#c9d1d9","text-halo-color":"#0d1117","text-halo-width":1.2}});
+        // No text-field: symbol text needs a style "glyphs" font source, which we
+        // don't ship offline; the layer is rejected outright if it's present.
+        "icon-allow-overlap":true}});
     map.on("click", "ents", ev => selectEntity(ev.features[0].properties.id));
     mapReady = true;
     updateMap();
