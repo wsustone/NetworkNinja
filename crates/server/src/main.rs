@@ -658,7 +658,7 @@ fn serve(
         }
         if t >= next_state {
             if t >= next_full {
-                // Full frame every 30 s: also the snapshot new clients get.
+                // Full frame every 30 s resyncs WebSocket clients.
                 let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent, replay_pos);
                 hub.set_snapshot(snap.clone());
                 hub.broadcast(&snap);
@@ -673,6 +673,8 @@ fn serve(
                     &mut prev_ents,
                     replay_pos,
                 ));
+                // Snapshot (/api/state, new clients) stays current every tick.
+                hub.set_snapshot(state_json(&m, t, hub.client_count(), &packs.packs, &recent, replay_pos));
             }
             hub.set_details(entity_details(&m));
             next_state = t + 1.0;
