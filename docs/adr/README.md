@@ -13,3 +13,4 @@ Short records of decisions that shape the product. Add a new numbered file for e
 | [0007](0007-install-licensing-sessions.md) | Installed service, offline license file, member sessions | Proposed |
 | [0008](0008-signals-monitors-query-model.md) | Signals, monitors and one query model (tagged metrics, user monitors, conformance view) | Proposed |
 | [0009](0009-tiered-pdu-capture.md) | Tiered PDU capture by entity type and speed, under a byte budget | Accepted |
+| [0010](0010-generic-dis-conformance.md) | Generic DIS conformance: tiered support for all 72 PDU types, a conformance generator with defects and vendor profiles | Proposed |
