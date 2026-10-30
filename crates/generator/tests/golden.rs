@@ -2,11 +2,16 @@
 //! control, v6/v7, bundling and both freeze behaviours, hashed datagram by
 //! datagram (time, sender, bytes) together with the ground truth.
 //!
+//! Positions, velocities and angles come from `sin`/`cos`/`atan2`, whose
+//! last bit differs between platform maths libraries, so those fields are
+//! hashed rounded well above that noise (0.1 mm, 1 mm/s, 10 µrad). Every
+//! other byte, and which PDUs are sent when and by whom, is hashed exactly.
+//!
 //! A refactor of the generator must reproduce these exactly. A change that
 //! *means* to alter the traffic updates the hashes in the same commit and
 //! says why.
 
-use nn_decode::EntityId;
+use nn_decode::*;
 use nn_generator::{run, Config, Event, EventKind, Sender, Sink, Target};
 use std::io;
 
@@ -30,10 +35,57 @@ impl Sink for HashSink {
         self.0
             .eat(&[s.site as u8, (s.site >> 8) as u8, s.generation as u8, s.rogue as u8]);
         self.0.eat(&(d.len() as u32).to_le_bytes());
-        self.0.eat(d);
+        self.0.eat(&canonical(d));
         self.1 += 1;
         Ok(())
     }
+}
+
+fn r64(v: f64, step: f64) -> f64 {
+    (v / step).round() * step
+}
+
+fn r32(v: f32, step: f64) -> f32 {
+    r64(v as f64, step) as f32
+}
+
+fn rv(v: &mut Vec3f, step: f64) {
+    (v.x, v.y, v.z) = (r32(v.x, step), r32(v.y, step), r32(v.z, step));
+}
+
+fn rw(c: &mut WorldCoord) {
+    (c.x, c.y, c.z) = (r64(c.x, 1e-4), r64(c.y, 1e-4), r64(c.z, 1e-4));
+}
+
+/// The datagram with its trig-derived fields rounded (see the module docs).
+fn canonical(d: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for p in decode_datagram(d) {
+        let Ok(mut p) = p else { return d.to_vec() };
+        match &mut p.body {
+            PduBody::EntityState(e) => {
+                rv(&mut e.linear_velocity, 1e-3);
+                rw(&mut e.location);
+                let o = &mut e.orientation;
+                (o.psi, o.theta, o.phi) = (r32(o.psi, 1e-5), r32(o.theta, 1e-5), r32(o.phi, 1e-5));
+                rv(&mut e.dead_reckoning.linear_acceleration, 1e-3);
+                rv(&mut e.dead_reckoning.angular_velocity, 1e-5);
+            }
+            PduBody::Fire(f) => {
+                rw(&mut f.location);
+                rv(&mut f.velocity, 1e-3);
+                f.range = r32(f.range, 1e-3);
+            }
+            PduBody::Detonation(x) => {
+                rw(&mut x.location);
+                rv(&mut x.velocity, 1e-3);
+                rv(&mut x.location_in_entity, 1e-3);
+            }
+            _ => {}
+        }
+        out.extend(encode_pdu(&p));
+    }
+    out
 }
 
 fn digest(cfg: &Config) -> (u64, u64) {
@@ -109,10 +161,10 @@ fn dense_faults_fast_heartbeat() {
 }
 
 // Recorded from the single-loop generator (main 13b548f) before the ADR 0010
-// restructure.
+// restructure, which reproduces them; identical on macOS, Linux and Windows.
 const GOLDEN_A_COUNT: u64 = 719;
-const GOLDEN_A: u64 = 3398478901670082392;
+const GOLDEN_A: u64 = 6257440943991091363;
 const GOLDEN_B_COUNT: u64 = 994;
-const GOLDEN_B: u64 = 13395660573130696614;
+const GOLDEN_B: u64 = 2011724329581801927;
 const GOLDEN_C_COUNT: u64 = 673;
-const GOLDEN_C: u64 = 4436360639496030433;
+const GOLDEN_C: u64 = 10657536439052893928;
