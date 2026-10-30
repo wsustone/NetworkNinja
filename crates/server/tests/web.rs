@@ -227,6 +227,7 @@ fn datagram(pdu: &nn_decode::Pdu, t: f64) -> nn_capture::Datagram {
         source: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 5000)),
         destination: None,
         payload: nn_decode::encode_pdu(pdu),
+        monotonic: None,
     }
 }
 

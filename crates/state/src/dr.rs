@@ -1,12 +1,13 @@
 //! Dead-reckoning extrapolation (IEEE 1278.1 Annex E algorithms 1–9).
 //!
-//! World-coordinate algorithms (2–5) are implemented exactly. The body-axis
-//! algorithms (6–9) carry acceleration in the entity's body frame; we rotate
-//! it into world coordinates with the reported orientation and then use the
-//! world formula. That ignores the entity's rotation during the
-//! extrapolation interval, which is well inside the position-jump tolerance
-//! over the few seconds between updates. Algorithm 0 ("other") and unknown
-//! values are treated as constant velocity (FPW), the most common default.
+//! World-coordinate algorithms (2–5) are implemented exactly. For the
+//! body-axis algorithms (6–9) IEEE 1278.1 puts the Entity State linear
+//! velocity and acceleration in the entity's body frame; we rotate both into
+//! world coordinates with the reported orientation and then use the world
+//! formula. That ignores the entity's rotation during the extrapolation
+//! interval, which is well inside the position-jump tolerance over the few
+//! seconds between updates. Algorithm 0 ("other") and unknown values are
+//! treated as constant velocity (FPW), the most common default.
 
 use nn_decode::{EulerAngles, Vec3f, WorldCoord};
 
@@ -29,7 +30,7 @@ pub fn extrapolate(k: &Kinematics, dt: f64) -> WorldCoord {
         y: p.y + v.y as f64 * dt,
         z: p.z + v.z as f64 * dt,
     };
-    let with_accel = |a: Vec3f| {
+    let with_accel = |v: Vec3f, a: Vec3f| {
         let q = lin(p, v);
         WorldCoord {
             x: q.x + 0.5 * a.x as f64 * dt * dt,
@@ -37,11 +38,13 @@ pub fn extrapolate(k: &Kinematics, dt: f64) -> WorldCoord {
             z: q.z + 0.5 * a.z as f64 * dt * dt,
         }
     };
+    let body = |b: &Vec3f| body_to_world(&k.orientation, b);
     match k.algorithm {
-        1 => p,                                                              // static
-        4 | 5 => with_accel(k.acceleration),                                 // RVW, FVW
-        8 | 9 => with_accel(body_to_world(&k.orientation, &k.acceleration)), // RVB, FVB
-        _ => lin(p, v),                                                      // FPW, RPW, FPB, RPB, other
+        1 => p,                                               // static
+        4 | 5 => with_accel(v, k.acceleration),               // RVW, FVW
+        6 | 7 => lin(p, body(&v)),                            // FPB, RPB
+        8 | 9 => with_accel(body(&v), body(&k.acceleration)), // RVB, FVB
+        _ => lin(p, v),                                       // FPW, RPW, other
     }
 }
 
@@ -106,7 +109,7 @@ mod tests {
 
     #[test]
     fn body_frame_acceleration_is_rotated() {
-        // Yaw 90°: body x (forward) points along world y.
+        // FVB, yaw 90°: body x (forward) points along world y.
         let mut kk = k(9);
         kk.acceleration = Vec3f { x: 4.0, y: 0.0, z: 0.0 };
         kk.orientation = EulerAngles {
@@ -114,8 +117,19 @@ mod tests {
             theta: 0.0,
             phi: 0.0,
         };
+        // Velocity is body-frame too: body (10, 0, -2) → world (0, 10, -2).
         let p = extrapolate(&kk, 2.0);
-        assert!((p.x - 120.0).abs() < 1e-4 && (p.y - 208.0).abs() < 1e-4 && (p.z - 296.0).abs() < 1e-4);
+        assert!((p.x - 100.0).abs() < 1e-4 && (p.y - 228.0).abs() < 1e-4 && (p.z - 296.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn body_frame_velocity_is_rotated() {
+        // FPB, yaw 90°: 10 m/s forward in body axes is +y in world axes.
+        let mut kk = k(6);
+        kk.orientation.psi = std::f32::consts::FRAC_PI_2;
+        let p = extrapolate(&kk, 2.0);
+        // Body (10, 0, -2) → world (0, 10, -2).
+        assert!((p.x - 100.0).abs() < 1e-4 && (p.y - 220.0).abs() < 1e-4 && (p.z - 296.0).abs() < 1e-4);
     }
 
     #[test]
