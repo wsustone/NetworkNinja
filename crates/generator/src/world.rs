@@ -53,8 +53,8 @@ pub(crate) struct SimEntity {
 }
 
 impl SimEntity {
-    /// Location, velocity and heading at motion time `m`.
-    pub fn kinematics(&self, m: f64) -> (WorldCoord, Vec3f, f32) {
+    /// Location, world-frame velocity and DIS orientation at motion time `m`.
+    pub fn kinematics(&self, m: f64) -> (WorldCoord, Vec3f, EulerAngles) {
         let w = self.speed / self.radius;
         let a = self.phase + w * m;
         let (e, n) = (
@@ -67,8 +67,8 @@ impl SimEntity {
         let lon = ORIGIN_LON + e / mlon;
         let pos = geo::lla_to_ecef(lat, lon, 10.0);
         let vel = geo::enu_to_ecef(lat, lon, ve, vn, 0.0);
-        let heading = ve.atan2(vn) as f32;
-        (pos, vel, heading)
+        let orientation = geo::heading_to_euler(lat, lon, ve.atan2(vn));
+        (pos, vel, orientation)
     }
 
     /// Distance between `pos` and where the last report dead-reckons to.
@@ -99,7 +99,7 @@ impl Tick {
         let t = step as f64 * TICK;
         let wall = cfg.start_time + Duration::from_secs_f64(t);
         let since_epoch = wall.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
-        let stamp = DisTimestamp::from_seconds_past_hour(since_epoch, true);
+        let stamp = DisTimestamp::from_seconds_past_hour(since_epoch, !cfg.relative_timestamps);
         Tick {
             step,
             t,
@@ -129,6 +129,7 @@ impl Senders {
             site,
             generation: *self.0.get(&site).unwrap_or(&0),
             rogue: false,
+            relay: false,
         }
     }
 }

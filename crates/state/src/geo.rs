@@ -1,6 +1,6 @@
 //! Minimal WGS84 helpers: geodetic ↔ geocentric (ECEF).
 
-use nn_decode::{Vec3f, WorldCoord};
+use nn_decode::{EulerAngles, Vec3f, WorldCoord};
 
 const A: f64 = 6_378_137.0; // semi-major axis, m
 const F: f64 = 1.0 / 298.257_223_563;
@@ -25,6 +25,26 @@ pub fn enu_to_ecef(lat_deg: f64, lon_deg: f64, e: f64, n: f64, u: f64) -> Vec3f 
         x: (-so * e - sl * co * n + cl * co * u) as f32,
         y: (co * e - sl * so * n + cl * so * u) as f32,
         z: (cl * n + sl * u) as f32,
+    }
+}
+
+/// DIS orientation (Euler angles of the body axes against ECEF, IEEE 1278.1
+/// 1.4.3 / Annex E) of a level vehicle at (lat, lon) whose nose points
+/// `heading` radians clockwise from north: body x forward, y right, z down.
+pub fn heading_to_euler(lat_deg: f64, lon_deg: f64, heading: f64) -> EulerAngles {
+    let (sh, ch) = heading.sin_cos();
+    let axis = |e: f64, n: f64, u: f64| {
+        let v = enu_to_ecef(lat_deg, lon_deg, e, n, u);
+        [v.x as f64, v.y as f64, v.z as f64]
+    };
+    let x = axis(sh, ch, 0.0); // forward
+    let y = axis(ch, -sh, 0.0); // right
+    let z = axis(0.0, 0.0, -1.0); // down
+                                  // Columns of R = Rz(psi) Ry(theta) Rx(phi) are the body axes.
+    EulerAngles {
+        psi: x[1].atan2(x[0]) as f32,
+        theta: (-x[2]).clamp(-1.0, 1.0).asin() as f32,
+        phi: y[2].atan2(z[2]) as f32,
     }
 }
 
@@ -99,5 +119,28 @@ mod tests {
         assert!((b.x - a.x - v.x as f64).abs() < 0.05);
         assert!((b.y - a.y - v.y as f64).abs() < 0.05);
         assert!((b.z - a.z - v.z as f64).abs() < 0.05);
+    }
+
+    #[test]
+    fn heading_to_euler_points_the_body_x_axis_along_the_heading() {
+        for (lat, lon) in [(36.6, -121.9), (-33.9, 151.2), (0.0, 0.0), (60.0, 10.0)] {
+            for h in [0.0f64, 0.7, 1.9, -2.5] {
+                let o = heading_to_euler(lat, lon, h);
+                let fwd = crate::dr::body_to_world(
+                    &o,
+                    &Vec3f {
+                        x: 10.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                );
+                let want = enu_to_ecef(lat, lon, 10.0 * h.sin(), 10.0 * h.cos(), 0.0);
+                let err = ((fwd.x - want.x).powi(2) + (fwd.y - want.y).powi(2) + (fwd.z - want.z).powi(2)).sqrt();
+                assert!(err < 1e-3, "{lat},{lon} h={h}: {fwd:?} vs {want:?}");
+                let down = crate::dr::body_to_world(&o, &Vec3f { x: 0.0, y: 0.0, z: 1.0 });
+                let up = enu_to_ecef(lat, lon, 0.0, 0.0, 1.0);
+                assert!((down.x + up.x).abs() + (down.y + up.y).abs() + (down.z + up.z).abs() < 1e-4);
+            }
+        }
     }
 }

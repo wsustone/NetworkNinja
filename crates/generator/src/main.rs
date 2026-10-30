@@ -2,7 +2,7 @@
 
 use nn_capture::PcapWriter;
 use nn_decode::EntityId;
-use nn_generator::{run, Config, Event, EventKind, Sender, Sink, Target};
+use nn_generator::{profile, run, Config, Event, EventKind, Sender, Sink, Target, PROFILES};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufWriter};
@@ -21,6 +21,12 @@ OUTPUT
     --broadcast             Allow a broadcast destination address
     --pcap FILE             Write a pcap file instead of sending; runs as fast as possible
     --truth FILE            Write ground-truth JSON here (default: print to stdout at the end)
+
+VENDOR PROFILE (legitimate variation; applied first, other flags override)
+    --profile NAME          standard (default), legacy, body-axis or gateway; see
+                            --list-profiles. Run several generators with different
+                            profiles and site ranges to mimic a multi-vendor exercise
+    --list-profiles         Print the profiles and exit
 
 EXERCISE
     --duration SECS         Length of the run (default 60)
@@ -94,13 +100,30 @@ fn parse_args() -> Result<Options, String> {
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
     let mut defects: Vec<String> = Vec::new();
 
-    let mut args = std::env::args().skip(1);
+    // The profile sets defaults that explicit flags then override, wherever
+    // it appears on the command line.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(i) = argv.iter().position(|a| a == "--profile") {
+        let name = argv.get(i + 1).ok_or("--profile needs a value")?;
+        let p = profile(name).ok_or_else(|| format!("unknown profile '{name}' (see --list-profiles)"))?;
+        p.apply(&mut cfg);
+    }
+    let mut args = argv.into_iter();
     while let Some(a) = args.next() {
         let mut val = || args.next().ok_or_else(|| format!("{a} needs a value"));
         let num = |v: String| v.parse::<f64>().map_err(|e| format!("{a}: {e}"));
         match a.as_str() {
             "-h" | "--help" => {
                 print!("{USAGE}");
+                std::process::exit(0);
+            }
+            "--profile" => {
+                val()?; // applied above
+            }
+            "--list-profiles" => {
+                for p in &PROFILES {
+                    println!("{:<10} {}", p.name, p.description);
+                }
                 std::process::exit(0);
             }
             "--target" => target = val()?.parse().map_err(|e| format!("--target: {e}"))?,
@@ -261,6 +284,8 @@ impl Sink for LiveSink {
                 sender.site,
                 if sender.rogue {
                     " (rogue clone)"
+                } else if sender.relay {
+                    " (gateway copy)"
                 } else if sender.generation > 0 {
                     " (restarted)"
                 } else {
@@ -289,7 +314,7 @@ struct PcapSink {
 
 impl PcapSink {
     fn source(sender: Sender) -> SocketAddrV4 {
-        let host = if sender.rogue { 250 } else { 10 };
+        let host = sender.host();
         let ip = Ipv4Addr::new(10, (sender.site >> 8) as u8, sender.site as u8, host);
         SocketAddrV4::new(ip, 40_000 + sender.generation)
     }
