@@ -27,6 +27,10 @@ EXERCISE
     --version 6|7           DIS protocol version (default 7)
     --exercise N            Exercise ID (default 1)
     --sites N               Number of sites, one simulator each (default 2)
+    --site-base N           First site number (default 1). Run several generators
+                            side by side with non-overlapping ranges, e.g.
+                            --site-base 1 --sites 3 and --site-base 4 --sites 3
+    --application N         Simulation application number (default 1)
     --entities N            Entities per site (default 10)
     --heartbeat SECS        Entity State heartbeat (default 5)
     --dr-threshold M        Dead-reckoning error that triggers an update (default 1.0)
@@ -103,6 +107,8 @@ fn parse_args() -> Result<Options, String> {
             }
             "--exercise" => cfg.exercise = val()?.parse().map_err(|e| format!("--exercise: {e}"))?,
             "--sites" => cfg.sites = val()?.parse().map_err(|e| format!("--sites: {e}"))?,
+            "--site-base" => cfg.site_base = val()?.parse().map_err(|e| format!("--site-base: {e}"))?,
+            "--application" => cfg.application = val()?.parse().map_err(|e| format!("--application: {e}"))?,
             "--entities" => cfg.entities_per_site = val()?.parse().map_err(|e| format!("--entities: {e}"))?,
             "--heartbeat" => cfg.heartbeat = num(val()?)?,
             "--dr-threshold" => cfg.dr_threshold = num(val()?)?,
@@ -124,14 +130,27 @@ fn parse_args() -> Result<Options, String> {
     }
 
     let d = cfg.duration;
+    // Real site and application numbers: 0 and 65535 are DIS wildcards.
+    if cfg.site_base == 0 || cfg.application == 0 || cfg.application == 0xffff {
+        return Err("--site-base and --application must be 1..65534".into());
+    }
+    let last_site = cfg.site_base as u32 + cfg.sites as u32 - 1;
+    if cfg.sites == 0 || last_site >= 0xffff {
+        return Err(format!("sites {}..={last_site} run past 65534", cfg.site_base));
+    }
+    // Presets: faults on the first site, controls on the second.
+    let (first, second, app) = (cfg.site_base, cfg.site_base + 1, cfg.application);
     if all_faults {
-        pending.push((EventKind::DropHeartbeat, format!("1:1:1@{}", d * 0.25)));
-        pending.push((EventKind::CloneId, format!("1:1:2@{}", d * 0.35)));
-        pending.push((EventKind::Teleport, format!("1:1:3@{}", d * 0.45)));
+        pending.push((EventKind::DropHeartbeat, format!("{first}:{app}:1@{}", d * 0.25)));
+        pending.push((EventKind::CloneId, format!("{first}:{app}:2@{}", d * 0.35)));
+        pending.push((EventKind::Teleport, format!("{first}:{app}:3@{}", d * 0.45)));
     }
     if all_controls {
-        pending.push((EventKind::Remove, format!("2:1:1@{}", d * 0.25)));
-        pending.push((EventKind::RestartPort, format!("2@{}", d * 0.35)));
+        if cfg.sites < 2 {
+            return Err("--all-controls needs at least 2 sites".into());
+        }
+        pending.push((EventKind::Remove, format!("{second}:{app}:1@{}", d * 0.25)));
+        pending.push((EventKind::RestartPort, format!("{second}@{}", d * 0.35)));
         pending.push((EventKind::Freeze, format!("@{}", d * 0.55)));
         pending.push((EventKind::Resume, format!("@{}", d * 0.70)));
     }
@@ -146,15 +165,14 @@ fn parse_args() -> Result<Options, String> {
             EventKind::RestartPort => Target::Site(what.parse().map_err(|e| format!("bad site '{what}': {e}"))?),
             _ => {
                 let id: EntityId = what.parse()?;
-                if id.site == 0
-                    || id.site > cfg.sites
-                    || id.application != 1
+                if !(cfg.site_base as u32..=last_site).contains(&(id.site as u32))
+                    || id.application != cfg.application
                     || id.entity == 0
                     || id.entity > cfg.entities_per_site
                 {
                     return Err(format!(
-                        "{id} is not a generated entity (sites 1..={}, app 1, entities 1..={})",
-                        cfg.sites, cfg.entities_per_site
+                        "{id} is not a generated entity (sites {}..={last_site}, app {}, entities 1..={})",
+                        cfg.site_base, cfg.application, cfg.entities_per_site
                     ));
                 }
                 Target::Entity(id)
