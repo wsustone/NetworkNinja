@@ -324,3 +324,18 @@ fn hostile_input_never_panics() {
         let _ = decode_pdu(&buf);
     }
 }
+
+/// Some senders pad a PDU past its required size. The monitor should still
+/// decode it (and let a rule pack flag the padding), not drop it: a dropped
+/// Entity State later looks like a dead simulator.
+#[test]
+#[ignore = "known issue: exact length check rejects padded PDUs (review finding 8)"]
+fn padded_entity_state_still_decodes() {
+    let pdu = &sample_pdus(7)[0];
+    let mut bytes = encode_pdu(pdu);
+    bytes.extend_from_slice(&[0; 4]);
+    let len = bytes.len() as u16;
+    bytes[8..10].copy_from_slice(&len.to_be_bytes());
+    let decoded = decode_pdu(&bytes).expect("padded Entity State should decode");
+    assert!(matches!(decoded.body, PduBody::EntityState(_)));
+}
