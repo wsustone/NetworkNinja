@@ -1,8 +1,10 @@
 //! The monitor: decode → rules → state → metrics, for one stream of datagrams.
 
+use crate::capture::Capture;
 use crate::engine::{AlertEvent, Engine, RuleConfig};
 use nn_capture::Datagram;
-use nn_decode::{decode_datagram, Pdu, PduBody};
+use nn_decode::{decode_datagram_spans, EntityType, Pdu, PduBody};
+use nn_state::metrics::entity_of;
 use nn_state::{extrapolate, geo, secs, EntityKey, EntityTable, Metric, Metrics, Tags};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -26,6 +28,8 @@ pub struct Monitor {
     /// per-entity ones (ADR 0008).
     last_gauge: i64,
     last_entity_gauge: i64,
+    /// PDU capture tiers (ADR 0009); `None` keeps nothing.
+    pub capture: Option<Capture>,
 }
 
 impl Monitor {
@@ -54,7 +58,7 @@ impl Monitor {
         self.metrics.record_datagram(now, d.source, d.payload.len());
         let mut pdus = Vec::new();
         let mut events = Vec::new();
-        for result in decode_datagram(&d.payload) {
+        for (span, result) in decode_datagram_spans(&d.payload) {
             match result {
                 Ok(pdu) => {
                     self.pdus += 1;
@@ -63,7 +67,18 @@ impl Monitor {
                     self.record_dr_error(now, d.source, &pdu);
                     self.table.apply(now, d.source, &pdu);
                     events.extend(self.engine.after_apply(now, &pdu, &self.table));
-                    self.metrics.record_pdu(now, d.source, &pdu);
+                    let etype = self.entity_type_of(&pdu);
+                    self.metrics.record_pdu(now, d.source, &pdu, etype);
+                    if self.capture.is_some() {
+                        let alerted = entity_of(&pdu).is_some_and(|id| {
+                            self.engine
+                                .active()
+                                .any(|a| a.key.id == id && a.key.exercise == pdu.header.exercise_id)
+                        });
+                        if let Some(c) = self.capture.as_mut() {
+                            c.offer(now, d.source, &d.payload[span], &pdu, alerted);
+                        }
+                    }
                     pdus.push(pdu);
                 }
                 Err(_) => {
@@ -86,6 +101,21 @@ impl Monitor {
         let events = self.engine.tick(now, &self.table);
         self.sample_gauges(now);
         events
+    }
+
+    /// The PDU's primary entity type: carried by Entity State, looked up in
+    /// the table for everything else.
+    fn entity_type_of(&self, pdu: &Pdu) -> Option<EntityType> {
+        if let PduBody::EntityState(es) = &pdu.body {
+            return Some(es.entity_type);
+        }
+        let id = entity_of(pdu)?;
+        self.table
+            .get(&EntityKey {
+                exercise: pdu.header.exercise_id,
+                id,
+            })
+            .map(|r| r.entity_type)
     }
 
     /// `entity.dr_error`: how far this report lands from where the sender's

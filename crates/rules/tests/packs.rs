@@ -293,3 +293,87 @@ fn generator_output_passes_all_enum_checks() {
     }
     assert_eq!(violations, 0);
 }
+
+fn etype(kind: u8, domain: u8) -> nn_decode::EntityType {
+    nn_decode::EntityType {
+        kind,
+        domain,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn capture_tiers_parse_layer_and_pick() {
+    let m = Merged::merge([base()]);
+    let every = |k, d, speed| m.capture_rule(&etype(k, d), speed).and_then(|r| r.every);
+    // Fast kinds: every PDU. Slow kinds: thinned. Anything fast: every PDU.
+    assert_eq!(every(1, 2, 0.0), Some(0.0), "air");
+    assert_eq!(every(2, 1, 300.0), Some(0.0), "munition");
+    assert_eq!(every(1, 1, 3.0), Some(5.0), "land, slow");
+    assert_eq!(every(1, 1, 20.0), Some(1.0), "land, moving");
+    assert_eq!(every(1, 1, 80.0), Some(0.0), "land at 80 m/s is a fast mover");
+    assert_eq!(every(5, 0, 0.0), Some(30.0), "cultural feature falls to *");
+    assert_eq!(m.capture_rule(&etype(1, 2), 0.0).unwrap().type_label(), "1.2");
+
+    // A site pack turns land capture off and keeps every life-form report;
+    // other base tiers stay.
+    let site = RulePack::parse(
+        "[pack]\nid = \"site\"\nversion = 1\n\n[[capture]]\ntype = \"1.1\"\nevery = \"off\"\n\n[[capture]]\ntype = \"3\"\nevery = 0\n",
+        "site.toml",
+    )
+    .unwrap();
+    let m = Merged::merge([base(), site]);
+    let r = m.capture_rule(&etype(1, 1), 3.0).unwrap();
+    assert_eq!((r.every, r.pack.as_str()), (None, "site"));
+    assert_eq!(m.capture_rule(&etype(3, 1), 1.0).unwrap().every, Some(0.0));
+    assert_eq!(m.capture_rule(&etype(1, 2), 0.0).unwrap().every, Some(0.0));
+
+    let err = |body: &str| {
+        RulePack::parse(&format!("[pack]\nid = \"x\"\nversion = 1\n\n{body}"), "x.toml")
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(err("[[capture]]\ntype = \"air\"\nevery = 0\n").contains("dotted numbers"));
+    assert!(err("[[capture]]\ntype = \"1\"\n").contains("needs every"));
+    assert!(err("[[capture]]\ntype = \"1\"\nevery = -1\n").contains("every must be seconds"));
+    assert!(err("[[capture]]\ntype = \"1\"\nevery = 0\nbogus = 1\n").contains("bogus"));
+    assert!(
+        err("[[capture]]\ntype = \"1\"\nevery = 0\n\n[[capture]]\ntype = \"1\"\nevery = 5\n").contains("duplicate")
+    );
+}
+
+#[test]
+fn capture_keeps_fast_movers_whole_and_thins_slow_ones() {
+    let mut m = Monitor::with_packs(&Merged::merge([base()]));
+    m.capture = Some(nn_rules::Capture::new(Merged::merge([base()]).capture));
+    let es = |n: u16, kind, domain, vx: f32| {
+        let mut p = entity_state(1);
+        if let PduBody::EntityState(e) = &mut p.body {
+            e.entity_id = EntityId::new(1, 1, n);
+            e.entity_type = etype(kind, domain);
+            e.linear_velocity.x = vx;
+        }
+        p
+    };
+    // 20 s at 2 Hz: an aircraft, a slow tank, and a parked truck.
+    for i in 0..40 {
+        let t = i as f64 * 0.5;
+        m.ingest(&datagram(&es(1, 1, 2, 0.0), t));
+        m.ingest(&datagram(&es(2, 1, 1, 3.0), t));
+        m.ingest(&datagram(&es(3, 5, 0, 0.0), t));
+    }
+    let rows = m.capture.as_mut().unwrap().drain();
+    let count = |n: u16| rows.iter().filter(|r| r.entity == Some(EntityId::new(1, 1, n))).count();
+    assert_eq!(count(1), 40, "air: every report");
+    assert_eq!(count(2), 4, "land at 3 m/s: one per 5 s");
+    assert_eq!(count(3), 1, "static: one per 30 s");
+    assert!(rows.iter().any(|r| r.tier == "1.2 all"));
+    assert!(rows.iter().any(|r| r.tier == "1.1 every 5s"));
+    // Raw bytes are the PDU on the wire.
+    assert_eq!(
+        nn_decode::decode_pdu(&rows[0].raw).unwrap().header.pdu_type,
+        pdu_type::ENTITY_STATE
+    );
+    let c = m.capture.as_ref().unwrap();
+    assert_eq!((c.kept, c.skipped), (45, 75));
+}

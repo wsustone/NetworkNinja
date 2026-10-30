@@ -5,6 +5,7 @@
 //! the dashboard; [`Tally`] stays as the cross-check against generator truth.
 
 pub mod auth;
+pub mod pdustore;
 pub mod store;
 pub mod tls;
 pub mod web;

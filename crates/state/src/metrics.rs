@@ -8,7 +8,7 @@
 //! evaluator in [`crate::query`]; [`Metrics::rollup`] folds them into the
 //! ten-second rows the server persists.
 
-use nn_decode::{EntityId, Pdu, PduBody};
+use nn_decode::{EntityId, EntityType, Pdu, PduBody};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -98,7 +98,7 @@ impl Metric {
     pub fn dims(self) -> &'static [Dim] {
         use Dim::*;
         match self {
-            Metric::PduCount => &[Exercise, PduType, Site, Sender],
+            Metric::PduCount => &[Exercise, PduType, Site, Kind, Domain, Sender],
             Metric::BytesCount | Metric::DatagramCount | Metric::DecodeErrors => &[Sender],
             Metric::EntityActive => &[Exercise, Site, Kind, Force],
             Metric::HeartbeatMean | Metric::HeartbeatJitter => &[Exercise, Entity, Sender],
@@ -343,8 +343,9 @@ pub struct Metrics {
     slots: VecDeque<Slot>,
 }
 
-/// The primary entity of a PDU, for per-site rates and tags.
-fn entity_of(p: &Pdu) -> Option<EntityId> {
+/// The primary entity of a PDU (the reporting, firing or originating one),
+/// for per-site rates and tags.
+pub fn entity_of(p: &Pdu) -> Option<EntityId> {
     Some(match &p.body {
         PduBody::EntityState(e) => e.entity_id,
         PduBody::Fire(f) => f.firing_entity,
@@ -402,7 +403,9 @@ impl Metrics {
         add(&mut b.series, Metric::BytesCount, tags, bytes as f64);
     }
 
-    pub fn record_pdu(&mut self, now: f64, sender: SocketAddr, pdu: &Pdu) {
+    /// `etype`: the primary entity's type when known (Entity State carries
+    /// it; other PDUs take it from the entity table), for `kind`/`domain`.
+    pub fn record_pdu(&mut self, now: f64, sender: SocketAddr, pdu: &Pdu, etype: Option<EntityType>) {
         let site = entity_of(pdu).map(|e| e.site);
         let b = self.bucket(now);
         b.pdus += 1;
@@ -414,6 +417,8 @@ impl Metrics {
             exercise: Some(pdu.header.exercise_id),
             pdu_type: Some(pdu.type_name()),
             site,
+            kind: etype.map(|t| t.kind),
+            domain: etype.map(|t| t.domain),
             sender: Some(sender),
             ..Default::default()
         };
@@ -558,7 +563,7 @@ mod tests {
         for i in 0..100 {
             let t = 1000.0 + i as f64 * 0.1; // 10 per second for 10 s
             m.record_datagram(t, sender(5000), 44);
-            m.record_pdu(t, sender(5000), &pdu(1 + (i % 2) as u16));
+            m.record_pdu(t, sender(5000), &pdu(1 + (i % 2) as u16), None);
         }
         let w1 = m.window(1009.95, 1);
         assert_eq!(w1.pdus, 10);
@@ -579,7 +584,7 @@ mod tests {
             let t = 1000.0 + i as f64 * 0.5; // 2 per second for 20 s
             let port = 5000 + (i % 2) as u16;
             m.record_datagram(t, sender(port), 100);
-            m.record_pdu(t, sender(port), &pdu(1 + (i % 2) as u16));
+            m.record_pdu(t, sender(port), &pdu(1 + (i % 2) as u16), None);
         }
         let cells = m.cells(Metric::PduCount, 1000, 1020, |t| {
             t.contains(&(Dim::Sender, "10.0.0.1:5001".into()))

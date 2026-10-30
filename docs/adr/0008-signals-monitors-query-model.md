@@ -59,7 +59,7 @@ Metric catalogue (names are stable API, like Datadog's `system.cpu.*`):
 
 | Metric | Unit | Dimensions |
 | --- | --- | --- |
-| `pdu.count` | PDUs | exercise, pdu_type, site, sender |
+| `pdu.count` | PDUs | exercise, pdu_type, site, kind, domain, sender (kind/domain: ADR 0009) |
 | `bytes.count` | bytes | sender |
 | `datagram.count` | datagrams | sender |
 | `decode.errors` | errors | sender |
