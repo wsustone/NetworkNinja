@@ -61,6 +61,22 @@ only, opt-in). `[[capture]]` tiers in packs (`type` prefix, `min_speed`,
 own thread and evicts oldest rows by SQLite page counts. Inspect with
 `/api/capture`, `/api/pdus?ex=&id=&from=&to=`, or `sqlite3 cap.db`.
 
+## Timing and identity semantics (October 2026 review fixes)
+
+- Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock
+  anchored to wall time at first read); the monitor runs rules on it, falling
+  back to `received_at` for pcap/recordings. Live `tick` calls must use
+  `steady_now()` too, never `SystemTime::now()`, or the two clocks mix.
+  The recorder writes the steady stamp.
+- Byte-identical PDUs from a second sender within `duplicate_window` (pack
+  threshold on `id-conflict`, default 1 s) are dropped before the rules and
+  counted in `pdu.duplicates` / `Monitor::duplicates`.
+- Freezes are scoped by receiving ID (`EntityTable::scoped`); read an
+  entity's freeze state with `table.state_for(&key)`, not `exercises`.
+- 65535 wildcards expand via `table::id_matches`; Detonation ends its
+  `munition_id` entity; a timeout alert survives the entity's expiry.
+- Padded PDUs decode (length field may exceed the body); short ones don't.
+
 ## Architecture map
 
 `crates/` — capture (UDP/pcap), decode (DIS codec), state (entities+geo),

@@ -82,6 +82,7 @@ impl UdpSource {
                     source,
                     destination: Some(self.local),
                     payload: self.buf[..n].to_vec(),
+                    monotonic: Some(crate::steady_now()),
                 }))
             }
             Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => Ok(None),

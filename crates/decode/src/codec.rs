@@ -10,7 +10,7 @@ pub enum DecodeError {
     Truncated { needed: usize, available: usize },
     /// The header's length field is smaller than a header.
     BadLength { length: u16 },
-    /// The header's length field disagrees with the body it describes.
+    /// The header's length field is shorter than the body it describes.
     LengthMismatch { pdu_type: u8, length: u16, expected: usize },
 }
 
@@ -178,8 +178,11 @@ fn decode_header(r: &mut Reader) -> Result<PduHeader, DecodeError> {
     })
 }
 
+/// The body needs `expected` bytes. Some senders pad a PDU past that; the
+/// padding is ignored (it stays visible as `header.length`), because dropping
+/// a padded Entity State would later look like a dead simulator.
 fn check_len(h: &PduHeader, expected: usize) -> Result<(), DecodeError> {
-    if h.length as usize != expected {
+    if (h.length as usize) < expected {
         return Err(DecodeError::LengthMismatch {
             pdu_type: h.pdu_type,
             length: h.length,

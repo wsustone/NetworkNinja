@@ -30,6 +30,11 @@ pub struct Monitor {
     last_entity_gauge: i64,
     /// PDU capture tiers (ADR 0009); `None` keeps nothing.
     pub capture: Option<Capture>,
+    /// Relayed copies dropped before the rules (see `duplicate_window`).
+    pub duplicates: u64,
+    /// Hash of each recent PDU's bytes → when and from whom it first came.
+    recent_pdus: HashMap<u64, (f64, SocketAddr)>,
+    last_dedup_prune: f64,
 }
 
 impl Monitor {
@@ -52,7 +57,8 @@ impl Monitor {
     /// Decode a datagram and run it through the rules and state.
     /// Returns the decoded PDUs (for display) and any alert changes.
     pub fn ingest(&mut self, d: &Datagram) -> (Vec<Pdu>, Vec<AlertEvent>) {
-        let now = secs(d.received_at);
+        // Live datagrams carry a steady stamp that a host clock step can't move.
+        let now = d.monotonic.unwrap_or_else(|| secs(d.received_at));
         self.now = self.now.max(now);
         self.datagrams += 1;
         self.metrics.record_datagram(now, d.source, d.payload.len());
@@ -62,6 +68,18 @@ impl Monitor {
             match result {
                 Ok(pdu) => {
                     self.pdus += 1;
+                    if self.is_relayed_copy(now, d.source, &d.payload[span.clone()]) {
+                        self.duplicates += 1;
+                        let tags = Tags {
+                            exercise: Some(pdu.header.exercise_id),
+                            pdu_type: Some(pdu.type_name()),
+                            sender: Some(d.source),
+                            ..Default::default()
+                        };
+                        self.metrics.record(now, Metric::PduDuplicates, tags, 1.0);
+                        pdus.push(pdu);
+                        continue;
+                    }
                     events.extend(self.engine.check_enums(now, &pdu));
                     events.extend(self.engine.before_apply(now, d.source, &pdu, &self.table));
                     self.record_dr_error(now, d.source, &pdu);
@@ -103,6 +121,30 @@ impl Monitor {
         events
     }
 
+    /// Has another sender delivered these exact bytes within the duplicate
+    /// window? Then this is a relay's copy: it skips the rules, the entity
+    /// table and capture, so it can't pose as a second simulator.
+    fn is_relayed_copy(&mut self, now: f64, source: SocketAddr, raw: &[u8]) -> bool {
+        use std::hash::{Hash, Hasher};
+        let window = self.engine.config.duplicate_window;
+        if window <= 0.0 {
+            return false;
+        }
+        if now - self.last_dedup_prune > window {
+            self.last_dedup_prune = now;
+            self.recent_pdus.retain(|_, (t, _)| now - *t <= window);
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        raw.hash(&mut h);
+        match self.recent_pdus.get(&h.finish()) {
+            Some((t, from)) if *from != source && now - t <= window && now >= *t => true,
+            _ => {
+                self.recent_pdus.insert(h.finish(), (now, source));
+                false
+            }
+        }
+    }
+
     /// The PDU's primary entity type: carried by Entity State, looked up in
     /// the table for everything else.
     fn entity_type_of(&self, pdu: &Pdu) -> Option<EntityType> {
@@ -127,7 +169,7 @@ impl Monitor {
             exercise: pdu.header.exercise_id,
             id: es.entity_id,
         };
-        if self.table.exercises.get(&key.exercise).is_some_and(|e| e.frozen) {
+        if self.table.state_for(&key).frozen {
             return;
         }
         let Some(track) = self.table.get(&key).and_then(|r| r.sources.get(&source)) else {

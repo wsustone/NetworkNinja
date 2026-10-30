@@ -246,9 +246,9 @@ fn truncated_and_inconsistent_pdus_are_errors() {
 #[test]
 fn bad_body_does_not_stop_the_next_pdu() {
     let good = encode_pdu(&sample_pdus(7).remove(6)); // RemoveEntity
-                                                      // A Fire PDU whose length field is 4 bytes too long but framed consistently.
+                                                      // A Fire PDU 4 bytes short of its body, framed consistently.
     let mut odd = encode_pdu(&sample_pdus(7).remove(2));
-    odd.extend([0xAA; 4]);
+    odd.truncate(odd.len() - 4);
     let l = odd.len() as u16;
     odd[8..10].copy_from_slice(&l.to_be_bytes());
     let mut datagram = odd;
@@ -329,7 +329,6 @@ fn hostile_input_never_panics() {
 /// decode it (and let a rule pack flag the padding), not drop it: a dropped
 /// Entity State later looks like a dead simulator.
 #[test]
-#[ignore = "known issue: exact length check rejects padded PDUs (review finding 8)"]
 fn padded_entity_state_still_decodes() {
     let pdu = &sample_pdus(7)[0];
     let mut bytes = encode_pdu(pdu);

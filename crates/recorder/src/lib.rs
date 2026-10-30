@@ -29,7 +29,12 @@ impl Writer {
     }
 
     pub fn record(&mut self, d: &Datagram) -> io::Result<()> {
-        let micros = d.received_at.duration_since(UNIX_EPOCH).unwrap_or_default().as_micros() as u64;
+        // The steady stamp when there is one, so a host clock step during a
+        // recording doesn't become a pause (or a rewind) in its replay.
+        let micros = match d.monotonic {
+            Some(t) => (t.max(0.0) * 1e6) as u64,
+            None => d.received_at.duration_since(UNIX_EPOCH).unwrap_or_default().as_micros() as u64,
+        };
         self.w.write_all(&micros.to_be_bytes())?;
         let src = d.source.to_string();
         self.w.write_all(&(src.len() as u16).to_be_bytes())?;
@@ -99,6 +104,7 @@ impl Reader {
             source,
             destination: None,
             payload,
+            monotonic: None,
         }))
     }
 }
