@@ -7,12 +7,34 @@ use crate::world::{Tick, World};
 use crate::{Event, Sender};
 use nn_decode::Pdu;
 
+pub(crate) mod coverage;
 pub(crate) mod entity_info;
 pub(crate) mod sim_mgmt;
 pub(crate) mod warfare;
 
 /// PDUs produced this tick, in send order, each with its sender.
-pub(crate) type Out = Vec<(Sender, Pdu)>;
+#[derive(Default)]
+pub(crate) struct Out(pub Vec<Outgoing>);
+
+pub(crate) struct Outgoing {
+    pub sender: Sender,
+    pub pdu: Pdu,
+    /// Bytes cut from the end of the encoded PDU, after its length field is
+    /// set: a PDU truncated on the wire. Sent in a datagram of its own.
+    pub cut: usize,
+}
+
+impl Out {
+    pub fn new() -> Out {
+        Out::default()
+    }
+    pub fn push(&mut self, (sender, pdu): (Sender, Pdu)) {
+        self.0.push(Outgoing { sender, pdu, cut: 0 });
+    }
+    pub fn push_cut(&mut self, sender: Sender, pdu: Pdu, cut: usize) {
+        self.0.push(Outgoing { sender, pdu, cut });
+    }
+}
 
 pub(crate) trait Family {
     /// Start of a tick, before scheduled events apply.
@@ -34,5 +56,6 @@ pub(crate) fn all(w: &World) -> Vec<Box<dyn Family>> {
         Box::new(sim_mgmt::SimManagement),
         Box::new(entity_info::EntityInfo::default()),
         Box::new(warfare::Warfare::new(w.cfg)),
+        Box::new(coverage::Coverage::default()),
     ]
 }

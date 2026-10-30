@@ -2,6 +2,7 @@
 //! per-PDU enumeration checks loaded from rule packs.
 
 use crate::pack::{EnumCheck, Merged};
+use nn_decode::structure::Report;
 use nn_decode::{EntityId, EntityType, Pdu, PduBody};
 use nn_state::{extrapolate, geo, EntityKey, EntityTable};
 use std::collections::BTreeMap;
@@ -14,6 +15,14 @@ pub enum Rule {
     PositionJump,
     /// A pack `[[enum]]` check failed.
     EnumViolation,
+    /// Tier S (ADR 0010): a PDU's length doesn't match its layout and
+    /// counts, or the datagram cuts it off.
+    PduStructure,
+    /// Tier S: a PDU carries bytes its layout doesn't account for, or lacks
+    /// its alignment padding.
+    PduPadding,
+    /// The Protocol Family field doesn't match the PDU type.
+    PduFamily,
 }
 
 impl Rule {
@@ -23,6 +32,9 @@ impl Rule {
             Rule::IdConflict => "id-conflict",
             Rule::PositionJump => "position-jump",
             Rule::EnumViolation => "enum-violation",
+            Rule::PduStructure => "pdu-structure",
+            Rule::PduPadding => "pdu-padding",
+            Rule::PduFamily => "pdu-family",
         }
     }
 
@@ -32,6 +44,9 @@ impl Rule {
             "entity-timeout" => Some(Rule::EntityTimeout),
             "id-conflict" => Some(Rule::IdConflict),
             "position-jump" => Some(Rule::PositionJump),
+            "pdu-structure" => Some(Rule::PduStructure),
+            "pdu-padding" => Some(Rule::PduPadding),
+            "pdu-family" => Some(Rule::PduFamily),
             _ => None,
         }
     }
@@ -186,6 +201,8 @@ pub struct Engine {
     enum_repeat: f64,
     /// Last time each (field, entity) violation fired.
     enum_last: BTreeMap<(&'static str, EntityKey), f64>,
+    /// Last time each structural rule fired for a (PDU type, sender).
+    structure_last: BTreeMap<(Rule, Option<u8>, SocketAddr), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
     /// Operator acknowledgements, keyed by (rule_id, entity).
     acks: BTreeMap<(String, EntityKey), Ack>,
@@ -213,6 +230,7 @@ impl Engine {
             enum_checks: p.enum_checks.clone(),
             enum_repeat: p.enum_repeat_seconds,
             enum_last: BTreeMap::new(),
+            structure_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
             mutes: Vec::new(),
@@ -384,6 +402,55 @@ impl Engine {
                 let check = self.enum_checks[i].clone();
                 self.fire_once(now, key, source, &check, v, &mut out);
             }
+        }
+        out
+    }
+
+    /// Tier S findings on one PDU (ADR 0010). Like enum violations they are
+    /// point events, repeating at most every `enum_repeat` seconds per rule,
+    /// PDU type and sender; each cites the layout clause it checks.
+    pub fn check_structure(&mut self, now: f64, source: SocketAddr, report: &Report) -> Vec<AlertEvent> {
+        let mut out = Vec::new();
+        let key = EntityKey {
+            exercise: report.exercise.unwrap_or(0),
+            id: report.entity.unwrap_or_default(),
+        };
+        let (name, clause) = report.layout().map_or(("PDU", None), |l| (l.name, Some(l.clause)));
+        for f in &report.findings {
+            let rule = match f.rule() {
+                "pdu-padding" => Rule::PduPadding,
+                "pdu-family" => Rule::PduFamily,
+                _ => Rule::PduStructure,
+            };
+            if !self.enabled(rule) || self.muted(rule.name(), &key, now) {
+                continue;
+            }
+            let dedup = (rule, report.pdu_type, source);
+            if self
+                .structure_last
+                .get(&dedup)
+                .is_some_and(|t| now - t < self.enum_repeat)
+            {
+                continue;
+            }
+            self.structure_last.insert(dedup, now);
+            let cite = clause.map_or(String::new(), |c| format!(" (IEEE 1278.1 {c}, draft D16r18)"));
+            let message = format!("{name} from {}: {}{cite}", key.id, f.describe());
+            out.push(AlertEvent {
+                at: now,
+                state: AlertState::Firing,
+                alert: Alert {
+                    rule,
+                    pack: self.rule_pack.get(&rule).cloned().unwrap_or_else(|| "builtin".into()),
+                    rule_id: rule.name().to_string(),
+                    key,
+                    severity: self.severities.get(&rule).copied().unwrap_or(Severity::Warning),
+                    since: now,
+                    message: message.clone(),
+                    sender: Some(source),
+                },
+                reason: message,
+            });
         }
         out
     }
@@ -586,7 +653,7 @@ impl Engine {
                     }
                 }
                 // One-shot events; never present in `active`.
-                Rule::EnumViolation => {}
+                Rule::EnumViolation | Rule::PduStructure | Rule::PduPadding | Rule::PduFamily => {}
             }
         }
         out

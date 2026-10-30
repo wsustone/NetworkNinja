@@ -35,6 +35,8 @@ EXERCISE
     --heartbeat SECS        Entity State heartbeat (default 5)
     --dr-threshold M        Dead-reckoning error that triggers an update (default 1.0)
     --fire-every SECS       Fire + Detonation every N seconds (default off)
+    --all-types SECS        Every SECS, one minimal valid PDU of each of the other
+                            66 PDU types, from the first site (default off)
     --bundle                Pack several PDUs per datagram
     --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
@@ -43,6 +45,11 @@ FAULTS (alerts must fire)          T defaults to a third of the duration
     --drop-heartbeat ID[@T] Entity goes silent without Remove Entity
     --clone-id ID[@T]       A second sender reuses the Entity ID
     --teleport ID[@T]       Entity jumps 20 km off its dead-reckoned path
+
+STRUCTURAL FAULTS (ADR 0010 tier S; a PDU of TYPE from the first site)
+    --defect KIND:TYPE[@T]  KIND is short-pdu, count-overrun, padded-pdu,
+                            wrong-family or truncated-pdu; TYPE a PDU type number
+                            (count-overrun needs a type with a count field)
 
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
@@ -53,6 +60,7 @@ CONTROLS (alerts must stay quiet)
 PRESETS
     --all-faults            One of each fault on site 1
     --all-controls          One of each control on site 2 / the exercise
+    --all-defects           One of each structural fault on site 1
 
 ID is site:application:entity, e.g. 1:1:3. Synthetic simulators use application 1.
 ";
@@ -83,7 +91,8 @@ fn parse_args() -> Result<Options, String> {
     let mut target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3000);
     let (mut broadcast, mut pcap, mut truth) = (false, None, None);
     let mut pending: Vec<(EventKind, String)> = Vec::new();
-    let (mut all_faults, mut all_controls) = (false, false);
+    let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
+    let mut defects: Vec<String> = Vec::new();
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -113,6 +122,7 @@ fn parse_args() -> Result<Options, String> {
             "--heartbeat" => cfg.heartbeat = num(val()?)?,
             "--dr-threshold" => cfg.dr_threshold = num(val()?)?,
             "--fire-every" => cfg.fire_every = Some(num(val()?)?),
+            "--all-types" => cfg.all_types = Some(num(val()?)?),
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -125,6 +135,8 @@ fn parse_args() -> Result<Options, String> {
             "--resume-at" => pending.push((EventKind::Resume, format!("@{}", val()?))),
             "--all-faults" => all_faults = true,
             "--all-controls" => all_controls = true,
+            "--defect" => defects.push(val()?),
+            "--all-defects" => all_defects = true,
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -153,6 +165,38 @@ fn parse_args() -> Result<Options, String> {
         pending.push((EventKind::RestartPort, format!("{second}@{}", d * 0.35)));
         pending.push((EventKind::Freeze, format!("@{}", d * 0.55)));
         pending.push((EventKind::Resume, format!("@{}", d * 0.70)));
+    }
+
+    if all_defects {
+        // One type each, so no fault hides behind another's repeat window.
+        let types = [4, 25, 24, 26, 23]; // Collision, Transmitter, Designator, Signal, EE
+        for (i, (kind, t)) in EventKind::STRUCTURAL.iter().zip(types).enumerate() {
+            defects.push(format!("{}:{t}@{}", kind.name(), d * (0.20 + 0.05 * i as f64)));
+        }
+    }
+    for spec in defects {
+        let (what, at) = match spec.split_once('@') {
+            Some((w, t)) => (w, t.parse::<f64>().map_err(|e| format!("bad time in '{spec}': {e}"))?),
+            None => (spec.as_str(), d / 3.0),
+        };
+        let (name, t) = what
+            .split_once(':')
+            .ok_or_else(|| format!("--defect '{spec}': expected KIND:TYPE[@T]"))?;
+        let kind = EventKind::structural(name).ok_or_else(|| format!("--defect: unknown kind '{name}'"))?;
+        let pdu_type: u8 = t.parse().map_err(|e| format!("--defect: bad PDU type '{t}': {e}"))?;
+        let layout = nn_decode::structure::layout(pdu_type)
+            .ok_or_else(|| format!("--defect: {pdu_type} is not a PDU type (1-72)"))?;
+        if kind == EventKind::CountOverrun && layout.counts.is_empty() {
+            return Err(format!("--defect: {} has no count field to overrun", layout.name));
+        }
+        if !(0.0..=d).contains(&at) {
+            return Err(format!("time {at} for {} is outside the run (0..{d})", kind.name()));
+        }
+        cfg.events.push(Event {
+            kind,
+            target: Target::Pdu { site: first, pdu_type },
+            at,
+        });
     }
 
     for (kind, spec) in pending {
