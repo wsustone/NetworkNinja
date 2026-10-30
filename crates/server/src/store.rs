@@ -8,6 +8,10 @@
 //! `runs` marks run boundaries so the UI can tell yesterday's exercise from
 //! today's; `recordings`/`pdus` from the ADR land with milestone 5.
 //!
+//! Events carry `sender`, `pack` and `state` (ADR 0008 slice 2) so they
+//! aggregate on the same tags as metrics; older files gain the columns on
+//! open. [`EventStore::violations`] feeds the conformance summary.
+//!
 //! Metric rollups (ADR 0008): `series(id, name, tags)` names each tagged
 //! series once; `samples(series, at, n, sum, min, max)` holds one row per
 //! series per ten-second slot, swept after the retention period.
@@ -19,6 +23,40 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+/// One log entry to index; `json` is kept verbatim.
+#[derive(Debug, Default)]
+pub struct NewEvent<'a> {
+    pub run: i64,
+    pub seq: u64,
+    pub at: f64,
+    pub kind: &'a str,
+    pub entity: Option<&'a str>,
+    pub rule: Option<&'a str>,
+    pub severity: Option<&'a str>,
+    pub exercise: Option<u8>,
+    pub message: Option<&'a str>,
+    pub sender: Option<&'a str>,
+    pub pack: Option<&'a str>,
+    /// `firing` / `resolved` for alerts.
+    pub state: Option<&'a str>,
+    pub json: &'a str,
+}
+
+/// A violation as the conformance summary counts it: an alert firing or a
+/// decode error.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Violation {
+    pub at: f64,
+    /// `alert` or `error`.
+    pub kind: String,
+    pub rule: Option<String>,
+    pub pack: Option<String>,
+    pub entity: Option<String>,
+    pub sender: Option<String>,
+    pub severity: Option<String>,
+    pub exercise: Option<u8>,
+}
+
 #[derive(Debug, Default)]
 pub struct EventQuery {
     /// Only entries with seq greater than this.
@@ -26,6 +64,7 @@ pub struct EventQuery {
     pub kind: Option<String>,
     pub rule: Option<String>,
     pub entity: Option<String>,
+    pub sender: Option<String>,
     /// Substring match against entity, rule and message.
     pub text: Option<String>,
     pub limit: usize,
@@ -76,6 +115,19 @@ impl EventStore {
             CREATE INDEX IF NOT EXISTS sm_at ON samples(at);",
         )
         .map_err(|e| e.to_string())?;
+        // Files from before slice 2 gain the tag columns in place.
+        let have: Vec<String> = conn
+            .prepare("PRAGMA table_info(events)")
+            .and_then(|mut st| st.query_map([], |r| r.get::<_, String>(1))?.collect())
+            .map_err(|e| e.to_string())?;
+        for col in ["sender", "pack", "state"] {
+            if !have.iter().any(|c| c == col) {
+                conn.execute(&format!("ALTER TABLE events ADD COLUMN {col} TEXT"), [])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS ev_sender ON events(sender);")
+            .map_err(|e| e.to_string())?;
         Ok(EventStore {
             conn,
             series_ids: RefCell::new(HashMap::new()),
@@ -91,25 +143,62 @@ impl EventStore {
     }
 
     /// Index one log entry (its full JSON body is kept verbatim).
-    #[allow(clippy::too_many_arguments)]
-    pub fn insert(
-        &self,
-        run: i64,
-        seq: u64,
-        at: f64,
-        kind: &str,
-        entity: Option<&str>,
-        rule: Option<&str>,
-        severity: Option<&str>,
-        exercise: Option<u8>,
-        message: Option<&str>,
-        json: &str,
-    ) {
+    pub fn insert(&self, e: &NewEvent) {
         let _ = self.conn.execute(
-            "INSERT INTO events(run,seq,at,kind,entity,rule,severity,exercise,message,json)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![run, seq as i64, at, kind, entity, rule, severity, exercise, message, json],
+            "INSERT INTO events(run,seq,at,kind,entity,rule,severity,exercise,message,sender,pack,state,json)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![
+                e.run,
+                e.seq as i64,
+                e.at,
+                e.kind,
+                e.entity,
+                e.rule,
+                e.severity,
+                e.exercise,
+                e.message,
+                e.sender,
+                e.pack,
+                e.state,
+                e.json
+            ],
         );
+    }
+
+    /// Alert firings and decode errors since `since`, optionally for one
+    /// exercise or entity. Rows written before the `state` column existed
+    /// are recognised from their JSON.
+    pub fn violations(&self, since: f64, exercise: Option<u8>, entity: Option<&str>) -> Result<Vec<Violation>, String> {
+        let mut st = self
+            .conn
+            .prepare_cached(
+                "SELECT at, kind, rule, pack, entity, COALESCE(sender, json_extract(json, '$.source')),
+                        severity, exercise
+                 FROM events
+                 WHERE at >= ?1
+                   AND (kind = 'error'
+                        OR (kind = 'alert' AND (state = 'firing'
+                            OR (state IS NULL AND json LIKE '%\"state\":\"firing\"%'))))
+                   AND (?2 IS NULL OR exercise = ?2)
+                   AND (?3 IS NULL OR entity = ?3)
+                 ORDER BY at",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![since, exercise, entity], |r| {
+                Ok(Violation {
+                    at: r.get(0)?,
+                    kind: r.get(1)?,
+                    rule: r.get(2)?,
+                    pack: r.get(3)?,
+                    entity: r.get(4)?,
+                    sender: r.get(5)?,
+                    severity: r.get(6)?,
+                    exercise: r.get::<_, Option<i64>>(7)?.map(|x| x as u8),
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
     /// Highest seq seen (all runs), so numbering continues across restarts.
@@ -135,6 +224,9 @@ impl EventStore {
         }
         if let Some(e) = &q.entity {
             push(&mut sql, &mut args, "entity =", e.clone());
+        }
+        if let Some(s) = &q.sender {
+            push(&mut sql, &mut args, "sender =", s.clone());
         }
         if let Some(t) = &q.text {
             push(
