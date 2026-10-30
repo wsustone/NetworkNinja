@@ -65,25 +65,32 @@ impl Monitor {
         let mut pdus = Vec::new();
         let mut events = Vec::new();
         for (span, result) in decode_datagram_spans(&d.payload) {
+            if result.is_ok() {
+                self.pdus += 1;
+            }
+            // A relay's copy skips every check, malformed or not, so a
+            // gateway can't pose as a second simulator or double a finding.
+            if self.is_relayed_copy(now, d.source, &d.payload[span.clone()]) {
+                self.duplicates += 1;
+                let pdu_type = d.payload.get(span.start + 2).copied();
+                let tags = Tags {
+                    exercise: d.payload.get(span.start + 1).copied(),
+                    pdu_type: pdu_type.map(nn_decode::pdu_type_name),
+                    sender: Some(d.source),
+                    ..Default::default()
+                };
+                self.metrics.record(now, Metric::PduDuplicates, tags, 1.0);
+                if let Ok(pdu) = result {
+                    pdus.push(pdu);
+                }
+                continue;
+            }
             // Tier S (ADR 0010): structure is checked on the raw bytes, so a
             // PDU the decoder rejects is still reported against its sender.
             let structure = structure::check(&d.payload[span.start..]);
+            events.extend(self.engine.check_structure(now, d.source, &structure));
             match result {
                 Ok(pdu) => {
-                    self.pdus += 1;
-                    if self.is_relayed_copy(now, d.source, &d.payload[span.clone()]) {
-                        self.duplicates += 1;
-                        let tags = Tags {
-                            exercise: Some(pdu.header.exercise_id),
-                            pdu_type: Some(pdu.type_name()),
-                            sender: Some(d.source),
-                            ..Default::default()
-                        };
-                        self.metrics.record(now, Metric::PduDuplicates, tags, 1.0);
-                        pdus.push(pdu);
-                        continue;
-                    }
-                    events.extend(self.engine.check_structure(now, d.source, &structure));
                     events.extend(self.engine.check_enums(now, d.source, &pdu));
                     events.extend(self.engine.before_apply(now, d.source, &pdu, &self.table));
                     self.record_dr_error(now, d.source, &pdu);
@@ -104,7 +111,6 @@ impl Monitor {
                     pdus.push(pdu);
                 }
                 Err(_) => {
-                    events.extend(self.engine.check_structure(now, d.source, &structure));
                     self.decode_errors += 1;
                     self.metrics.record_error(now, d.source);
                 }

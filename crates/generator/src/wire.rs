@@ -1,8 +1,8 @@
 //! The wire layer (ADR 0010): between the simulation and the sink. Counts
 //! the tick's PDUs into the ground truth, encodes them, groups them by
 //! sender and, with `bundle`, packs each sender's PDUs into shared
-//! datagrams. Network-level effects (gateway duplicates, padding, malformed
-//! PDUs, version mixing) belong here too.
+//! datagrams, and with `gateway` repeats each datagram from the gateway's
+//! address. Ground truth counts the simulator's datagrams, not the copies.
 
 use crate::families::{Out, Outgoing};
 use crate::{Config, Sender, Sink, Truth, BUNDLE_LIMIT};
@@ -12,11 +12,26 @@ use std::io;
 
 pub(crate) struct Wire {
     bundle: bool,
+    gateway: bool,
 }
 
 impl Wire {
     pub fn new(cfg: &Config) -> Wire {
-        Wire { bundle: cfg.bundle }
+        Wire {
+            bundle: cfg.bundle,
+            gateway: cfg.gateway,
+        }
+    }
+
+    /// One datagram to the sink, and its gateway copy.
+    fn emit(&self, truth: &mut Truth, t: f64, sender: Sender, d: &[u8], sink: &mut dyn Sink) -> io::Result<()> {
+        truth.datagrams += 1;
+        truth.bytes += d.len() as u64;
+        sink.emit(t, sender, d)?;
+        if self.gateway {
+            sink.emit(t, Sender { relay: true, ..sender }, d)?;
+        }
+        Ok(())
     }
 
     /// Send one tick's PDUs at time `t`.
@@ -52,16 +67,12 @@ impl Wire {
                 pdus
             };
             for d in datagrams {
-                truth.datagrams += 1;
-                truth.bytes += d.len() as u64;
-                sink.emit(t, sender, &d)?;
+                self.emit(truth, t, sender, &d, sink)?;
             }
         }
         // A truncated PDU would swallow whatever followed it in a bundle.
         for (sender, d) in cut {
-            truth.datagrams += 1;
-            truth.bytes += d.len() as u64;
-            sink.emit(t, sender, &d)?;
+            self.emit(truth, t, sender, &d, sink)?;
         }
         Ok(())
     }

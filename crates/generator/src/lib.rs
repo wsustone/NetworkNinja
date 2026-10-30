@@ -163,6 +163,15 @@ pub struct Config {
     /// Simulators stop sending while the exercise is frozen (some do; the
     /// default keeps heartbeating with the frozen appearance bit set).
     pub silent_when_frozen: bool,
+    /// Dead-reckoning algorithm in Entity State: 2 (FPW, world-frame
+    /// velocity) or 6 (FPB, velocity in the entity's body frame).
+    pub dr_algorithm: u8,
+    /// Relative DIS timestamps (time since the simulator's own reference)
+    /// instead of absolute ones (time past the UTC hour).
+    pub relative_timestamps: bool,
+    /// Every datagram is also relayed by a gateway on another address, the
+    /// way a site bridge or a second NIC repeats traffic.
+    pub gateway: bool,
     pub events: Vec<Event>,
     /// Wall-clock time of simulation time zero (for DIS timestamps).
     pub start_time: SystemTime,
@@ -185,6 +194,9 @@ impl Default for Config {
             all_types: None,
             bundle: false,
             silent_when_frozen: false,
+            dr_algorithm: 2,
+            relative_timestamps: false,
+            gateway: false,
             events: Vec::new(),
             start_time: UNIX_EPOCH + Duration::from_secs(1_798_761_600), // 2027-01-01T00:00:00Z
         }
@@ -199,6 +211,73 @@ pub struct Sender {
     pub generation: u16,
     /// The rogue simulator that clones an Entity ID.
     pub rogue: bool,
+    /// A gateway repeating this simulator's traffic.
+    pub relay: bool,
+}
+
+impl Sender {
+    /// Host part of the sender's address in the sinks' 10.0.<site>.<host>
+    /// scheme: 10 for the simulator, 200 for its gateway, 250 for a rogue.
+    pub fn host(&self) -> u8 {
+        if self.rogue {
+            250
+        } else if self.relay {
+            200
+        } else {
+            10
+        }
+    }
+}
+
+/// A named bundle of legitimate variation (ADR 0010): how one vendor's
+/// simulator behaves. None of it is an error; a run mixing profiles must
+/// raise no alerts.
+pub struct Profile {
+    pub name: &'static str,
+    pub description: &'static str,
+    apply: fn(&mut Config),
+}
+
+impl Profile {
+    pub fn apply(&self, cfg: &mut Config) {
+        (self.apply)(cfg)
+    }
+}
+
+pub const PROFILES: [Profile; 4] = [
+    Profile {
+        name: "standard",
+        description: "DIS v7, one PDU per datagram, world-frame DR, absolute timestamps",
+        apply: |_| {},
+    },
+    Profile {
+        name: "legacy",
+        description: "DIS v6, bundled datagrams, relative timestamps, silent while frozen",
+        apply: |c| {
+            c.version = 6;
+            c.bundle = true;
+            c.relative_timestamps = true;
+            c.silent_when_frozen = true;
+        },
+    },
+    Profile {
+        name: "body-axis",
+        description: "DIS v7, body-frame dead reckoning (FPB), bundled",
+        apply: |c| {
+            c.dr_algorithm = 6;
+            c.bundle = true;
+        },
+    },
+    Profile {
+        name: "gateway",
+        description: "DIS v7 behind a gateway that repeats every datagram from another address",
+        apply: |c| c.gateway = true,
+    },
+];
+
+/// The profile called `name`.
+pub fn profile(name: &str) -> Option<&'static Profile> {
+    PROFILES.iter().find(|p| p.name == name)
 }
 
 /// Where generated datagrams go.
