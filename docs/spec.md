@@ -94,6 +94,8 @@ The system keeps per-entity state keyed by the full Entity ID (site/application/
 - Malformed and unknown PDU counts
 - Exercise state: running or frozen, from Start/Resume and Stop/Freeze
 
+Every sample is tagged from one dimension set (exercise, site, entity, sender, PDU type, kind, force, pack, rule, severity) and named from a stable catalogue (`pdu.count`, `bytes.count`, `datagram.count`, `decode.errors`, `entity.active`, `entity.heartbeat_mean`, `entity.heartbeat_jitter`, `entity.dr_error`, `alerts.open`; ADR 0008). Ten minutes stay in memory at one-second resolution (ten seconds for per-entity gauges); with `--db`, ten-second rollups persist in SQLite for `--metrics-retention` days (default 7). `GET /api/query?name=…&where.DIM=…&by=…&agg=…&window=…&from=…&to=…` answers any of them as a timeseries per group, or one value per group when the window spans the range.
+
 ## Alert rules
 
 The MVP ships three rules, each defined so that it stays quiet on a healthy exercise. No rule fires while the exercise is frozen.

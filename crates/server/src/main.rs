@@ -11,7 +11,8 @@ use nn_server::web::{
     alert_json, delta_json, entity_baseline, entity_details, error_json, info_json, now_secs, state_json, Hub, Switch,
 };
 use nn_server::{describe, Tally};
-use nn_state::secs;
+use nn_state::metrics::slot_of;
+use nn_state::{secs, Metric};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufReader;
@@ -41,7 +42,9 @@ LISTEN / SERVE OPTIONS
     --log FILE            Append the event log to FILE and show past runs
                           (serve only; JSON lines, loaded back at startup)
     --db FILE             Store the event log in SQLite FILE for indexed
-                          search via /api/log (serve only)
+                          search via /api/log, plus 10 s metric rollups
+                          for /api/query (serve only)
+    --metrics-retention DAYS  Keep metric rollups this long (default 7)
     --record FILE         Record every datagram to FILE (native format)
     --replay FILE         Replay a --record file through the dashboard
                           instead of live capture (serve only)
@@ -161,6 +164,7 @@ fn real_main() -> Result<(), String> {
     let mut http: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let mut log_file: Option<String> = None;
     let mut db_file: Option<String> = None;
+    let mut retention_days = 7.0;
     let mut record_file: Option<String> = None;
     let mut replay_file: Option<String> = None;
     let mut runs_dir: Option<String> = None;
@@ -198,6 +202,7 @@ fn real_main() -> Result<(), String> {
             "--http" => http = val()?.parse().map_err(|e| bad(&e))?,
             "--log" => log_file = Some(val()?),
             "--db" => db_file = Some(val()?),
+            "--metrics-retention" => retention_days = val()?.parse::<f64>().map_err(|e| bad(&e))?,
             "--record" => record_file = Some(val()?),
             "--replay" => replay_file = Some(val()?),
             "--runs" => runs_dir = Some(val()?),
@@ -226,6 +231,7 @@ fn real_main() -> Result<(), String> {
             duration,
             log_file.as_deref(),
             db_file.as_deref(),
+            retention_days * 86_400.0,
             record_file.as_deref(),
             replay_file.as_deref(),
             speed.unwrap_or(1.0),
@@ -427,6 +433,7 @@ fn serve(
     duration: Option<f64>,
     log_file: Option<&str>,
     db_file: Option<&str>,
+    retention: f64,
     record_file: Option<&str>,
     replay_file: Option<&str>,
     speed: f64,
@@ -482,7 +489,16 @@ fn serve(
     if let Some(path) = db_file {
         hub.open_db(std::path::Path::new(path), &packs.packs.join(" + "))
             .map_err(|e| format!("cannot open db {path}: {e}"))?;
-        eprintln!("  event store: {path}");
+        let swept = hub.sweep_metrics(now_secs() - retention);
+        eprintln!(
+            "  event store: {path} (metric rollups kept {:.0} days{})",
+            retention / 86_400.0,
+            if swept > 0 {
+                format!(", {swept} old samples swept")
+            } else {
+                String::new()
+            }
+        );
     }
     if let Some(dir) = runs_dir {
         hub.set_runs_dir(std::path::PathBuf::from(dir));
@@ -497,6 +513,8 @@ fn serve(
     );
     let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel::<(String, String)>(64);
     hub.set_command_sink(cmd_tx);
+    let (query_tx, query_rx) = std::sync::mpsc::sync_channel::<nn_server::web::QueryReq>(16);
+    hub.set_query_sink(query_tx);
     if let Some(f) = users_file {
         let a = nn_server::auth::Auth::load(std::path::Path::new(f)).map_err(|e| format!("--users {f}: {e}"))?;
         eprintln!("  users: {f} ({} accounts)", a.len());
@@ -513,6 +531,10 @@ fn serve(
     let start = Instant::now();
     let mut next_state = 0.0;
     let mut next_full = 0.0;
+    // Metric rollups reach the store every 10 s, live capture only: a
+    // replay's timestamps are the recording's, not today's (ADR 0008).
+    let mut flushed: Option<i64> = None;
+    let mut next_sweep = 3600.0;
     loop {
         let t = start.elapsed().as_secs_f64();
         if duration.is_some_and(|d| t >= d) {
@@ -592,6 +614,8 @@ fn serve(
                             prev_ents.clear();
                             recent.clear();
                             next_full = 0.0;
+                            flushed = None;
+                            hub.reset_metrics_flush();
                             epoch = Instant::now();
                         }
                     }
@@ -601,6 +625,9 @@ fn serve(
                     hub.log("info", &info_json(now_secs(), &format!("command rejected: {e}")));
                 }
             }
+        }
+        while let Ok((q, reply)) = query_rx.try_recv() {
+            let _ = reply.send(nn_server::web::memory_cells(&m.metrics, &q));
         }
         let errs_before = m.decode_errors;
         let next = match &mut src {
@@ -677,8 +704,28 @@ fn serve(
                 hub.set_snapshot(state_json(&m, t, hub.client_count(), &packs.packs, &recent, replay_pos));
             }
             hub.set_details(entity_details(&m));
+            if db_file.is_some() && matches!(src, Src::Udp(_)) {
+                let upto = slot_of(m.now.floor() as i64);
+                let from = flushed.or(m.metrics.oldest(Metric::PduCount).map(slot_of));
+                if let Some(from) = from.filter(|f| upto > *f) {
+                    hub.write_rollup(&m.metrics.rollup(from, upto), upto);
+                    flushed = Some(upto);
+                }
+            }
+            if t >= next_sweep {
+                hub.sweep_metrics(now_secs() - retention);
+                next_sweep = t + 3600.0;
+            }
             next_state = t + 1.0;
         }
+    }
+    // The last, partial slot too, so a clean exit loses nothing.
+    if let (true, Some(from)) = (
+        db_file.is_some() && matches!(src, Src::Udp(_)),
+        flushed.or(m.metrics.oldest(Metric::PduCount).map(slot_of)),
+    ) {
+        let upto = slot_of(m.now.floor() as i64) + nn_state::metrics::SLOT_SECS;
+        hub.write_rollup(&m.metrics.rollup(from, upto), upto);
     }
     if let Some(w) = rec_w.as_mut() {
         let _ = w.flush();

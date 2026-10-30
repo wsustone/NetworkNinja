@@ -381,3 +381,101 @@ fn entity_detail_map_and_endpoint() {
     let r = http_get(addr, "/api/entity?id=1:1:1");
     assert!(r.starts_with("HTTP/1.1 404"), "wrong exercise must not match: {r}");
 }
+
+#[test]
+fn query_endpoint_reads_memory_then_store() {
+    use nn_state::metrics::{Agg, Dim, Metric, Rollup};
+    let (addr, hub) = Hub::listen("127.0.0.1:0").unwrap();
+    let body = |r: &str| r.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
+
+    // Validation errors are 400s that say what was wrong.
+    let r = http_get(addr, "/api/query?name=pdu.count&by=force");
+    assert!(
+        r.starts_with("HTTP/1.1 400") && r.contains("pdu.count has no dimension 'force'"),
+        "{r}"
+    );
+    assert!(http_get(addr, "/api/query").contains("missing name"));
+
+    // A stand-in serve loop answering from a Monitor's metrics: 60 s of
+    // traffic from 10.0.0.1:5000, the last 30 s of it in memory.
+    let mut m = Monitor::new(RuleConfig::default());
+    for i in 0..60 {
+        m.ingest(&datagram(&entity_state(1), i as f64));
+    }
+    let t0 = 1_800_000_000i64;
+    let (tx, rx) = std::sync::mpsc::sync_channel::<web::QueryReq>(4);
+    hub.set_query_sink(tx);
+    let metrics = m.metrics.clone();
+    std::thread::spawn(move || {
+        while let Ok((q, reply)) = rx.recv() {
+            let _ = reply.send(web::memory_cells(&metrics, &q));
+        }
+    });
+    let r = http_get(
+        addr,
+        &format!(
+            "/api/query?name=pdu.count&by=sender&agg=sum&window=60&from={t0}&to={}",
+            t0 + 60
+        ),
+    );
+    let b = body(&r);
+    assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    assert!(
+        b.contains("\"groups\":[{\"tags\":{\"sender\":\"10.0.0.1:5000\"},\"value\":60}]"),
+        "{b}"
+    );
+    let r = http_get(
+        addr,
+        &format!(
+            "/api/query?name=pdu.count&where.site=1&window=30&from={t0}&to={}",
+            t0 + 60
+        ),
+    );
+    assert!(
+        body(&r).contains(&format!("\"points\":[[{t0},1],[{},1]]", t0 + 30)),
+        "{r}"
+    );
+
+    // With a store: slots before the last flush come from SQLite, not memory.
+    let path = std::env::temp_dir().join(format!("nn-query-test-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    hub.open_db(&path, "test").unwrap();
+    let old = t0 - 3600;
+    hub.write_rollup(
+        &[Rollup {
+            metric: Metric::PduCount,
+            tags: vec![(Dim::Sender, "10.0.0.9:7000".into())],
+            at: old,
+            agg: Agg {
+                n: 50,
+                sum: 50.0,
+                min: 1.0,
+                max: 1.0,
+            },
+        }],
+        t0 + 30,
+    );
+    let r = http_get(
+        addr,
+        &format!(
+            "/api/query?name=pdu.count&by=sender&agg=sum&window=4000&from={old}&to={}",
+            t0 + 60
+        ),
+    );
+    let b = body(&r);
+    // The old sender from disk, and only memory's last 30 s for the live one.
+    assert!(
+        b.contains("{\"tags\":{\"sender\":\"10.0.0.9:7000\"},\"value\":50}"),
+        "{b}"
+    );
+    assert!(
+        b.contains("{\"tags\":{\"sender\":\"10.0.0.1:5000\"},\"value\":30}"),
+        "{b}"
+    );
+    assert_eq!(hub.sweep_metrics((old + 1) as f64), 1);
+    std::fs::remove_file(&path).ok();
+
+    // Behind --users the endpoint is gated like the rest of /api.
+    hub.set_auth(std::sync::Arc::new(nn_server::auth::Auth::empty()));
+    assert!(http_get(addr, "/api/query?name=pdu.count").starts_with("HTTP/1.1 401"));
+}

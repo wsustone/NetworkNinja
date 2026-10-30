@@ -46,6 +46,14 @@ plus type breakdown, first seen, DR algorithm, appearance, mute and a
 per-sender list (reports, heartbeat mean/jitter) — rebuilt each state tick
 into `Hub::details`, kept out of the delta feed on purpose. The dashboard
 polls it for the selected row's panel under the entity table.
+Metrics + `/api/query` (ADR 0008 slice 1): series are a `Metric` + typed
+`Tags` in `nn_state::metrics`; per-entity gauges (heartbeat, DR error) live
+in 10 s slots, the rest in 1 s buckets. `Monitor::tick` samples gauges.
+The serve loop owns the metrics, so `Hub::query` asks it for memory cells
+over `QueryReq` and reads the SQLite `series`/`samples` rollups for slots
+before the last flush. Rollups are written every 10 s **live only** (not
+during replay) and on clean exit; `--metrics-retention DAYS` (default 7).
+Query string: `name=pdu.count&where.site=7&by=sender&agg=rate&window=10&from=&to=`.
 
 ## Architecture map
 
