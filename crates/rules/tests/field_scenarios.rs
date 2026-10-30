@@ -2,10 +2,10 @@
 //! produce yet: body-axis dead reckoning, clock steps, long outages, targeted
 //! freezes, gateway duplicates, tracked munitions and wildcard IDs.
 //!
-//! Each test asserts the behaviour the spec asks for. Tests for known issues
-//! from the October 2026 code review are `#[ignore]`d with the finding number;
-//! remove the attribute when the fix lands. Run them all with
-//! `cargo test -p nn-rules --test field_scenarios -- --include-ignored`.
+//! Each test asserts the behaviour the spec asks for. They began as the
+//! October 2026 code review's findings 1–7 (finding 8, padded PDUs, lives in
+//! the decoder's tests); all are fixed. A new known issue goes in here as an
+//! `#[ignore = "known issue: …"]` test until its fix lands.
 
 use nn_capture::Datagram;
 use nn_decode::*;
@@ -35,6 +35,7 @@ fn datagram(t: f64, source: SocketAddr, payload: Vec<u8>) -> Datagram {
         source,
         destination: None,
         payload,
+        monotonic: None,
     }
 }
 
@@ -111,7 +112,11 @@ impl Run {
     }
 
     fn feed(&mut self, t: f64, source: SocketAddr, payload: Vec<u8>) {
-        let (_, events) = self.monitor.ingest(&datagram(t, source, payload));
+        self.feed_datagram(datagram(t, source, payload));
+    }
+
+    fn feed_datagram(&mut self, d: Datagram) {
+        let (_, events) = self.monitor.ingest(&d);
         self.events.extend(events);
     }
 
@@ -136,7 +141,6 @@ impl Run {
 /// body axes. A straight, level aircraft only needs heartbeats, and the
 /// monitor's extrapolation must agree with the sender's.
 #[test]
-#[ignore = "known issue: body-axis velocity treated as world frame (review finding 1)"]
 fn body_axis_aircraft_in_straight_flight_does_not_jump() {
     // DIS Euler angles of a level aircraft heading north, relative to ECEF.
     let north = geo::enu_to_ecef(LAT, LON, 0.0, 1.0, 0.0);
@@ -164,12 +168,9 @@ fn body_axis_aircraft_in_straight_flight_does_not_jump() {
 }
 
 /// An NTP or PTP step on the monitor host must not look like every entity
-/// going silent at once.
-///
-/// Note: this models the step by shifting receive stamps. If `Datagram` gains
-/// a separate monotonic stamp as part of the fix, feed that here instead.
+/// going silent at once. Live capture stamps each datagram from a steady
+/// clock as well as the wall clock; the step only moves the wall clock.
 #[test]
-#[ignore = "known issue: wall-clock time drives timeouts (review finding 2)"]
 fn host_clock_step_does_not_time_out_healthy_entities() {
     let mut run = Run::new();
     for step in 0..200 {
@@ -177,7 +178,9 @@ fn host_clock_step_does_not_time_out_healthy_entities() {
         let clock_step = if t >= 60.0 { 30.0 } else { 0.0 };
         for e in 0..50u16 {
             if (step + e as usize).is_multiple_of(10) {
-                run.feed(t + clock_step, host(1, 4000), parked(id(1, e + 1)));
+                let mut d = datagram(t + clock_step, host(1, 4000), parked(id(1, e + 1)));
+                d.monotonic = Some(1_798_761_600.0 + t);
+                run.feed_datagram(d);
             }
         }
     }
@@ -187,7 +190,6 @@ fn host_clock_step_does_not_time_out_healthy_entities() {
 /// A simulator that drops out stays alerted until it returns or is removed;
 /// expiring its record from the table must not quietly resolve the alert.
 #[test]
-#[ignore = "known issue: pruning resolves open timeout alerts (review finding 3)"]
 fn timeout_alert_stays_open_after_the_entity_expires() {
     let mut run = Run::new();
     let mut t = 0.0;
@@ -209,7 +211,6 @@ fn timeout_alert_stays_open_after_the_entity_expires() {
 /// A Stop/Freeze addressed to one simulation application freezes that
 /// application, not the whole exercise.
 #[test]
-#[ignore = "known issue: Stop/Freeze receiving ID ignored (review finding 4)"]
 fn freeze_for_one_application_does_not_mute_the_others() {
     let freeze_site_2 = encode(
         pdu_type::STOP_FREEZE,
@@ -239,7 +240,6 @@ fn freeze_for_one_application_does_not_mute_the_others() {
 /// The same PDUs seen again from a gateway (or a second NIC, or both legs of
 /// a SPAN port) are duplicates, not two simulators claiming one Entity ID.
 #[test]
-#[ignore = "known issue: relayed duplicates raise ID conflicts (review finding 5)"]
 fn relayed_duplicates_are_not_id_conflicts() {
     let mut run = Run::new();
     for i in 0..10 {
@@ -251,12 +251,22 @@ fn relayed_duplicates_are_not_id_conflicts() {
         }
     }
     assert!(run.fired().is_empty(), "{}", run.log());
+    // Every relayed copy is counted, and none reached the entity table.
+    assert_eq!(run.monitor.duplicates, 30);
+    let rec = run
+        .monitor
+        .table
+        .get(&nn_state::EntityKey {
+            exercise: 1,
+            id: id(1, 1),
+        })
+        .unwrap();
+    assert_eq!(rec.sources.len(), 1);
 }
 
 /// A tracked munition reports while in flight, detonates, and goes quiet
 /// without a Remove Entity. That is the end of its life, not a dropout.
 #[test]
-#[ignore = "known issue: Detonation does not end the munition entity (review finding 6)"]
 fn detonated_munition_does_not_time_out() {
     let munition = id(1, 500);
     let mut run = Run::new();
@@ -296,7 +306,6 @@ fn detonated_munition_does_not_time_out() {
 
 /// Entity number 65535 means "all entities" of that site and application.
 #[test]
-#[ignore = "known issue: wildcard Entity IDs not expanded (review finding 7)"]
 fn wildcard_remove_entity_removes_every_entity_of_the_application() {
     let remove_all = encode(
         pdu_type::REMOVE_ENTITY,

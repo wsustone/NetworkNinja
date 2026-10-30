@@ -21,6 +21,7 @@ fn datagram(pdu: &Pdu, t: f64) -> Datagram {
         source: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 5000)),
         destination: None,
         payload: encode_pdu(pdu),
+        monotonic: None,
     }
 }
 
@@ -260,6 +261,7 @@ impl Sink for Collect {
             source: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, s.site as u8, 10), 40_000)),
             destination: None,
             payload: d.to_vec(),
+            monotonic: None,
         });
         Ok(())
     }

@@ -395,6 +395,7 @@ fn set_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (EntityTimeout, "heartbeat") => |c, v| c.heartbeat = v,
         (EntityTimeout, "timeout_multiplier") => |c, v| c.timeout_multiplier = v,
         (IdConflict, "conflict_grace") => |c, v| c.conflict_grace = v,
+        (IdConflict, "duplicate_window") => |c, v| c.duplicate_window = v,
         (PositionJump, "jump_min_tolerance") => |c, v| c.jump_min_tolerance = v,
         (PositionJump, "assumed_dr_threshold") => |c, v| c.assumed_dr_threshold = v,
         (PositionJump, "jump_dr_multiplier") => |c, v| c.jump_dr_multiplier = v,
