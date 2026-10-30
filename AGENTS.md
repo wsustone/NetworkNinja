@@ -29,6 +29,11 @@ cargo clippy --workspace --all-targets # must be warning-free
   --all-faults --all-controls --fire-every 10
 ```
 
+Several generators at once (each its own sockets, like separate simulators):
+give each a non-overlapping site range, e.g. `--site-base 1 --sites 2` and
+`--site-base 3 --sites 2 --application 7`; overlapping ranges are real ID
+conflicts. `--all-faults`/`--all-controls` use the first/second site.
+
 Recordings: `--record x.nnrec` while serving; pick it from the header
 run dropdown (`--runs DIR` for `/api/runs`); scrub bar + `--speed`.
 Accounts: `nn-server passwd FILE --user U --pass P`, then `serve --users
@@ -91,6 +96,9 @@ open for old files. `summary.rs` is pure aggregation (unit-tested);
 `crates/` — capture (UDP/pcap), decode (DIS codec), state (entities+geo),
 rules (alert engine+packs), recorder (.nnrec), server (`web.rs` hand-rolled
 HTTP/WS + `store.rs` SQLite + `auth.rs` accounts + `main.rs` CLI),
-generator (synthetic traffic). Decisions in `docs/adr/`, spec in
+generator (synthetic traffic: `world.rs` shared simulation, `families/` one
+module per DIS protocol family with its faults, `wire.rs` encoding/bundling;
+`tests/golden.rs` pins output byte for byte — a deliberate traffic change
+updates its hashes in the same commit; ADR 0010). Decisions in `docs/adr/`, spec in
 `docs/spec.md`. Dashboard is the single-file `web/index.html` compiled
 into the binary via `include_str!` — restart `serve` to pick up edits.

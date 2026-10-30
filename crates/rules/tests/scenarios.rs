@@ -498,3 +498,72 @@ fn entity_counts_and_rates_match_ground_truth() {
         );
     }
 }
+
+/// Datagrams from one generator *process*: its own sockets, so its own
+/// source ports (process `p` sends from 41000 + 100·p + generation).
+fn generate_process(cfg: &Config, p: u16) -> Vec<Datagram> {
+    struct Proc(std::time::SystemTime, u16, Vec<Datagram>);
+    impl Sink for Proc {
+        fn emit(&mut self, t: f64, s: Sender, d: &[u8]) -> io::Result<()> {
+            let host = if s.rogue { 250 } else { 10 };
+            self.2.push(Datagram {
+                received_at: self.0 + Duration::from_secs_f64(t),
+                source: SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::new(10, 0, s.site as u8, host),
+                    41_000 + 100 * self.1 + s.generation,
+                )),
+                destination: None,
+                payload: d.to_vec(),
+                monotonic: None,
+            });
+            Ok(())
+        }
+    }
+    let mut sink = Proc(cfg.start_time, p, Vec::new());
+    run(cfg, &mut sink).unwrap();
+    sink.2
+}
+
+/// Two generators side by side (ADR 0010): with separate site ranges and
+/// application numbers a clean run raises nothing; overlapping ranges are
+/// two simulators claiming the same IDs, which the monitor must catch.
+#[test]
+fn generators_side_by_side_need_separate_site_ranges() {
+    let base = Config {
+        duration: 40.0,
+        sites: 2,
+        entities_per_site: 10,
+        fire_every: Some(4.0),
+        ..Default::default()
+    };
+    let merged = |a: &Config, b: &Config| {
+        let mut all = generate_process(a, 0);
+        all.extend(generate_process(b, 1));
+        all.sort_by_key(|d| d.received_at); // stable: per-process order kept
+        all
+    };
+
+    let a = Config { ..base.clone() };
+    let b = Config {
+        site_base: 3,
+        application: 7,
+        seed: 2,
+        ..base.clone()
+    };
+    let (m, events) = monitor(&merged(&a, &b));
+    assert!(firing(&events).is_empty(), "{}", describe(&events));
+    assert_eq!(m.table.entities.len(), 40);
+    assert!(m.table.entities.keys().any(|k| k.id == EntityId::new(4, 7, 10)));
+
+    // Same site range twice: every entity is claimed by two simulators.
+    let clash = Config {
+        seed: 2,
+        ..base.clone()
+    };
+    let (_, events) = monitor(&merged(&a, &clash));
+    let conflicts = firing(&events)
+        .iter()
+        .filter(|e| e.alert.rule == Rule::IdConflict)
+        .count();
+    assert!(conflicts >= 15, "only {conflicts} conflicts\n{}", describe(&events));
+}
