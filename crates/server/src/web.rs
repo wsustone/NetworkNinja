@@ -60,6 +60,12 @@ pub struct Hub {
     query_tx: Mutex<Option<SyncSender<QueryReq>>>,
     /// Rollups are in the store for every slot before this second.
     metrics_flushed: Mutex<Option<i64>>,
+    /// Alerts firing now (as violations) and what each sender claims,
+    /// refreshed every state tick for `/api/events/summary`.
+    conformance: Mutex<(
+        Vec<crate::store::Violation>,
+        BTreeMap<String, crate::summary::SenderInfo>,
+    )>,
     /// `--capture` file and its writer's counters (ADR 0009).
     capture: Mutex<Option<(std::path::PathBuf, Arc<crate::pdustore::CaptureStats>)>>,
 }
@@ -106,6 +112,7 @@ impl Hub {
             query_tx: Mutex::new(None),
             metrics_flushed: Mutex::new(None),
             capture: Mutex::new(None),
+            conformance: Mutex::new((Vec::new(), BTreeMap::new())),
         }
     }
 
@@ -172,18 +179,22 @@ impl Hub {
             q.push_back(entry.clone());
         }
         if let Some((store, run)) = self.store.lock().unwrap().as_ref() {
-            store.insert(
-                *run,
+            store.insert(&crate::store::NewEvent {
+                run: *run,
                 seq,
-                jnum(&entry, "at").unwrap_or(0.0),
+                at: jnum(&entry, "at").unwrap_or(0.0),
                 kind,
-                jstr(&entry, "entity"),
-                jstr(&entry, "rule"),
-                jstr(&entry, "severity"),
-                jnum(&entry, "exercise").map(|e| e as u8),
-                jstr(&entry, "message"),
-                &entry,
-            );
+                entity: jstr(&entry, "entity"),
+                rule: jstr(&entry, "rule"),
+                severity: jstr(&entry, "severity"),
+                exercise: jnum(&entry, "exercise").map(|e| e as u8),
+                message: jstr(&entry, "message"),
+                // Decode errors name their sender `source`.
+                sender: jstr(&entry, "sender").or_else(|| jstr(&entry, "source")),
+                pack: jstr(&entry, "pack"),
+                state: jstr(&entry, "state"),
+                json: &entry,
+            });
         }
         if let Some(f) = self.log_file.lock().unwrap().as_mut() {
             use std::io::Write;
@@ -344,6 +355,83 @@ impl Hub {
             cells.extend(store.metric_cells(q.metric.name(), q.from, q.to.min(boundary), |t| q.matches(t))?);
         }
         Ok(evaluate(q, cells))
+    }
+
+    /// The live half of the conformance summary (see [`conformance_state`]).
+    pub fn set_conformance(
+        &self,
+        open: Vec<crate::store::Violation>,
+        senders: BTreeMap<String, crate::summary::SenderInfo>,
+    ) {
+        *self.conformance.lock().unwrap() = (open, senders);
+    }
+
+    /// Violations since `since`: from the store when one is open, else from
+    /// the in-memory log.
+    fn violations(
+        &self,
+        since: f64,
+        exercise: Option<u8>,
+        entity: Option<&str>,
+    ) -> Result<Vec<crate::store::Violation>, String> {
+        if let Some((store, _)) = self.store.lock().unwrap().as_ref() {
+            return store.violations(since, exercise, entity);
+        }
+        let q = self.log_buf.lock().unwrap();
+        Ok(q.iter()
+            .filter_map(|e| {
+                let kind = jstr(e, "kind")?;
+                let firing = kind == "error" || (kind == "alert" && jstr(e, "state") == Some("firing"));
+                let v = crate::store::Violation {
+                    at: jnum(e, "at").unwrap_or(0.0),
+                    kind: kind.to_string(),
+                    rule: jstr(e, "rule").map(str::to_string),
+                    pack: jstr(e, "pack").map(str::to_string),
+                    entity: jstr(e, "entity").map(str::to_string),
+                    sender: jstr(e, "sender").or_else(|| jstr(e, "source")).map(str::to_string),
+                    severity: jstr(e, "severity").map(str::to_string),
+                    exercise: jnum(e, "exercise").map(|x| x as u8),
+                };
+                let keep = firing
+                    && v.at >= since
+                    && exercise.is_none_or(|x| v.exercise == Some(x))
+                    && entity.is_none_or(|x| v.entity.as_deref() == Some(x));
+                keep.then_some(v)
+            })
+            .collect())
+    }
+
+    /// `/api/events/summary` body for a query string.
+    pub fn events_summary(&self, query: &str) -> Result<String, String> {
+        use crate::summary::{parse_by, summarize, summary_json, SDim};
+        let get = |k: &str| param(query, k);
+        let by = parse_by(&get("by").unwrap_or_else(|| "sender".into()))?;
+        let since = match get("since") {
+            Some(v) => v
+                .parse::<f64>()
+                .map_err(|_| format!("since must be epoch seconds, got '{v}'"))?,
+            None => now_secs() - 3600.0,
+        };
+        let exercise = match get("exercise") {
+            Some(v) => Some(
+                v.parse::<u8>()
+                    .map_err(|_| format!("exercise must be 0-255, got '{v}'"))?,
+            ),
+            None => None,
+        };
+        let entity = get("entity");
+        let rows = self.violations(since, exercise, entity.as_deref())?;
+        let (open, senders) = self.conformance.lock().unwrap().clone();
+        let open: Vec<_> = open
+            .into_iter()
+            .filter(|v| {
+                exercise.is_none_or(|x| v.exercise == Some(x))
+                    && entity.as_deref().is_none_or(|x| v.entity.as_deref() == Some(x))
+            })
+            .collect();
+        let groups = summarize(&by, &rows, &open);
+        let with_senders = by.contains(&SDim::Sender).then_some(&senders);
+        Ok(summary_json(&by, since, &groups, with_senders))
     }
 
     /// Serve `/api/capture` and `/api/pdus` from this capture file.
@@ -727,6 +815,17 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                 ),
             };
         }
+        ("GET", "/api/events/summary") => {
+            let _ = match hub.events_summary(query) {
+                Ok(body) => respond(s, "200 OK", "application/json", &body),
+                Err(e) => respond(
+                    s,
+                    "400 Bad Request",
+                    "application/json",
+                    &format!("{{\"error\":\"{}\"}}", esc(&e)),
+                ),
+            };
+        }
         ("GET", "/api/capture") => {
             let body = match hub.capture.lock().unwrap().as_ref() {
                 Some((path, stats)) => stats.json(path),
@@ -779,6 +878,7 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                 kind: arg_s("kind="),
                 rule: arg_s("rule="),
                 entity: arg_s("entity="),
+                sender: arg_s("sender="),
                 text: arg_s("q="),
                 limit: arg("limit=").unwrap_or(500) as usize,
             }) {
@@ -1026,7 +1126,8 @@ fn fnum(x: f64) -> String {
     }
 }
 
-/// One alert event for the feed: `{type, at, state, severity, pack, rule, entity, exercise, message}`.
+/// One alert event for the feed: `{at, state, severity, pack, rule, entity,
+/// exercise, sender?, message}`. `sender` is who the alert is attributed to.
 pub fn alert_json(e: &AlertEvent) -> String {
     let sev = match e.alert.severity {
         Severity::Critical => "critical",
@@ -1036,8 +1137,13 @@ pub fn alert_json(e: &AlertEvent) -> String {
         AlertState::Firing => "firing",
         AlertState::Resolved => "resolved",
     };
+    let sender = e
+        .alert
+        .sender
+        .map(|s| format!("\"sender\":\"{s}\","))
+        .unwrap_or_default();
     format!(
-        "{{\"at\":{},\"state\":\"{state}\",\"severity\":\"{sev}\",\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"exercise\":{},\"message\":\"{}\"}}",
+        "{{\"at\":{},\"state\":\"{state}\",\"severity\":\"{sev}\",\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"exercise\":{},{sender}\"message\":\"{}\"}}",
         fnum(e.at),
         esc(&e.alert.pack),
         esc(&e.alert.rule_id),
@@ -1045,6 +1151,48 @@ pub fn alert_json(e: &AlertEvent) -> String {
         e.alert.key.exercise,
         esc(&e.alert.message),
     )
+}
+
+/// The live half of the conformance view: alerts firing now (as
+/// violations, at their start time) and, per sender, the `site:app` pairs it
+/// reports entities for. Cheap enough to rebuild every state tick.
+pub fn conformance_state(
+    m: &Monitor,
+) -> (
+    Vec<crate::store::Violation>,
+    BTreeMap<String, crate::summary::SenderInfo>,
+) {
+    let open = m
+        .engine
+        .active()
+        .map(|a| crate::store::Violation {
+            at: a.since,
+            kind: "alert".into(),
+            rule: Some(a.rule_id.clone()),
+            pack: Some(a.pack.clone()),
+            entity: Some(a.key.id.to_string()),
+            sender: a.sender.map(|s| s.to_string()),
+            severity: Some(
+                match a.severity {
+                    Severity::Critical => "critical",
+                    Severity::Warning => "warning",
+                }
+                .into(),
+            ),
+            exercise: Some(a.key.exercise),
+        })
+        .collect();
+    let mut senders: BTreeMap<String, crate::summary::SenderInfo> = BTreeMap::new();
+    for rec in m.table.entities.values() {
+        for (addr, track) in &rec.sources {
+            let s = senders.entry(addr.to_string()).or_default();
+            s.claims
+                .insert(format!("{}:{}", rec.key.id.site, rec.key.id.application));
+            s.entities += 1;
+            s.last_seen = s.last_seen.max(track.last_seen);
+        }
+    }
+    (open, senders)
 }
 
 fn tags_json(tags: &[(nn_state::Dim, String)]) -> String {

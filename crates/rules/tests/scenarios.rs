@@ -177,6 +177,27 @@ fn each_fault_fires_the_right_alert_in_time() {
     }
 }
 
+/// Each alert is pinned on the sender that caused it (ADR 0008 conformance
+/// view): the silent simulator for a timeout, the cloning intruder (not the
+/// original owner) for an ID conflict, the reporter for a jump.
+#[test]
+fn alerts_are_attributed_to_the_responsible_sender() {
+    let cfg = faults(7, false);
+    let (_, events) = monitor(&generate(&cfg));
+    let sender_of = |rule: Rule, k: EntityKey| {
+        firing(&events)
+            .iter()
+            .find(|e| e.alert.rule == rule && e.alert.key == k)
+            .and_then(|e| e.alert.sender)
+            .map(|s| s.ip().to_string())
+            .unwrap_or_else(|| panic!("no attributed {} on {k}\n{}", rule.name(), describe(&events)))
+    };
+    // The generator's site-1 simulator is 10.0.1.10; its rogue clone 10.0.1.250.
+    assert_eq!(sender_of(Rule::EntityTimeout, key(1, 1)), "10.0.1.10");
+    assert_eq!(sender_of(Rule::IdConflict, key(1, 2)), "10.0.1.250");
+    assert_eq!(sender_of(Rule::PositionJump, key(1, 3)), "10.0.1.10");
+}
+
 #[test]
 fn faults_mixed_with_controls_fire_once_each() {
     // The generator's --all-faults --all-controls mix, including a freeze

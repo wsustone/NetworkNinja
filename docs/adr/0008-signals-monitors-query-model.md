@@ -240,6 +240,30 @@ broken down.
 
 ### Slice 2 — conformance view and event aggregation
 
+**Done (2026-10-30).** Decisions taken while building it:
+
+- Every alert now names the sender it is attributed to (`Alert::sender`):
+  the PDU's source for enum checks and position jumps, the entity's last
+  sender for a timeout, and for an ID conflict the *later* of the two
+  senders to appear — the one that took an ID already in use. The message
+  still names both.
+- `events` also gained `state`, so the summary counts firings, not
+  resolutions. Stores from before this slice are migrated in place; their
+  rows count, with sender `unknown` and state read from the JSON.
+- Decode errors count as violations under rule `decode-error` (pack
+  `decoder`), so a sender emitting malformed PDUs shows up in the same
+  table as one breaking rules.
+- `by` also takes `pack`, `severity` and `exercise`; `entity=` filters to
+  one entity (the detail panel's per-rule counts). When grouping by sender
+  the response lists every live sender with the `site:app` pairs it
+  claims, so compliant senders appear as clean rows, not missing ones.
+- Open-alert counts come from the live engine, pushed to the Hub every
+  state tick with the sender claims; history comes from the store, or from
+  the in-memory log when there is no `--db`.
+- `/api/log` gained `sender=`; the dashboard's event-log filter now
+  matches every space-separated term, sender included, which is what a
+  conformance cell click uses.
+
 1. `store.rs`: add `sender` and `pack` columns to `events` (ALTER TABLE
    on open when missing) with indexes; `main.rs` fills them for every
    alert and decode error.
