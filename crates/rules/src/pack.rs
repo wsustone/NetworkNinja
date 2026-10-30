@@ -783,14 +783,24 @@ impl Merged {
         let mut m = Merged {
             packs: Vec::new(),
             config: RuleConfig::default(),
-            enabled: [Rule::EntityTimeout, Rule::IdConflict, Rule::PositionJump]
-                .into_iter()
-                .map(|r| (r, true))
-                .collect(),
+            enabled: [
+                Rule::EntityTimeout,
+                Rule::IdConflict,
+                Rule::PositionJump,
+                Rule::PduStructure,
+                Rule::PduPadding,
+                Rule::PduFamily,
+            ]
+            .into_iter()
+            .map(|r| (r, true))
+            .collect(),
             severities: [
                 (Rule::EntityTimeout, Severity::Warning),
                 (Rule::IdConflict, Severity::Critical),
                 (Rule::PositionJump, Severity::Warning),
+                (Rule::PduStructure, Severity::Critical),
+                (Rule::PduPadding, Severity::Warning),
+                (Rule::PduFamily, Severity::Warning),
             ]
             .into_iter()
             .collect(),

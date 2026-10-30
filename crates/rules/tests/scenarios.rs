@@ -567,3 +567,81 @@ fn generators_side_by_side_need_separate_site_ranges() {
         .count();
     assert!(conflicts >= 15, "only {conflicts} conflicts\n{}", describe(&events));
 }
+
+// ------------------------------------------------- tier S (ADR 0010)
+
+#[test]
+fn every_pdu_type_sent_clean_is_silent() {
+    for version in [6, 7] {
+        for bundle in [false, true] {
+            let cfg = Config {
+                version,
+                bundle,
+                duration: 30.0,
+                all_types: Some(5.0),
+                fire_every: Some(5.0),
+                ..Default::default()
+            };
+            let datagrams = generate(&cfg);
+            let (m, events) = monitor(&datagrams);
+            assert!(events.is_empty(), "v{version} bundle={bundle}\n{}", describe(&events));
+            assert_eq!(m.decode_errors, 0);
+            // Every type went out, except Remove Entity and Stop/Freeze,
+            // which only the controls send.
+            let types: std::collections::BTreeSet<u8> = datagrams
+                .iter()
+                .flat_map(|d| decode_datagram(&d.payload))
+                .map(|p| p.unwrap().header.pdu_type)
+                .collect();
+            assert_eq!(types.len(), 70, "v{version}");
+            assert!(!types.contains(&12) && !types.contains(&14));
+        }
+    }
+}
+
+#[test]
+fn each_structural_fault_fires_its_rule_on_its_sender() {
+    let cases = [
+        (EventKind::ShortPdu, 4, "pdu-structure"),
+        (EventKind::CountOverrun, 25, "pdu-structure"),
+        (EventKind::PaddedPdu, 24, "pdu-padding"),
+        (EventKind::WrongFamily, 26, "pdu-family"),
+        (EventKind::TruncatedPdu, 23, "pdu-structure"),
+    ];
+    for version in [6, 7] {
+        let cfg = Config {
+            version,
+            duration: 30.0,
+            sites: 3,
+            all_types: Some(5.0),
+            events: cases
+                .iter()
+                .enumerate()
+                .map(|(i, &(kind, pdu_type, _))| Event {
+                    kind,
+                    target: Target::Pdu { site: 2, pdu_type },
+                    at: 5.0 + 2.0 * i as f64,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let (_, events) = monitor(&generate(&cfg));
+        let got: Vec<(&str, String, String)> = firing(&events)
+            .iter()
+            .map(|e| {
+                (
+                    e.alert.rule.name(),
+                    e.alert.sender.unwrap().to_string(),
+                    e.alert.key.id.to_string(),
+                )
+            })
+            .collect();
+        let want: Vec<(&str, String, String)> = cases
+            .iter()
+            .map(|&(_, _, rule)| (rule, "10.0.2.10:40000".to_string(), "2:1:0".to_string()))
+            .collect();
+        assert_eq!(got, want, "v{version}\n{}", describe(&events));
+        // Each cites the layout clause it checks.
+        assert!(events[0].reason.contains("Collision") && events[0].reason.contains("7.2.3"));
+    }
+}
