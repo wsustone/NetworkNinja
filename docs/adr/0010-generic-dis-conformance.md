@@ -94,7 +94,9 @@ defects, for one-process reproducible runs. Two acceptance tests hold the line:
 1. Restructure the generator into world, families and wire, with no behaviour change: every
    existing test passes untouched. Add `--site-base` and `--application`.
 2. Tier S for all 72 types, plus the generator emitting a minimal valid PDU of every type and the
-   structural defects.
+   structural defects. *Done:* `nn_decode::structure`; rules `pdu-structure`, `pdu-padding` and
+   `pdu-family`; `nn-generator --all-types` and `--defect`. On DIS v6 only types 1–27 are
+   structure-checked so far.
 3. Generate SISO-REF-010 enumerations (tier E), with enumeration defects.
 4. Vendor profiles and the multi-process harness: the silence and exact-detection tests.
 5. Tier D family by family, most common first: Simulation Management handshakes, Radio,
