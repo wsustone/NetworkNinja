@@ -8,7 +8,7 @@ use nn_capture::{Datagram, PcapReader, UdpConfig, UdpSource};
 use nn_decode::{Pdu, PduBody};
 use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
 use nn_server::web::{
-    alert_json, delta_json, entity_baseline, error_json, info_json, now_secs, state_json, Hub, Switch,
+    alert_json, delta_json, entity_baseline, entity_details, error_json, info_json, now_secs, state_json, Hub, Switch,
 };
 use nn_server::{describe, Tally};
 use nn_state::secs;
@@ -674,6 +674,7 @@ fn serve(
                     replay_pos,
                 ));
             }
+            hub.set_details(entity_details(&m));
             next_state = t + 1.0;
         }
     }

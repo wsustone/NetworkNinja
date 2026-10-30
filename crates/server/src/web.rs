@@ -39,6 +39,9 @@ pub struct Hub {
     next_id: AtomicU64,
     /// Last state JSON, replayed to each new client and served at /api/state.
     snapshot: Mutex<Option<String>>,
+    /// Per-entity detail JSON (keyed by `EntityKey` display), rebuilt every
+    /// state tick and served at /api/entity — too chatty for the delta feed.
+    details: Mutex<BTreeMap<String, String>>,
     /// Event log: JSON entries each carrying `"seq"` and `"kind"`.
     log_buf: Mutex<VecDeque<String>>,
     seq: AtomicU64,
@@ -65,6 +68,7 @@ impl Hub {
             clients: Mutex::new(BTreeMap::new()),
             next_id: AtomicU64::new(1),
             snapshot: Mutex::new(None),
+            details: Mutex::new(BTreeMap::new()),
             log_buf: Mutex::new(VecDeque::new()),
             seq: AtomicU64::new(0),
             log_file: Mutex::new(None),
@@ -118,6 +122,10 @@ impl Hub {
     /// Store the state JSON served to new clients and `/api/state`.
     pub fn set_snapshot(&self, json: String) {
         *self.snapshot.lock().unwrap() = Some(json);
+    }
+
+    pub fn set_details(&self, details: BTreeMap<String, String>) {
+        *self.details.lock().unwrap() = details;
     }
 
     /// Append a log entry — `fields` is a JSON object body — then broadcast
@@ -590,6 +598,19 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
             let body = hub.snapshot.lock().unwrap().clone().unwrap_or_else(|| "{}".into());
             let _ = respond(s, "200 OK", "application/json", &body);
         }
+        ("GET", "/api/entity") => {
+            let ex = qparam("ex").and_then(|v| v.parse::<u8>().ok()).unwrap_or(0);
+            let key = qparam("id").map(|id| format!("ex{ex} {id}"));
+            let body = key.and_then(|k| hub.details.lock().unwrap().get(&k).cloned());
+            match body {
+                Some(b) => {
+                    let _ = respond(s, "200 OK", "application/json", &b);
+                }
+                None => {
+                    let _ = respond(s, "404 Not Found", "application/json", "{\"error\":\"no such entity\"}");
+                }
+            }
+        }
         ("GET", "/api/runs") => {
             let body = hub.runs_list();
             let _ = respond(s, "200 OK", "application/json", &body);
@@ -1061,6 +1082,69 @@ fn entity_json(rec: &nn_state::EntityRecord, now: f64, timeout: f64) -> String {
         age > timeout,
         rec.appearance & nn_decode::appearance::FROZEN != 0,
     )
+}
+
+/// Everything the dashboard's detail panel shows for one entity: the
+/// [`entity_json`] fields plus type breakdown, altitude, first seen, DR
+/// algorithm, raw appearance, an entity mute if any, and one record per
+/// sender (reports, heartbeat mean and jitter, the type it claimed).
+fn entity_detail_json(rec: &nn_state::EntityRecord, now: f64, timeout: f64, muted_until: Option<f64>) -> String {
+    let mut s = entity_json(rec, now, timeout);
+    s.pop(); // reopen the object
+    let t = &rec.entity_type;
+    s.push_str(&format!(
+        ",\"type\":{{\"kind\":{},\"domain\":{},\"country\":{},\"category\":{},\"subcategory\":{},\"specific\":{},\"extra\":{}}}",
+        t.kind, t.domain, t.country, t.category, t.subcategory, t.specific, t.extra
+    ));
+    s.push_str(&format!(
+        ",\"first_seen\":{},\"dr\":{},\"appearance\":{},\"last_source\":\"{}\"",
+        fnum(rec.first_seen),
+        rec.kinematics().algorithm,
+        rec.appearance,
+        rec.last_source
+    ));
+    if let Some(until) = muted_until {
+        s.push_str(&format!(",\"muted_until\":{}", fnum(until)));
+    }
+    s.push_str(",\"sources\":[");
+    let mut first = true;
+    for (addr, src) in &rec.sources {
+        if !first {
+            s.push(',');
+        }
+        first = false;
+        s.push_str(&format!(
+            "{{\"addr\":\"{}\",\"first_seen\":{},\"seen\":{},\"reports\":{},\"hb_mean\":{},\"hb_sd\":{},\"etype\":\"{}\"}}",
+            addr,
+            fnum(src.first_seen),
+            fnum(src.last_seen),
+            src.reports,
+            fnum(src.intervals.mean),
+            fnum(src.intervals.variance().sqrt()),
+            src.entity_type
+        ));
+    }
+    s.push_str("]}");
+    s
+}
+
+/// Detail JSON for every entity, keyed by `EntityKey` display (`ex1 1:2:3`),
+/// for [`Hub::set_details`].
+pub fn entity_details(m: &Monitor) -> BTreeMap<String, String> {
+    let timeout = m.engine.config.timeout();
+    let mutes = m.engine.mutes();
+    m.table
+        .entities
+        .values()
+        .map(|r| {
+            let muted = mutes
+                .iter()
+                .filter(|mu| mu.scope == MuteScope::Entity(r.key) && mu.until > m.now)
+                .map(|mu| mu.until)
+                .fold(None, |acc: Option<f64>, u| Some(acc.map_or(u, |a| a.max(u))));
+            (r.key.to_string(), entity_detail_json(r, m.now, timeout, muted))
+        })
+        .collect()
 }
 
 /// Rebuild the delta baseline from the monitor's entity table.

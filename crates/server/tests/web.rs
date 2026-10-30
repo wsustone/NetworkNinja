@@ -350,3 +350,34 @@ fn login_logout_and_bearer_sessions() {
     let log = hub.log_tail(0, 10);
     assert!(log.contains("ops logged in") && log.contains("ops logged out"), "{log}");
 }
+
+#[test]
+fn entity_detail_map_and_endpoint() {
+    let mut m = Monitor::new(RuleConfig::default());
+    m.ingest(&datagram(&entity_state(1), 0.0));
+    m.ingest(&datagram(&entity_state(1), 5.0));
+    let key = EntityKey {
+        exercise: 1,
+        id: nn_decode::EntityId::new(1, 1, 1),
+    };
+    m.engine.mute_entity(key, m.now + 300.0, m.now);
+    let details = web::entity_details(&m);
+    let d = details.get("ex1 1:1:1").expect("detail for 1:1:1");
+    assert!(
+        d.contains("\"id\":\"1:1:1\"") && d.contains("\"type\":{\"kind\":0,"),
+        "{d}"
+    );
+    assert!(d.contains("\"sources\":[{\"addr\":\"10.0.0.1:5000\""), "{d}");
+    assert!(d.contains("\"reports\":2") && d.contains("\"hb_mean\":5"), "{d}");
+    assert!(d.contains("\"muted_until\":"), "{d}");
+    assert!(d.contains("\"first_seen\":") && d.contains("\"dr\":"), "{d}");
+
+    let (addr, hub) = Hub::listen("127.0.0.1:0").unwrap();
+    hub.set_details(details);
+    let r = http_get(addr, "/api/entity?ex=1&id=1:1:1");
+    assert!(r.starts_with("HTTP/1.1 200") && r.contains("\"sources\":["), "{r}");
+    let r = http_get(addr, "/api/entity?ex=1&id=9:9:9");
+    assert!(r.starts_with("HTTP/1.1 404"), "{r}");
+    let r = http_get(addr, "/api/entity?id=1:1:1");
+    assert!(r.starts_with("HTTP/1.1 404"), "wrong exercise must not match: {r}");
+}
