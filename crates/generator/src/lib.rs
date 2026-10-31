@@ -216,6 +216,14 @@ pub struct Config {
     /// Every datagram is also relayed by a gateway on another address, the
     /// way a site bridge or a second NIC repeats traffic.
     pub gateway: bool,
+    /// Parked entities per site, besides `entities_per_site`: they never
+    /// move, report DR algorithm Static, and heartbeat at
+    /// `stationary_heartbeat` (HBT_STATIONARY, IEEE 1278.1 4.2.7).
+    pub parked_per_site: u16,
+    pub stationary_heartbeat: f64,
+    /// Send Entity State Update PDUs between full Entity States (every
+    /// sixth report is full), as 5.3.5 allows.
+    pub entity_state_update: bool,
     pub events: Vec<Event>,
     /// Wall-clock time of simulation time zero (for DIS timestamps).
     pub start_time: SystemTime,
@@ -243,6 +251,9 @@ impl Default for Config {
             dr_algorithm: 2,
             relative_timestamps: false,
             gateway: false,
+            parked_per_site: 0,
+            stationary_heartbeat: 60.0,
+            entity_state_update: false,
             events: Vec::new(),
             start_time: UNIX_EPOCH + Duration::from_secs(1_798_761_600), // 2027-01-01T00:00:00Z
         }
@@ -290,7 +301,7 @@ impl Profile {
     }
 }
 
-pub const PROFILES: [Profile; 4] = [
+pub const PROFILES: [Profile; 5] = [
     Profile {
         name: "standard",
         description: "DIS v7, one PDU per datagram, world-frame DR, absolute timestamps",
@@ -318,6 +329,14 @@ pub const PROFILES: [Profile; 4] = [
         name: "gateway",
         description: "DIS v7 behind a gateway that repeats every datagram from another address",
         apply: |c| c.gateway = true,
+    },
+    Profile {
+        name: "economical",
+        description: "DIS v7, Entity State Updates between full reports, parked entities heartbeating every 60 s",
+        apply: |c| {
+            c.entity_state_update = true;
+            c.parked_per_site = 3;
+        },
     },
 ];
 

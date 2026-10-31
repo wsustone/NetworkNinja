@@ -331,6 +331,20 @@ pub fn decode_pdu(buf: &[u8]) -> Result<Pdu, DecodeError> {
                 request_id: r.u32()?,
             })
         }
+        (true, pdu_type::ENTITY_STATE_UPDATE) => {
+            let entity_id = r.entity_id()?;
+            let _padding = r.u8()?;
+            let n_params = r.u8()? as usize;
+            check_len(&header, ENTITY_STATE_UPDATE_LEN + n_params * VARIABLE_PARAM_LEN)?;
+            PduBody::EntityStateUpdate(EntityStateUpdate {
+                entity_id,
+                linear_velocity: r.vec3f()?,
+                location: r.world()?,
+                orientation: r.euler()?,
+                appearance: r.u32()?,
+                variable_parameters: r.variable_params(n_params)?,
+            })
+        }
         _ => PduBody::Other(r.take(len - HEADER_LEN)?.to_vec()),
     };
     Ok(Pdu { header, body })
@@ -560,6 +574,16 @@ pub fn encode_pdu(pdu: &Pdu) -> Vec<u8> {
             w.entity_id(&r.originating);
             w.entity_id(&r.receiving);
             w.u32(r.request_id);
+        }
+        PduBody::EntityStateUpdate(e) => {
+            w.entity_id(&e.entity_id);
+            w.u8(0);
+            w.u8(e.variable_parameters.len() as u8);
+            w.vec3f(&e.linear_velocity);
+            w.world(&e.location);
+            w.euler(&e.orientation);
+            w.u32(e.appearance);
+            w.variable_params(&e.variable_parameters);
         }
         PduBody::Other(raw) => w.bytes(raw),
     }

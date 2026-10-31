@@ -113,6 +113,9 @@ pub struct AlertEvent {
 pub struct RuleConfig {
     /// Expected Entity State heartbeat, seconds (IEEE 1278.1 default 5 s).
     pub heartbeat: f64,
+    /// Heartbeat of a stationary entity, seconds (HBT_STATIONARY, 60 s): one
+    /// whose last report has DR algorithm Static or no speed (4.2.7, Table 4).
+    pub stationary_heartbeat: f64,
     /// Timeout = heartbeat × this (IEEE 1278.1 default 2.4).
     pub timeout_multiplier: f64,
     /// A second sender must still be reporting this long after the first
@@ -145,6 +148,7 @@ impl Default for RuleConfig {
     fn default() -> Self {
         RuleConfig {
             heartbeat: 5.0,
+            stationary_heartbeat: 60.0,
             timeout_multiplier: 2.4,
             conflict_grace: 2.0,
             duplicate_window: 1.0,
@@ -160,9 +164,31 @@ impl Default for RuleConfig {
     }
 }
 
+/// Below this speed (m/s) an entity counts as stationary.
+const STATIONARY_SPEED: f64 = 0.01;
+
 impl RuleConfig {
+    /// The timeout of a moving entity.
     pub fn timeout(&self) -> f64 {
         self.heartbeat * self.timeout_multiplier
+    }
+
+    /// The timeout for an entity whose last report was `k`: stationary
+    /// entities (DR algorithm Static, or no speed) may heartbeat at
+    /// HBT_STATIONARY instead (IEEE 1278.1 4.2.7 c, Table 4).
+    pub fn timeout_for(&self, k: &nn_state::Kinematics) -> f64 {
+        let stationary = k.algorithm == 1 || speed(&k.velocity) < STATIONARY_SPEED;
+        let hb = if stationary {
+            self.stationary_heartbeat
+        } else {
+            self.heartbeat
+        };
+        hb.max(self.heartbeat) * self.timeout_multiplier
+    }
+
+    /// [`RuleConfig::timeout_for`] an entity's latest report.
+    pub fn timeout_of(&self, rec: &nn_state::EntityRecord) -> f64 {
+        self.timeout_for(rec.kinematics())
     }
 }
 
@@ -210,6 +236,7 @@ pub struct Mute {
 fn primary_entity(pdu: &Pdu) -> EntityId {
     match &pdu.body {
         PduBody::EntityState(e) => e.entity_id,
+        PduBody::EntityStateUpdate(e) => e.entity_id,
         PduBody::Fire(f) => f.firing_entity,
         PduBody::Detonation(d) => d.firing_entity,
         PduBody::StartResume(s) => s.originating,
@@ -598,7 +625,7 @@ impl Engine {
             return out;
         }
         let last_change = ex.last_change;
-        let timeout = self.config.timeout();
+        let timeout = self.config.timeout_of(rec);
 
         // Position jump: compare with this sender's own previous report.
         // A freeze or resume since that report invalidates the baseline.
@@ -716,7 +743,6 @@ impl Engine {
         }
         self.last_tick = now;
         self.mutes.retain(|m| m.until > now);
-        let timeout = self.config.timeout();
 
         for f in self.handshakes.expire(now, self.config.response_timeout) {
             // The simulation that owes the answer: any entity of it the
@@ -762,6 +788,7 @@ impl Engine {
                 }
                 // Only running time counts towards the timeout, and senders get
                 // one heartbeat after a resume to start reporting again.
+                let timeout = self.config.timeout_of(rec);
                 let silent = ex.running_between(rec.last_seen, now);
                 let resume_grace = ex.freezes > 0 && now - ex.last_change < self.config.heartbeat;
                 if silent > timeout && !resume_grace && !self.active.contains_key(&(Rule::EntityTimeout, *key)) {
@@ -782,7 +809,10 @@ impl Engine {
             match rule {
                 Rule::IdConflict => {
                     let live = rec
-                        .map(|r| r.sources.values().filter(|t| now - t.last_seen <= timeout).count())
+                        .map(|r| {
+                            let timeout = self.config.timeout_of(r);
+                            r.sources.values().filter(|t| now - t.last_seen <= timeout).count()
+                        })
                         .unwrap_or(0);
                     if live <= 1 {
                         self.resolve(now, rule, key, "only one sender left".into(), &mut out);
@@ -796,7 +826,7 @@ impl Engine {
                     }
                 }
                 Rule::PositionJump => {
-                    if rec.is_none_or(|r| now - r.last_seen > timeout) {
+                    if rec.is_none_or(|r| now - r.last_seen > self.config.timeout_of(r)) {
                         self.resolve(now, rule, key, "entity no longer reporting".into(), &mut out);
                     }
                 }

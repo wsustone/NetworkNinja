@@ -88,7 +88,8 @@ fn describe(events: &[AlertEvent]) -> String {
         .join("\n")
 }
 
-/// Time of the last Entity State for `id` from a non-rogue sender before `before`.
+/// Time of the last Entity State (or Update) for `id` from a non-rogue
+/// sender before `before`.
 fn last_report_before(cfg: &Config, datagrams: &[Datagram], id: EntityId, before: f64) -> f64 {
     let mut last = f64::NEG_INFINITY;
     for d in datagrams {
@@ -97,7 +98,12 @@ fn last_report_before(cfg: &Config, datagrams: &[Datagram], id: EntityId, before
             continue;
         }
         for p in decode_datagram(&d.payload).into_iter().flatten() {
-            if matches!(p.body, PduBody::EntityState(ref e) if e.entity_id == id) {
+            let reported = match &p.body {
+                PduBody::EntityState(e) => e.entity_id == id,
+                PduBody::EntityStateUpdate(u) => u.entity_id == id,
+                _ => false,
+            };
+            if reported {
                 last = last.max(t);
             }
         }
@@ -650,12 +656,15 @@ fn each_structural_fault_fires_its_rule_on_its_sender() {
 
 // ------------------------------------------- vendor profiles (ADR 0010)
 
-/// Four vendors side by side, each a separate generator process with its
+/// Five vendors side by side, each a separate generator process with its
 /// own profile, sites and application, all following one exercise freeze.
-/// Vendor `p` (0-3) runs sites 2p+1 and 2p+2 as application p+1.
+/// Vendor `p` (0-4) runs sites 2p+1 and 2p+2 as application p+1.
 fn multi_vendor(faults: &[(usize, Event)]) -> Vec<Datagram> {
     let mut all = Vec::new();
-    for (p, name) in ["standard", "legacy", "body-axis", "gateway"].into_iter().enumerate() {
+    for (p, name) in ["standard", "legacy", "body-axis", "gateway", "economical"]
+        .into_iter()
+        .enumerate()
+    {
         let mut cfg = Config {
             duration: 60.0,
             site_base: 2 * p as u16 + 1,
@@ -707,7 +716,9 @@ fn multi_vendor_run_without_defects_is_silent() {
     let (m, events) = monitor(&multi_vendor(&[]));
     assert!(events.is_empty(), "{}", describe(&events));
     assert_eq!(m.decode_errors, 0);
-    assert_eq!(m.table.entities.len(), 64);
+    // 5 vendors x 2 sites x 8 entities, plus the economical vendor's
+    // 3 parked entities per site.
+    assert_eq!(m.table.entities.len(), 86);
     // The gateway's copies were recognised as copies, not a second simulator.
     assert!(m.duplicates > 100, "{} duplicates", m.duplicates);
 }
@@ -986,4 +997,68 @@ fn the_same_send_delivered_twice_is_counted_once_and_reported() {
     // The same bytes again after the echo window aren't an echo.
     let (m, _) = dup("lab", 0.5);
     assert_eq!(m.echoes, 0);
+}
+
+// ------------------------------- stationary heartbeat and ESU (Wave 0)
+
+fn economical(events: Vec<Event>) -> Config {
+    let mut cfg = Config {
+        duration: 400.0,
+        sites: 2,
+        entities_per_site: 4,
+        events,
+        ..Default::default()
+    };
+    profile("economical").unwrap().apply(&mut cfg);
+    cfg
+}
+
+#[test]
+fn updates_and_parked_entities_on_a_60_s_heartbeat_are_healthy() {
+    let freeze = vec![
+        Event {
+            kind: EventKind::Freeze,
+            target: Target::Exercise,
+            at: 100.0,
+        },
+        Event {
+            kind: EventKind::Resume,
+            target: Target::Exercise,
+            at: 130.0,
+        },
+    ];
+    let datagrams = generate(&economical(freeze));
+    let (m, events) = monitor(&datagrams);
+    assert!(events.is_empty(), "{}", describe(&events));
+    assert_eq!(m.active_entities(), 14);
+    let updates = datagrams
+        .iter()
+        .flat_map(|d| decode_datagram(&d.payload))
+        .filter(|p| matches!(p.as_ref().unwrap().body, PduBody::EntityStateUpdate(_)))
+        .count();
+    assert!(updates > 200, "{updates} Entity State Updates");
+    // Updates move the entity on the map like full reports.
+    let k = m.table.get(&key(1, 1)).unwrap();
+    assert!(m.now - k.last_seen < 6.0);
+}
+
+#[test]
+fn a_parked_entity_that_goes_silent_still_times_out() {
+    // 1:1:5 is the first parked entity on site 1; silent from 100 s.
+    let cfg = economical(vec![Event {
+        kind: EventKind::DropHeartbeat,
+        target: Target::Entity(EntityId::new(1, 1, 5)),
+        at: 100.0,
+    }]);
+    let datagrams = generate(&cfg);
+    let last = last_report_before(&cfg, &datagrams, EntityId::new(1, 1, 5), 100.0);
+    let (_, events) = monitor(&datagrams);
+    let f = firing(&events);
+    assert_eq!(f.len(), 1, "{}", describe(&events));
+    assert_eq!((f[0].alert.rule, f[0].alert.key), (Rule::EntityTimeout, key(1, 5)));
+    let after = f[0].at - t0(&cfg) - last;
+    assert!(
+        (144.0..=145.0).contains(&after),
+        "fired {after:.1} s after the last report"
+    );
 }

@@ -338,3 +338,28 @@ fn padded_entity_state_still_decodes() {
     let decoded = decode_pdu(&bytes).expect("padded Entity State should decode");
     assert!(matches!(decoded.body, PduBody::EntityState(_)));
 }
+
+#[test]
+fn entity_state_update_round_trips() {
+    let pdu = Pdu {
+        header: PduHeader::new(7, 1, pdu_type::ENTITY_STATE_UPDATE, DisTimestamp(42)),
+        body: PduBody::EntityStateUpdate(EntityStateUpdate {
+            entity_id: EntityId::new(1, 2, 3),
+            linear_velocity: Vec3f { x: 1.0, y: 2.0, z: 3.0 },
+            location: WorldCoord { x: 4.0, y: 5.0, z: 6.0 },
+            orientation: EulerAngles {
+                psi: 0.1,
+                theta: 0.2,
+                phi: 0.3,
+            },
+            appearance: 0x0080_0000,
+            variable_parameters: vec![VariableParameter([7; VARIABLE_PARAM_LEN])],
+        }),
+    };
+    let bytes = encode_pdu(&pdu);
+    assert_eq!(bytes.len(), ENTITY_STATE_UPDATE_LEN + VARIABLE_PARAM_LEN);
+    let back = decode_pdu(&bytes).unwrap();
+    assert_eq!(back.body, pdu.body);
+    assert_eq!(back.header.protocol_family, 1);
+    assert!(nn_decode::structure::check(&bytes).findings.is_empty());
+}

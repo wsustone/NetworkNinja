@@ -26,8 +26,12 @@ tick_interval = 0.25
 
 [rules.entity-timeout]
 # Expected Entity State interval and the timeout factor (IEEE 1278.1
-# defaults: heartbeat every 5 s, time out after 12 s = 2.4x).
+# defaults: heartbeat every 5 s, time out after 12 s = 2.4x). Entity State
+# Updates count as reports. A stationary entity (last report: DR algorithm
+# Static, or no speed) may heartbeat at stationary_heartbeat instead
+# (HBT_STATIONARY, 4.2.7), so it times out after 60 s x 2.4 = 144 s.
 heartbeat = 5.0
+stationary_heartbeat = 60.0
 timeout_multiplier = 2.4
 severity = "warning"
 
