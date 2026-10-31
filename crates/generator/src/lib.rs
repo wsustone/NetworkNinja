@@ -60,6 +60,14 @@ pub enum EventKind {
     /// Structural fault: the datagram ends 4 bytes before the length field
     /// says the PDU does.
     TruncatedPdu,
+    /// Handshake fault: the site stops answering Simulation Management
+    /// requests.
+    NoResponse,
+    /// Handshake fault: the site's next Acknowledge carries the wrong
+    /// Acknowledge Flag.
+    WrongAck,
+    /// Handshake fault: the site sends an Action Response nobody asked for.
+    OrphanResponse,
     /// Enumeration fault (tier E): the type's first enumerated field set to
     /// its largest value, which SISO-REF-010 leaves undefined. Caught with
     /// `serve --siso`.
@@ -82,6 +90,9 @@ impl EventKind {
             EventKind::WrongFamily => "wrong-family",
             EventKind::TruncatedPdu => "truncated-pdu",
             EventKind::BadEnum => "bad-enum",
+            EventKind::NoResponse => "no-response",
+            EventKind::WrongAck => "wrong-ack",
+            EventKind::OrphanResponse => "orphan-response",
         }
     }
     /// The PDU defects (structural and enumeration), in preset order.
@@ -110,6 +121,9 @@ impl EventKind {
                 | EventKind::WrongFamily
                 | EventKind::TruncatedPdu
                 | EventKind::BadEnum
+                | EventKind::NoResponse
+                | EventKind::WrongAck
+                | EventKind::OrphanResponse
         )
     }
 }
@@ -165,6 +179,9 @@ pub struct Config {
     /// Seconds between rounds of every PDU type the other families don't
     /// send, each a minimal valid PDU from the first site (ADR 0010 tier S).
     pub all_types: Option<f64>,
+    /// Seconds between Simulation Management requests from the first site
+    /// to the second, each answered (needs at least 2 sites).
+    pub siman_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -199,6 +216,7 @@ impl Default for Config {
             seed: 1,
             fire_every: None,
             all_types: None,
+            siman_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,

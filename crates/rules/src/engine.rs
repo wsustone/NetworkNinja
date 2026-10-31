@@ -2,6 +2,7 @@
 //! per-PDU enumeration checks loaded from rule packs.
 
 use crate::pack::{EnumCheck, Merged};
+use crate::siman::{Finding, Handshakes};
 use nn_decode::structure::Report;
 use nn_decode::{EntityId, EntityType, Pdu, PduBody};
 use nn_state::{extrapolate, geo, EntityKey, EntityTable};
@@ -23,6 +24,9 @@ pub enum Rule {
     PduPadding,
     /// The Protocol Family field doesn't match the PDU type.
     PduFamily,
+    /// A Simulation Management request went unanswered, or an answer
+    /// doesn't fit a request (ADR 0010 step 5, `crate::siman`).
+    SimanHandshake,
 }
 
 impl Rule {
@@ -35,6 +39,7 @@ impl Rule {
             Rule::PduStructure => "pdu-structure",
             Rule::PduPadding => "pdu-padding",
             Rule::PduFamily => "pdu-family",
+            Rule::SimanHandshake => "siman-handshake",
         }
     }
 
@@ -47,6 +52,7 @@ impl Rule {
             "pdu-structure" => Some(Rule::PduStructure),
             "pdu-padding" => Some(Rule::PduPadding),
             "pdu-family" => Some(Rule::PduFamily),
+            "siman-handshake" => Some(Rule::SimanHandshake),
             _ => None,
         }
     }
@@ -114,6 +120,9 @@ pub struct RuleConfig {
     pub jump_timing_slack: f64,
     /// How often time-based checks run, seconds.
     pub tick_interval: f64,
+    /// Seconds a Simulation Management request may wait for its answer
+    /// (IEEE 1278.1 TI_TIMER2_DFLT, 12 s).
+    pub response_timeout: f64,
 }
 
 impl Default for RuleConfig {
@@ -128,6 +137,7 @@ impl Default for RuleConfig {
             jump_dr_multiplier: 3.0,
             jump_timing_slack: 0.5,
             tick_interval: 0.25,
+            response_timeout: 12.0,
         }
     }
 }
@@ -204,6 +214,10 @@ pub struct Engine {
     enum_last: BTreeMap<(&'static str, EntityKey), f64>,
     /// Last time each structural rule fired for a (PDU type, sender).
     structure_last: BTreeMap<(Rule, Option<u8>, SocketAddr), f64>,
+    /// Simulation Management requests awaiting answers.
+    handshakes: Handshakes,
+    /// Last time each kind of handshake finding fired for each entity.
+    handshake_last: BTreeMap<(&'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
     /// Operator acknowledgements, keyed by (rule_id, entity).
     acks: BTreeMap<(String, EntityKey), Ack>,
@@ -232,6 +246,8 @@ impl Engine {
             enum_repeat: p.enum_repeat_seconds,
             enum_last: BTreeMap::new(),
             structure_last: BTreeMap::new(),
+            handshakes: Handshakes::default(),
+            handshake_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
             mutes: Vec::new(),
@@ -459,6 +475,53 @@ impl Engine {
         out
     }
 
+    /// One PDU's bytes through the Simulation Management handshake tracker.
+    pub fn check_siman(&mut self, now: f64, source: SocketAddr, pdu: &[u8]) -> Vec<AlertEvent> {
+        let findings = self.handshakes.observe(now, source, pdu, self.config.response_timeout);
+        let mut out = Vec::new();
+        for f in findings {
+            self.handshake_event(now, f, None, &mut out);
+        }
+        out
+    }
+
+    /// A handshake finding as a point event, at most one of each kind per
+    /// entity every `enum_repeat` seconds. `owner` is the address of the simulation that
+    /// owes a missing answer, when the table knows it.
+    fn handshake_event(&mut self, at: f64, f: Finding, owner: Option<SocketAddr>, out: &mut Vec<AlertEvent>) {
+        let rule = Rule::SimanHandshake;
+        let key = EntityKey {
+            exercise: f.exercise,
+            id: f.id,
+        };
+        if !self.enabled(rule) || self.muted(rule.name(), &key, at) {
+            return;
+        }
+        if self
+            .handshake_last
+            .get(&(f.kind, key))
+            .is_some_and(|t| at - t < self.enum_repeat)
+        {
+            return;
+        }
+        self.handshake_last.insert((f.kind, key), at);
+        out.push(AlertEvent {
+            at,
+            state: AlertState::Firing,
+            alert: Alert {
+                rule,
+                pack: self.rule_pack.get(&rule).cloned().unwrap_or_else(|| "builtin".into()),
+                rule_id: rule.name().to_string(),
+                key,
+                severity: self.severities.get(&rule).copied().unwrap_or(Severity::Warning),
+                since: at,
+                message: f.message.clone(),
+                sender: f.sender.or(owner),
+            },
+            reason: f.message,
+        });
+    }
+
     fn resolve(&mut self, at: f64, rule: Rule, key: EntityKey, reason: String, out: &mut Vec<AlertEvent>) {
         if let Some(alert) = self.active.remove(&(rule, key)) {
             self.acks.remove(&(alert.rule_id.clone(), key));
@@ -607,6 +670,19 @@ impl Engine {
         self.mutes.retain(|m| m.until > now);
         let timeout = self.config.timeout();
 
+        for f in self.handshakes.expire(now, self.config.response_timeout) {
+            // The simulation that owes the answer: any entity of it the
+            // table has heard from gives its address.
+            let owner = f.owes.and_then(|(site, app)| {
+                table
+                    .entities
+                    .iter()
+                    .find(|(k, _)| k.exercise == f.exercise && k.id.site == site && k.id.application == app)
+                    .map(|(_, r)| r.last_source)
+            });
+            self.handshake_event(now, f, owner, &mut out);
+        }
+
         if self.enabled(Rule::EntityTimeout) {
             for (key, rec) in &table.entities {
                 if rec.removed || rec.deactivated() {
@@ -657,7 +733,11 @@ impl Engine {
                     }
                 }
                 // One-shot events; never present in `active`.
-                Rule::EnumViolation | Rule::PduStructure | Rule::PduPadding | Rule::PduFamily => {}
+                Rule::EnumViolation
+                | Rule::PduStructure
+                | Rule::PduPadding
+                | Rule::PduFamily
+                | Rule::SimanHandshake => {}
             }
         }
         out

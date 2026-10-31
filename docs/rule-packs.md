@@ -35,7 +35,8 @@ heartbeat = 5.0              # threshold overrides; each rule has its own set
 #        id-conflict (conflict_grace, duplicate_window),
 #        position-jump (jump_min_tolerance, assumed_dr_threshold,
 #                       jump_dr_multiplier, jump_timing_slack),
-#        pdu-structure, pdu-padding, pdu-family (no thresholds; ADR 0010 tier S)
+#        pdu-structure, pdu-padding, pdu-family (no thresholds; ADR 0010 tier S),
+#        siman-handshake (response_timeout)
 
 [[enum]]
 field = "entity-state.force_id"   # a field from the registry below
