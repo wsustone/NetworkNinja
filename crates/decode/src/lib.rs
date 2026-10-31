@@ -15,6 +15,7 @@
 
 mod codec;
 pub mod fields;
+pub mod heartbeat;
 mod pdu;
 pub mod structure;
 mod time;

@@ -244,7 +244,8 @@ Each line is roughly one PR, sized like the radio PR, with its checks, generator
 silence and exact-detection tests, coverage-table update and docs.
 
 1. **Wave 0**: stationary heartbeat and ESU decode. Small, and it fixes false alarms.
-2. **Heartbeat registry** (cross-cutting): unlocks every lifecycle check that follows.
+2. **Heartbeat registry** (cross-cutting): unlocks every lifecycle check that follows. *Done:*
+   `nn_decode::heartbeat`, rule `heartbeat`, `[rules.heartbeat]`.
 3. **Entity State lifecycle**: deactivation, zombie, static-with-velocity, type change.
 4. **Fire ↔ Detonation pairing**, plus DE Fire.
 5. **Entity Damage Status and Collision.**

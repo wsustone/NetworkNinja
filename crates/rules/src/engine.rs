@@ -1,6 +1,7 @@
 //! The rule engine: three behavioural rules over the entity table, plus
 //! per-PDU enumeration checks loaded from rule packs.
 
+use crate::heartbeats::{HeartbeatConfig, Heartbeats};
 use crate::pack::{EnumCheck, Merged};
 use crate::radio::{RadioConfig, Radios};
 use crate::siman::Handshakes;
@@ -34,6 +35,9 @@ pub enum Rule {
     /// The same datagram from the same sender arrived twice: overlapping
     /// listeners, or a network that delivers it twice.
     DuplicateDelivery,
+    /// An object stopped sending a PDU type that has a heartbeat
+    /// (`crate::heartbeats`).
+    Heartbeat,
 }
 
 impl Rule {
@@ -49,6 +53,7 @@ impl Rule {
             Rule::SimanHandshake => "siman-handshake",
             Rule::Radio => "radio",
             Rule::DuplicateDelivery => "duplicate-delivery",
+            Rule::Heartbeat => "heartbeat",
         }
     }
 
@@ -64,6 +69,7 @@ impl Rule {
             "siman-handshake" => Some(Rule::SimanHandshake),
             "radio" => Some(Rule::Radio),
             "duplicate-delivery" => Some(Rule::DuplicateDelivery),
+            "heartbeat" => Some(Rule::Heartbeat),
             _ => None,
         }
     }
@@ -142,6 +148,8 @@ pub struct RuleConfig {
     /// The same datagram from the same sender within this many seconds is
     /// a second delivery of one send, not a second send.
     pub echo_window: f64,
+    /// Heartbeats of the PDU types without a rule of their own.
+    pub heartbeats: HeartbeatConfig,
 }
 
 impl Default for RuleConfig {
@@ -160,6 +168,7 @@ impl Default for RuleConfig {
             response_timeout: 12.0,
             radio: RadioConfig::default(),
             echo_window: 0.1,
+            heartbeats: HeartbeatConfig::default(),
         }
     }
 }
@@ -263,6 +272,8 @@ pub struct Engine {
     handshakes: Handshakes,
     /// Radios and their Transmitter/Receiver state.
     radios: Radios,
+    /// Objects of heartbeat PDU types, and when each last reported.
+    heartbeats: Heartbeats,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -295,6 +306,7 @@ impl Engine {
             structure_last: BTreeMap::new(),
             handshakes: Handshakes::default(),
             radios: Radios::default(),
+            heartbeats: Heartbeats::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
@@ -542,6 +554,13 @@ impl Engine {
         out
     }
 
+    /// Note an object of a heartbeat PDU type reporting.
+    pub fn observe_heartbeat(&mut self, now: f64, source: SocketAddr, pdu: &[u8]) {
+        if self.enabled(Rule::Heartbeat) {
+            self.heartbeats.observe(now, source, pdu, &self.config.heartbeats);
+        }
+    }
+
     /// One PDU's bytes through the radio tracker.
     pub fn check_radio(&mut self, now: f64, source: SocketAddr, pdu: &[u8]) -> Vec<AlertEvent> {
         let findings = self.radios.observe(now, source, pdu, &self.config.radio);
@@ -769,6 +788,18 @@ impl Engine {
             );
         }
         let frozen = |exercise, id| table.state_for(&EntityKey { exercise, id }).frozen;
+        let gone = |exercise, id| {
+            table
+                .get(&EntityKey { exercise, id })
+                .is_some_and(|r| r.removed || r.deactivated())
+        };
+        for f in self.heartbeats.expire(now, &self.config.heartbeats, frozen, gone) {
+            let key = EntityKey {
+                exercise: f.exercise,
+                id: f.id,
+            };
+            self.point_event(now, Rule::Heartbeat, f.kind, key, Some(f.sender), f.message, &mut out);
+        }
         for f in self.radios.expire(now, &self.config.radio, frozen) {
             let key = EntityKey {
                 exercise: f.exercise,
@@ -837,7 +868,8 @@ impl Engine {
                 | Rule::PduFamily
                 | Rule::SimanHandshake
                 | Rule::Radio
-                | Rule::DuplicateDelivery => {}
+                | Rule::DuplicateDelivery
+                | Rule::Heartbeat => {}
             }
         }
         out

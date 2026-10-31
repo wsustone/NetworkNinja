@@ -100,6 +100,31 @@ idle_transmit = 30.0
 signal_slack = 1.0
 severity = "warning"
 
+# --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
+
+[rules.heartbeat]
+# An object (emitting entity, aggregate, minefield, process, live entity...)
+# that stops sending a PDU type with a heartbeat for longer than heartbeat x
+# timeout_multiplier. Seconds per type, at the standard's defaults; 0 turns a
+# type off. Entity State and the radio PDUs have their own rules above and
+# below. A Designator with Power 0 and an Entity Damage Status with no damage
+# records are final: nothing more is owed.
+timeout_multiplier = 2.4
+electromagnetic_emission = 5.0   # HBT_PDU_EE
+designator = 5.0                 # HBT_PDU_DESIGNATOR, while on
+iff = 10.0                       # HBT_PDU_IFF, also while the system is off
+underwater_acoustic = 180.0      # HBT_PDU_UA
+sees = 180.0                     # HBT_PDU_SEES
+aggregate_state = 30.0           # HBT_PDU_AGGREGATE_STATE
+is_group_of = 5.0                # HBT_PDU_ISGROUPOF
+minefield_state = 5.0            # HBT_PDU_MINEFIELD_STATE
+environmental_process = 15.0     # HBT_PDU_ENVIRONMENTAL_PROCESS
+gridded_data = 900.0             # HBT_PDU_GRIDDED_DATA
+tspi = 30.0                      # HBT_PDU_TSPI
+appearance = 60.0                # HBT_PDU_APPEARANCE
+entity_damage_status = 10.0      # HBT_PDU_ENTITY_DAMAGE, while damaged
+severity = "warning"
+
 # --- Duplicate delivery ----------------------------------------------------
 
 [rules.duplicate-delivery]
