@@ -149,6 +149,15 @@ Generator: `parked_per_site`, `stationary_heartbeat`, `entity_state_update`,
 profile `economical`. Test entities with zero velocity are stationary now:
 give them a speed when a test needs the 12 s timeout.
 
+Heartbeats: `nn_decode::heartbeat` is the table (type, symbol, default,
+clause, pack key; `own_rule` for Entity State/ESU/radio/DE Fire, which their
+own rules handle). Rule `heartbeat` (`nn_rules::heartbeats`) times out any
+other object (type + first identifier) after heartbeat × multiplier; final
+reports (Designator power 0, EDS with no records) and removed/deactivated
+entities owe nothing; frozen time pauses. `[rules.heartbeat] iff = 20`.
+The generator's `--all-types` sends heartbeat types at their heartbeat;
+`--defect stop-heartbeat:TYPE`.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

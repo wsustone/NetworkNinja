@@ -449,8 +449,30 @@ fn num(v: &Value) -> Option<f64> {
     }
 }
 
-/// Threshold keys each rule accepts, mapped onto [`RuleConfig`].
-fn set_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
+/// A threshold setter: a key's value onto [`RuleConfig`].
+type Setter = Box<dyn Fn(&mut RuleConfig, f64)>;
+
+/// Threshold keys each rule accepts. `[rules.heartbeat]` takes one key per
+/// PDU type in `nn_decode::heartbeat` (e.g. `iff = 20.0`) besides
+/// `timeout_multiplier`.
+fn set_threshold(rule: Rule, key: &str) -> Option<Setter> {
+    if rule == Rule::Heartbeat {
+        if key == "timeout_multiplier" {
+            return Some(Box::new(|c, v| c.heartbeats.timeout_multiplier = v));
+        }
+        let h = nn_decode::heartbeat::table()
+            .iter()
+            .find(|h| h.key == key && !h.own_rule)?;
+        let t = h.pdu_type;
+        return Some(Box::new(move |c, v| {
+            c.heartbeats.seconds.insert(t, v);
+        }));
+    }
+    fixed_threshold(rule, key).map(|f| Box::new(f) as Setter)
+}
+
+/// Threshold keys of the rules with a fixed set, mapped onto [`RuleConfig`].
+fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
     use Rule::*;
     Some(match (rule, key) {
         (EntityTimeout, "heartbeat") => |c, v| c.heartbeat = v,
@@ -872,6 +894,7 @@ impl Merged {
                 Rule::SimanHandshake,
                 Rule::Radio,
                 Rule::DuplicateDelivery,
+                Rule::Heartbeat,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -886,6 +909,7 @@ impl Merged {
                 (Rule::SimanHandshake, Severity::Warning),
                 (Rule::Radio, Severity::Warning),
                 (Rule::DuplicateDelivery, Severity::Warning),
+                (Rule::Heartbeat, Severity::Warning),
             ]
             .into_iter()
             .collect(),

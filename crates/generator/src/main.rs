@@ -63,10 +63,12 @@ FAULTS (alerts must fire)          T defaults to a third of the duration
 
 PDU DEFECTS (ADR 0010 tiers S and E; a PDU of TYPE from the first site)
     --defect KIND:TYPE[@T]  KIND is short-pdu, count-overrun, padded-pdu,
-                            wrong-family, truncated-pdu or bad-enum; TYPE a PDU
-                            type number (count-overrun needs a count field,
-                            bad-enum an enumerated one; bad-enum is caught by
-                            serve --siso)
+                            wrong-family, truncated-pdu, bad-enum or
+                            stop-heartbeat; TYPE a PDU type number
+                            (count-overrun needs a count field, bad-enum an
+                            enumerated one and is caught by serve --siso;
+                            stop-heartbeat a type with a heartbeat, and
+                            --all-types)
 
 HANDSHAKE FAULTS (on the answering site; need --siman-every and 2+ sites)
     --no-response SITE[@T]  Site stops answering Simulation Management requests
@@ -258,8 +260,8 @@ fn parse_args() -> Result<Options, String> {
     }
     if all_defects {
         // One type each, so no fault hides behind another's repeat window.
-        // Collision, Transmitter, Designator, Signal, EE, Receiver
-        let types = [4, 25, 24, 26, 23, 27];
+        // Collision, Transmitter, Designator, Signal, EE, Receiver, IFF
+        let types = [4, 25, 24, 26, 23, 27, 28];
         for (i, (kind, t)) in EventKind::DEFECTS.iter().zip(types).enumerate() {
             defects.push(format!("{}:{t}@{}", kind.name(), d * (0.20 + 0.05 * i as f64)));
         }
@@ -278,6 +280,9 @@ fn parse_args() -> Result<Options, String> {
             .ok_or_else(|| format!("--defect: {pdu_type} is not a PDU type (1-72)"))?;
         if kind == EventKind::CountOverrun && layout.counts.is_empty() {
             return Err(format!("--defect: {} has no count field to overrun", layout.name));
+        }
+        if kind == EventKind::StopHeartbeat && !nn_decode::heartbeat::of(pdu_type).is_some_and(|h| !h.own_rule) {
+            return Err(format!("--defect: {} has no heartbeat to stop", layout.name));
         }
         if kind == EventKind::BadEnum && nn_decode::fields::enum_fields_of(pdu_type).next().is_none() {
             return Err(format!(

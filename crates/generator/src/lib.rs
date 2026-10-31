@@ -60,6 +60,9 @@ pub enum EventKind {
     /// Structural fault: the datagram ends 4 bytes before the length field
     /// says the PDU does.
     TruncatedPdu,
+    /// Heartbeat fault: the first site stops sending this PDU type (with
+    /// `all_types`), as if the object it reports on had died.
+    StopHeartbeat,
     /// Handshake fault: the site stops answering Simulation Management
     /// requests.
     NoResponse,
@@ -99,6 +102,7 @@ impl EventKind {
             EventKind::WrongFamily => "wrong-family",
             EventKind::TruncatedPdu => "truncated-pdu",
             EventKind::BadEnum => "bad-enum",
+            EventKind::StopHeartbeat => "stop-heartbeat",
             EventKind::NoResponse => "no-response",
             EventKind::WrongAck => "wrong-ack",
             EventKind::OrphanResponse => "orphan-response",
@@ -109,13 +113,14 @@ impl EventKind {
         }
     }
     /// The PDU defects (structural and enumeration), in preset order.
-    pub const DEFECTS: [EventKind; 6] = [
+    pub const DEFECTS: [EventKind; 7] = [
         EventKind::ShortPdu,
         EventKind::CountOverrun,
         EventKind::PaddedPdu,
         EventKind::WrongFamily,
         EventKind::TruncatedPdu,
         EventKind::BadEnum,
+        EventKind::StopHeartbeat,
     ];
     /// The PDU defect called `name`.
     pub fn defect(name: &str) -> Option<EventKind> {
@@ -134,6 +139,7 @@ impl EventKind {
                 | EventKind::WrongFamily
                 | EventKind::TruncatedPdu
                 | EventKind::BadEnum
+                | EventKind::StopHeartbeat
                 | EventKind::NoResponse
                 | EventKind::WrongAck
                 | EventKind::OrphanResponse

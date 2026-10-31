@@ -1062,3 +1062,54 @@ fn a_parked_entity_that_goes_silent_still_times_out() {
         "fired {after:.1} s after the last report"
     );
 }
+
+// ------------------------------------------- heartbeats (4.2.7, Table 4)
+
+#[test]
+fn a_type_that_stops_its_heartbeat_is_reported_once() {
+    // EE (5 s), IFF (10 s) and Aggregate State (30 s) stop at 60 s; every
+    // other type keeps its heartbeat, so nothing else fires.
+    let stop = |pdu_type, at| Event {
+        kind: EventKind::StopHeartbeat,
+        target: Target::Pdu { site: 1, pdu_type },
+        at,
+    };
+    let cfg = Config {
+        duration: 200.0,
+        sites: 2,
+        entities_per_site: 3,
+        all_types: Some(20.0),
+        events: vec![stop(23, 60.0), stop(28, 60.0), stop(33, 60.0)],
+        ..Default::default()
+    };
+    let (_, events) = monitor(&generate(&cfg));
+    let mut got: Vec<(String, f64)> = firing(&events)
+        .iter()
+        .map(|e| (e.reason.split(": none").next().unwrap().to_string(), e.at - t0(&cfg)))
+        .collect();
+    got.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert!(
+        firing(&events).iter().all(|e| e.alert.rule == Rule::Heartbeat),
+        "{}",
+        describe(&events)
+    );
+    let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "1:1:0 stopped sending ElectromagneticEmission",
+            "1:1:0 stopped sending IFF",
+            "1:1:0 stopped sending AggregateState"
+        ],
+        "{}",
+        describe(&events)
+    );
+    // Last reports were at most one heartbeat before 60 s; timeouts 12, 24
+    // and 72 s after them.
+    for ((_, at), (hb, timeout)) in got.iter().zip([(5.0, 12.0), (10.0, 24.0), (30.0, 72.0)]) {
+        assert!(
+            *at > 60.0 - hb + timeout && *at <= 60.0 + timeout + 0.5,
+            "fired at {at}"
+        );
+    }
+}
