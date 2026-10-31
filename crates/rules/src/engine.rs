@@ -6,6 +6,7 @@ use crate::lifecycle::Lifecycle;
 use crate::pack::{EnumCheck, Merged};
 use crate::radio::{RadioConfig, Radios};
 use crate::siman::Handshakes;
+use crate::warfare::Warfare;
 use nn_decode::structure::Report;
 use nn_decode::{EntityId, EntityType, Pdu, PduBody};
 use nn_state::{extrapolate, geo, EntityKey, EntityTable};
@@ -42,6 +43,8 @@ pub enum Rule {
     /// An entity's life told inconsistently: no final report after Remove
     /// Entity, a zombie, a type change... (`crate::lifecycle`).
     EntityLifecycle,
+    /// A Fire and its Detonation don't pair up (`crate::warfare`).
+    FireDetonation,
 }
 
 impl Rule {
@@ -59,6 +62,7 @@ impl Rule {
             Rule::DuplicateDelivery => "duplicate-delivery",
             Rule::Heartbeat => "heartbeat",
             Rule::EntityLifecycle => "entity-lifecycle",
+            Rule::FireDetonation => "fire-detonation",
         }
     }
 
@@ -76,6 +80,7 @@ impl Rule {
             "duplicate-delivery" => Some(Rule::DuplicateDelivery),
             "heartbeat" => Some(Rule::Heartbeat),
             "entity-lifecycle" => Some(Rule::EntityLifecycle),
+            "fire-detonation" => Some(Rule::FireDetonation),
             _ => None,
         }
     }
@@ -158,6 +163,8 @@ pub struct RuleConfig {
     pub heartbeats: HeartbeatConfig,
     /// Seconds a removed entity has to send its final Deactivated report.
     pub final_report_window: f64,
+    /// Longest a munition may fly: a Fire's Detonation is due within this.
+    pub max_flight: f64,
 }
 
 impl Default for RuleConfig {
@@ -178,6 +185,7 @@ impl Default for RuleConfig {
             echo_window: 0.1,
             heartbeats: HeartbeatConfig::default(),
             final_report_window: 12.0,
+            max_flight: 180.0,
         }
     }
 }
@@ -285,6 +293,8 @@ pub struct Engine {
     heartbeats: Heartbeats,
     /// Each entity's life so far.
     lifecycle: Lifecycle,
+    /// Fires awaiting their Detonations.
+    warfare: Warfare,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -319,6 +329,7 @@ impl Engine {
             radios: Radios::default(),
             heartbeats: Heartbeats::default(),
             lifecycle: Lifecycle::default(),
+            warfare: Warfare::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
@@ -605,6 +616,39 @@ impl Engine {
         out
     }
 
+    /// Fire / Detonation pairing on one decoded PDU.
+    pub fn check_warfare(&mut self, now: f64, source: SocketAddr, pdu: &Pdu, table: &EntityTable) -> Vec<AlertEvent> {
+        if !self.enabled(Rule::FireDetonation) {
+            return Vec::new();
+        }
+        let h = &pdu.header;
+        let status = (h.protocol_version, h.pdu_status);
+        let findings = match &pdu.body {
+            PduBody::Fire(f) => {
+                let grace = self.config.stationary_heartbeat * self.config.timeout_multiplier;
+                self.warfare.fire(now, source, h.exercise_id, status, f, table, grace)
+            }
+            PduBody::Detonation(d) => {
+                self.warfare
+                    .detonation(now, source, h.exercise_id, status, d, self.config.max_flight)
+            }
+            _ => return Vec::new(),
+        };
+        let mut out = Vec::new();
+        for f in findings {
+            self.point_event(
+                now,
+                Rule::FireDetonation,
+                f.kind,
+                f.key,
+                Some(f.sender),
+                f.message,
+                &mut out,
+            );
+        }
+        out
+    }
+
     /// Note an object of a heartbeat PDU type reporting.
     pub fn observe_heartbeat(&mut self, now: f64, source: SocketAddr, pdu: &[u8]) {
         if self.enabled(Rule::Heartbeat) {
@@ -851,6 +895,17 @@ impl Engine {
             };
             self.point_event(now, Rule::Heartbeat, f.kind, key, Some(f.sender), f.message, &mut out);
         }
+        for f in self.warfare.expire(now, self.config.max_flight) {
+            self.point_event(
+                now,
+                Rule::FireDetonation,
+                f.kind,
+                f.key,
+                Some(f.sender),
+                f.message,
+                &mut out,
+            );
+        }
         for f in self.lifecycle.expire(now, self.config.final_report_window) {
             self.point_event(
                 now,
@@ -932,7 +987,8 @@ impl Engine {
                 | Rule::Radio
                 | Rule::DuplicateDelivery
                 | Rule::Heartbeat
-                | Rule::EntityLifecycle => {}
+                | Rule::EntityLifecycle
+                | Rule::FireDetonation => {}
             }
         }
         out

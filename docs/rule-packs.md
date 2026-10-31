@@ -43,7 +43,8 @@ heartbeat = 5.0              # threshold overrides; each rule has its own set
 #                   electromagnetic_emission, designator, aggregate_state, ...;
 #                   0 turns a type off; see the base pack),
 #        duplicate-delivery (echo_window),
-#        entity-lifecycle (final_report_window)
+#        entity-lifecycle (final_report_window),
+#        fire-detonation (max_flight)
 
 [[enum]]
 field = "entity-state.force_id"   # a field from the registry below

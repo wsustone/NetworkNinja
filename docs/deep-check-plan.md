@@ -248,7 +248,7 @@ silence and exact-detection tests, coverage-table update and docs.
    `nn_decode::heartbeat`, rule `heartbeat`, `[rules.heartbeat]`.
 3. **Entity State lifecycle**: deactivation, zombie, static-with-velocity, type change. *Done:*
    rule `entity-lifecycle`.
-4. **Fire ↔ Detonation pairing**, plus DE Fire.
+4. **Fire ↔ Detonation pairing**, plus DE Fire. *Fire/Detonation done:* rule `fire-detonation`.
 5. **Entity Damage Status and Collision.**
 6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations.
 7. **Designator, IFF.**

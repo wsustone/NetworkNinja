@@ -73,6 +73,16 @@ pub enum EventKind {
     /// Lifecycle fault: Entity State Updates for an ID (entity number +
     /// 1000) no full Entity State describes.
     OrphanUpdate,
+    /// Warfare fault: the next Fire's Detonation never comes.
+    NoDetonation,
+    /// Warfare fault: the next Detonation names another munition type than
+    /// its Fire.
+    DetonationMismatch,
+    /// Warfare fault: the next Fire's PDU Status calls its munition an
+    /// expendable (v7).
+    WrongFireType,
+    /// Warfare fault: a Detonation for an Event ID never fired.
+    OrphanDetonation,
     /// Heartbeat fault: the first site stops sending this PDU type (with
     /// `all_types`), as if the object it reports on had died.
     StopHeartbeat,
@@ -121,6 +131,10 @@ impl EventKind {
             EventKind::StaticMoving => "static-moving",
             EventKind::TypeChange => "type-change",
             EventKind::OrphanUpdate => "orphan-update",
+            EventKind::NoDetonation => "no-detonation",
+            EventKind::DetonationMismatch => "detonation-mismatch",
+            EventKind::WrongFireType => "wrong-fire-type",
+            EventKind::OrphanDetonation => "orphan-detonation",
             EventKind::NoResponse => "no-response",
             EventKind::WrongAck => "wrong-ack",
             EventKind::OrphanResponse => "orphan-response",
@@ -163,6 +177,10 @@ impl EventKind {
                 | EventKind::StaticMoving
                 | EventKind::TypeChange
                 | EventKind::OrphanUpdate
+                | EventKind::NoDetonation
+                | EventKind::DetonationMismatch
+                | EventKind::WrongFireType
+                | EventKind::OrphanDetonation
                 | EventKind::NoResponse
                 | EventKind::WrongAck
                 | EventKind::OrphanResponse

@@ -1200,3 +1200,59 @@ fn each_lifecycle_fault_fires_on_its_entity() {
         describe(&events)
     );
 }
+
+// ------------------------------------------ Fire and Detonation (Wave 1)
+
+#[test]
+fn each_warfare_fault_fires_once() {
+    let at = |kind, at| Event {
+        kind,
+        target: Target::Exercise,
+        at,
+    };
+    let cfg = Config {
+        duration: 420.0,
+        sites: 2,
+        entities_per_site: 4,
+        fire_every: Some(10.0),
+        events: vec![
+            at(EventKind::NoDetonation, 15.0),
+            at(EventKind::DetonationMismatch, 35.0),
+            at(EventKind::WrongFireType, 55.0),
+            // Judged only once the monitor has watched max_flight (180 s).
+            at(EventKind::OrphanDetonation, 200.0),
+        ],
+        ..Default::default()
+    };
+    let (_, events) = monitor(&generate(&cfg));
+    let mut got: Vec<String> = firing(&events)
+        .iter()
+        .map(|e| {
+            e.reason
+                .split(": ")
+                .nth(1)
+                .unwrap_or("")
+                .split(' ')
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    got.sort();
+    assert!(
+        firing(&events).iter().all(|e| e.alert.rule == Rule::FireDetonation),
+        "{}",
+        describe(&events)
+    );
+    assert_eq!(
+        got,
+        [
+            "PDU Status says",
+            "munition type 2.1.225.3.1.0.0,",
+            "no Detonation within",
+            "no Fire with"
+        ],
+        "{}",
+        describe(&events)
+    );
+}

@@ -493,6 +493,7 @@ fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (Radio, "signal_slack") => |c, v| c.radio.signal_slack = v,
         (DuplicateDelivery, "echo_window") => |c, v| c.echo_window = v,
         (EntityLifecycle, "final_report_window") => |c, v| c.final_report_window = v,
+        (FireDetonation, "max_flight") => |c, v| c.max_flight = v,
         _ => return None,
     })
 }
@@ -897,6 +898,7 @@ impl Merged {
                 Rule::DuplicateDelivery,
                 Rule::Heartbeat,
                 Rule::EntityLifecycle,
+                Rule::FireDetonation,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -913,6 +915,7 @@ impl Merged {
                 (Rule::DuplicateDelivery, Severity::Warning),
                 (Rule::Heartbeat, Severity::Warning),
                 (Rule::EntityLifecycle, Severity::Warning),
+                (Rule::FireDetonation, Severity::Warning),
             ]
             .into_iter()
             .collect(),
