@@ -17,14 +17,22 @@
 //! - *unknown firer*: a Fire from an entity the exercise hasn't seen, or
 //!   one that is deactivated, once the monitor has watched a stationary
 //!   timeout.
+//! - *fixed munition*: a Fire for a munition of category Fixed (3): mines
+//!   and demolitions aren't fired (5.4.3.3 a 9).
+//! - *impact distance*: a Detonation with result Entity Impact (1) far from
+//!   its target's dead-reckoned position (5.4.4).
 
 use nn_decode::{Detonation, EntityId, EntityType, EventId, Fire};
-use nn_state::{EntityKey, EntityTable};
+use nn_state::{extrapolate, geo, EntityKey, EntityTable};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
 const KIND_MUNITION: u8 = 2;
 const KIND_EXPENDABLE: u8 = 8;
+/// Munition Category Fixed (SISO UID 15): mines, demolitions.
+const CATEGORY_FIXED: u8 = 3;
+/// Detonation Result Entity Impact (SISO UID 62).
+const RESULT_ENTITY_IMPACT: u8 = 1;
 
 #[derive(Debug, Clone)]
 struct Shot {
@@ -113,6 +121,16 @@ impl Warfare {
             )),
             _ => {}
         }
+        if kind == KIND_MUNITION && f.descriptor.munition_type.category == CATEGORY_FIXED {
+            out.push(finding(
+                "fixed-munition",
+                format!(
+                    "munition {} is category Fixed (a mine or demolition), which isn't fired; its Detonation alone reports it{}",
+                    f.descriptor.munition_type,
+                    cite("5.4.3.3 a)9")
+                ),
+            ));
+        }
         if real(&f.firing_entity) && now - started > grace {
             match table.get(&key) {
                 None => out.push(finding(
@@ -140,7 +158,9 @@ impl Warfare {
         out
     }
 
-    /// A Detonation PDU.
+    /// A Detonation PDU. `tolerance` is how far an entity impact may land
+    /// from its target, plus the target's speed x 1 s.
+    #[allow(clippy::too_many_arguments)]
     pub fn detonation(
         &mut self,
         now: f64,
@@ -148,7 +168,8 @@ impl Warfare {
         exercise: u8,
         (version, status): (u8, u8),
         d: &Detonation,
-        max_flight: f64,
+        table: &EntityTable,
+        (max_flight, tolerance): (f64, f64),
     ) -> Vec<Finding> {
         let started = *self.started.get_or_insert(now);
         let key = EntityKey {
@@ -184,6 +205,32 @@ impl Warfare {
                 ),
             )),
             _ => {}
+        }
+        if d.result == RESULT_ENTITY_IMPACT && real(&d.target_entity) {
+            let target = EntityKey {
+                exercise,
+                id: d.target_entity,
+            };
+            if let Some(rec) = table.get(&target).filter(|r| !r.removed && !r.deactivated()) {
+                let track = &rec.sources[&rec.last_source];
+                let k = &track.last;
+                let at = extrapolate(k, (now - track.last_seen).max(0.0));
+                let speed = (k.velocity.x as f64)
+                    .hypot(k.velocity.y as f64)
+                    .hypot(k.velocity.z as f64);
+                let off = geo::distance(&at, &d.location);
+                let allowed = tolerance + speed;
+                if off > allowed {
+                    out.push(finding(
+                        "impact-distance",
+                        format!(
+                            "result Entity Impact on {}, but it detonated {off:.0} m from the target's dead-reckoned position (allowed {allowed:.0} m){}",
+                            d.target_entity,
+                            cite("5.4.4")
+                        ),
+                    ));
+                }
+            }
         }
         // Only munition detonations (DTI 0, or v6) pair with a Fire.
         if dti.is_some_and(|x| x != 0) {
@@ -336,15 +383,114 @@ mod tests {
         let other = EventId { event_number: 9, ..EV };
         // DTI 2 (non-munition explosion): no Fire expected.
         assert!(w
-            .detonation(500.0, src(), 1, (7, 2 << 4), &det(2, other), 180.0)
+            .detonation(
+                500.0,
+                src(),
+                1,
+                (7, 2 << 4),
+                &det(2, other),
+                &EntityTable::default(),
+                (180.0, 100.0)
+            )
             .is_empty());
         // A munition detonation with no Fire, before the monitor has
         // watched max_flight: not judged; after: reported.
         let mut w = Warfare::default();
-        assert!(w.detonation(0.0, src(), 1, (7, 0), &det(2, other), 180.0).is_empty());
+        assert!(w
+            .detonation(
+                0.0,
+                src(),
+                1,
+                (7, 0),
+                &det(2, other),
+                &EntityTable::default(),
+                (180.0, 100.0)
+            )
+            .is_empty());
         assert_eq!(
-            kinds(&w.detonation(200.0, src(), 1, (7, 0), &det(2, other), 180.0)),
+            kinds(&w.detonation(
+                200.0,
+                src(),
+                1,
+                (7, 0),
+                &det(2, other),
+                &EntityTable::default(),
+                (180.0, 100.0)
+            )),
             ["no-fire"]
+        );
+    }
+
+    #[test]
+    fn mines_are_not_fired() {
+        let table = EntityTable::default();
+        let mut w = Warfare::default();
+        let mut mine = fire(2);
+        mine.descriptor.munition_type.category = 3;
+        assert_eq!(
+            kinds(&w.fire(0.0, src(), 1, (7, 0), &mine, &table, 1e9)),
+            ["fixed-munition"]
+        );
+    }
+
+    #[test]
+    fn entity_impacts_land_near_the_target() {
+        use nn_decode::{DeadReckoning, DisTimestamp, EntityState, EulerAngles, Marking, Pdu, PduBody, PduHeader};
+        let target = EntityId::new(2, 1, 1);
+        let mut table = EntityTable::default();
+        let at = WorldCoord {
+            x: 6_378_137.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        table.apply(
+            0.0,
+            src(),
+            &Pdu {
+                header: PduHeader::new(7, 1, 1, DisTimestamp(0)),
+                body: PduBody::EntityState(EntityState {
+                    entity_id: target,
+                    force_id: 2,
+                    entity_type: EntityType::default(),
+                    alternative_entity_type: EntityType::default(),
+                    // 20 m/s along y: 40 m on by the time of the detonation.
+                    linear_velocity: Vec3f {
+                        x: 0.0,
+                        y: 20.0,
+                        z: 0.0,
+                    },
+                    location: at,
+                    orientation: EulerAngles::default(),
+                    appearance: 0,
+                    dead_reckoning: DeadReckoning {
+                        algorithm: 2,
+                        ..Default::default()
+                    },
+                    marking: Marking::ascii("T"),
+                    capabilities: 0,
+                    variable_parameters: Vec::new(),
+                }),
+            },
+        );
+        let hit = |y: f64| Detonation {
+            target_entity: target,
+            location: WorldCoord { y, ..at },
+            result: 1,
+            ..det(2, EV)
+        };
+        let mut w = Warfare::default();
+        // On the target's dead-reckoned position: fine.
+        assert!(w
+            .detonation(2.0, src(), 1, (7, 0), &hit(40.0), &table, (180.0, 100.0))
+            .is_empty());
+        // Where it was when last reported, 40 m back: within tolerance.
+        assert!(w
+            .detonation(2.0, src(), 1, (7, 0), &hit(0.0), &table, (180.0, 100.0))
+            .is_empty());
+        // A kilometre off.
+        assert_eq!(
+            kinds(&w.detonation(2.0, src(), 1, (7, 0), &hit(1040.0), &table, (180.0, 100.0))),
+            ["impact-distance"]
         );
     }
 

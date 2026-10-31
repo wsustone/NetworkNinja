@@ -1358,3 +1358,60 @@ fn each_interaction_fault_fires_on_its_own() {
         describe(&events)
     );
 }
+
+#[test]
+fn wave1_wrapup_faults_fire_on_their_own() {
+    let at = |kind, at| Event {
+        kind,
+        target: Target::Exercise,
+        at,
+    };
+    let base = Config {
+        fire_every: Some(10.0),
+        parked_per_site: 1,
+        all_types: Some(10.0),
+        ..interactions(vec![])
+    };
+    // Told right, with every type, fires, parked entities: silent.
+    for version in [6, 7] {
+        let (_, events) = monitor(&generate(&Config {
+            version,
+            ..base.clone()
+        }));
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+    }
+    let cfg = Config {
+        events: vec![
+            at(EventKind::MineFired, 15.0),
+            at(EventKind::ImpactMiss, 45.0),
+            at(EventKind::StillCollision, 75.0),
+            at(EventKind::BadDeRecord, 105.0),
+            at(EventKind::BadAttribute, 135.0),
+            at(EventKind::MissingExtension, 165.0),
+        ],
+        ..base
+    };
+    let (_, events) = monitor(&generate(&cfg));
+    // Each finding, by its rule and a phrase of its message.
+    let phrases = [
+        ("attribute", "a record has type"),
+        ("attribute", "no Attribute PDU follows"),
+        ("collision", "COLLISION_THRSH"),
+        ("directed-energy", "a DE record of type 4500"),
+        ("fire-detonation", "category Fixed"),
+        ("fire-detonation", "from the target's dead-reckoned position"),
+    ];
+    let mut got: Vec<(&str, &str)> = firing(&events)
+        .iter()
+        .map(|e| {
+            let phrase = phrases
+                .iter()
+                .find(|(rule, p)| *rule == e.alert.rule.name() && e.reason.contains(p))
+                .map_or("?", |(_, p)| *p);
+            (e.alert.rule.name(), phrase)
+        })
+        .collect();
+    got.sort();
+    got.dedup();
+    assert_eq!(got, phrases, "{}", describe(&events));
+}

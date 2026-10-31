@@ -90,7 +90,10 @@ impl Monitor {
         self.metrics.record_datagram(now, d.source, d.payload.len());
         let mut pdus = Vec::new();
         let mut events = Vec::new();
-        for (span, result) in decode_datagram_spans(&d.payload) {
+        let decoded = decode_datagram_spans(&d.payload);
+        // Each PDU's neighbours in the bundle, for Coupled PDU Extension.
+        let spans: Vec<_> = decoded.iter().map(|(span, _)| span.clone()).collect();
+        for (i, (span, result)) in decoded.into_iter().enumerate() {
             if result.is_ok() {
                 self.pdus += 1;
             }
@@ -122,6 +125,14 @@ impl Monitor {
             // PDU the decoder rejects is still reported against its sender.
             let structure = structure::check(&d.payload[span.start..]);
             events.extend(self.engine.check_structure(now, d.source, &structure));
+            let near = |j: Option<usize>| j.and_then(|j| spans.get(j)).map(|s| &d.payload[s.clone()]);
+            events.extend(self.engine.check_attribute(
+                now,
+                d.source,
+                &d.payload[span.clone()],
+                near(i.checked_sub(1)),
+                near(Some(i + 1)),
+            ));
             match result {
                 Ok(pdu) => {
                     let pdu = self.merge_update(pdu);
