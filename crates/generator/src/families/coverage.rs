@@ -1,15 +1,17 @@
-//! Every PDU type (ADR 0010 tier S): with `all_types`, a round of minimal
-//! valid PDUs of each type the other families don't send, from the first
-//! site's simulator; and the structural faults, which bend one such PDU.
+//! Every PDU type (ADR 0010 tiers S and E): with `all_types`, a round of
+//! minimal valid PDUs of each type the other families don't send, from the
+//! first site's simulator; and the PDU defects, which bend one such PDU.
 //!
 //! A minimal PDU has every count zero and every optional field absent (see
-//! `nn_decode::structure::minimal_body`); only its first identifier is
-//! filled in, so alerts name the sending simulator. Deep decoding of these
+//! `nn_decode::structure::minimal_body`), with its first identifier filled
+//! in, so alerts name the sending simulator, and a SISO-defined value in
+//! each enumerated field (`nn_decode::fields`). Deep decoding of these
 //! types, with real content, comes family by family (ADR 0010 step 5).
 
 use super::{Family, Out};
 use crate::world::{Tick, World};
 use crate::{Event, EventKind, Target};
+use nn_decode::fields::enum_fields_of;
 use nn_decode::structure::{layout, layouts, minimal_body, IdField};
 use nn_decode::*;
 
@@ -44,6 +46,10 @@ fn minimal(w: &World, tick: &Tick, site: u16, pdu_type: u8) -> Option<Pdu> {
         IdField::Entity(at) | IdField::Simulation(at) | IdField::Live(at) => at - HEADER_LEN,
     };
     body[at..at + id.len()].copy_from_slice(&id);
+    // Every enumerated field holds a value SISO-REF-010 defines.
+    for f in enum_fields_of(pdu_type) {
+        f.write(&mut body, HEADER_LEN, f.valid);
+    }
     Some(Pdu {
         header: tick.header(pdu_type),
         body: PduBody::Other(body),
@@ -55,7 +61,7 @@ impl Family for Coverage {
         let Target::Pdu { site, pdu_type } = ev.target else {
             return None;
         };
-        if !EventKind::STRUCTURAL.contains(&ev.kind) {
+        if !EventKind::DEFECTS.contains(&ev.kind) {
             return None;
         }
         let Some(mut pdu) = minimal(w, tick, site, pdu_type) else {
@@ -78,6 +84,12 @@ impl Family for Coverage {
             EventKind::TruncatedPdu => {
                 out.push_cut(sender, pdu, 4);
                 return Some(true);
+            }
+            EventKind::BadEnum => {
+                let Some(f) = enum_fields_of(pdu_type).next() else {
+                    return Some(false);
+                };
+                f.write(body, HEADER_LEN, u32::MAX >> (32 - 8 * f.width as u32));
             }
             _ => unreachable!(),
         }

@@ -80,6 +80,14 @@ Layouts: one table entry per type, offsets absolute from the PDU start
 of every type not otherwise generated; `--defect KIND:TYPE[@T]` and
 `--all-defects` inject the structural faults from the first site.
 
+Tier E (ADR 0010): `serve --siso FILE` loads SISO-REF-010 XML (`nn_rules::Siso`,
+hand-rolled scanner) and layers its `pack()` between the base pack and
+`--rulepack`s (`Merged::load_with`). The XML is **not** in the repo (SISO's
+licence and freshness); tests use `crates/rules/tests/fixtures/siso-mini.xml`,
+and `NN_SISO=path cargo test -p nn-rules --test siso` runs the full-file check.
+Raw enumerated fields of undecoded types: `nn_decode::fields` (offset, UID,
+a SISO-valid default the generator writes). `--defect bad-enum:TYPE`.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

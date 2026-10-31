@@ -14,6 +14,7 @@
 //! (or wrapped around) dis-rs later without changing its callers.
 
 mod codec;
+pub mod fields;
 mod pdu;
 pub mod structure;
 mod time;

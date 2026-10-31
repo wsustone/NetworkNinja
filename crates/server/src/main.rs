@@ -73,6 +73,9 @@ COMMON OPTIONS (display filters; totals always count everything)
     --every SECS          Print a summary every N seconds (default 10)
     --rulepack FILE       Layer a rule pack over the built-in base pack
                           (repeatable; later files win)
+    --siso FILE           Check enumerated fields against SISO-REF-010 (the XML
+                          SISO publishes, free from sisostandards.org); layered
+                          between the base pack and --rulepack files
 ";
 
 #[derive(Default)]
@@ -177,6 +180,7 @@ fn real_main() -> Result<(), String> {
     let mut replay_file: Option<String> = None;
     let mut runs_dir: Option<String> = None;
     let mut pack_files: Vec<String> = Vec::new();
+    let mut siso_file: Option<String> = None;
     let mut common = Common {
         filter: Filter::default(),
         quiet: false,
@@ -207,6 +211,7 @@ fn real_main() -> Result<(), String> {
             "--quiet" | "--alerts-only" => common.quiet = true,
             "--every" => common.every = val()?.parse().map_err(|e| bad(&e))?,
             "--rulepack" => pack_files.push(val()?),
+            "--siso" => siso_file = Some(val()?),
             "--http" => http = val()?.parse().map_err(|e| bad(&e))?,
             "--log" => log_file = Some(val()?),
             "--db" => db_file = Some(val()?),
@@ -231,7 +236,19 @@ fn real_main() -> Result<(), String> {
         (None, None) => None,
         _ => return Err("--cert and --key go together".into()),
     };
-    let packs = Merged::load(&pack_files).map_err(|e| e.to_string())?;
+    let siso = siso_file
+        .as_deref()
+        .map(|f| nn_rules::Siso::load(f.as_ref()))
+        .transpose()?;
+    if let Some(s) = &siso {
+        eprintln!(
+            "nn-server: enumerations from {} ({}): {} enumerations",
+            s.title,
+            s.date,
+            s.enums.len()
+        );
+    }
+    let packs = Merged::load_with(siso.as_ref(), &pack_files).map_err(|e| e.to_string())?;
     match command.as_str() {
         "listen" => listen(&udp, duration, &common, &packs),
         "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
