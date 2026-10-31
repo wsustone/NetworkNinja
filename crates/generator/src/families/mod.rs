@@ -10,6 +10,7 @@ use nn_decode::Pdu;
 pub(crate) mod coverage;
 pub(crate) mod entity_info;
 pub(crate) mod handshakes;
+pub(crate) mod interactions;
 pub(crate) mod radio;
 pub(crate) mod sim_mgmt;
 pub(crate) mod warfare;
@@ -61,5 +62,6 @@ pub(crate) fn all(w: &World) -> Vec<Box<dyn Family>> {
         Box::new(coverage::Coverage::default()),
         Box::new(handshakes::Handshakes::default()),
         Box::new(radio::Radio::default()),
+        Box::new(interactions::Interactions::default()),
     ]
 }

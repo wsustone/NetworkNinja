@@ -45,14 +45,14 @@ Update this table in the same change that adds support. What comes next for each
 | Code | PDU | Family | Usage | Layout | H | S | E | D | G |
 | ---: | --- | --- | --- | --- | :-: | :-: | :-: | :-: | :-: |
 | 1 | Entity State | Entity Information/Interaction (1) | 5.3.2 | 7.2.2 | ✓ | ✓ | partial | partial | ✓ |
-| 4 | Collision | Entity Information/Interaction (1) | 5.3.3 | 7.2.3 | ✓ | ✓ | ✓ | – | min |
-| 66 | Collision-Elastic | Entity Information/Interaction (1) | 5.3.4 | 7.2.4 | ✓ | ✓ v7 | – | – | min |
+| 4 | Collision | Entity Information/Interaction (1) | 5.3.3 | 7.2.3 | ✓ | ✓ | ✓ | partial | ✓ |
+| 66 | Collision-Elastic | Entity Information/Interaction (1) | 5.3.4 | 7.2.4 | ✓ | ✓ v7 | – | partial | min |
 | 67 | Entity State Update | Entity Information/Interaction (1) | 5.3.5 | 7.2.5 | ✓ | ✓ v7 | – | partial | ✓ |
 | 72 | Attribute | Entity Information/Interaction (1) | 5.3.6 | 7.2.6 | ✓ | ✓ v7 | – | – | min |
 | 2 | Fire | Warfare (2) | 5.4.3 | 7.3.2 | ✓ | ✓ | partial | partial | ✓ |
 | 3 | Detonation | Warfare (2) | 5.4.4 | 7.3.3 | ✓ | ✓ | partial | partial | ✓ |
-| 68 | Directed Energy Fire | Warfare (2) | 5.4.5 | 7.3.4 | ✓ | ✓ v7 | ✓ | – | min |
-| 69 | Entity Damage Status | Warfare (2) | 5.4.6 | 7.3.5 | ✓ | ✓ v7 | – | – | min |
+| 68 | Directed Energy Fire | Warfare (2) | 5.4.5 | 7.3.4 | ✓ | ✓ v7 | ✓ | partial | ✓ |
+| 69 | Entity Damage Status | Warfare (2) | 5.4.6 | 7.3.5 | ✓ | ✓ v7 | – | partial | ✓ |
 | 5 | Service Request | Logistics (3) | 5.5.5 | 7.4.2 | ✓ | ✓ | ✓ | – | min |
 | 6 | Resupply Offer | Logistics (3) | 5.5.6 | 7.4.3 | ✓ | ✓ | – | – | min |
 | 7 | Resupply Received | Logistics (3) | 5.5.7 | 7.4.4 | ✓ | ✓ | – | – | min |

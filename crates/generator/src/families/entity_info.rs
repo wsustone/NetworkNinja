@@ -42,7 +42,7 @@ fn entity_state(
             linear_velocity: velocity,
             location: pos,
             orientation,
-            appearance: if frozen { appearance::FROZEN } else { 0 },
+            appearance: (if frozen { appearance::FROZEN } else { 0 }) | if e.damaged { 2 << 3 } else { 0 },
             dead_reckoning: DeadReckoning {
                 algorithm: dr_algorithm,
                 ..Default::default()

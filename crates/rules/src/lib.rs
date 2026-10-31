@@ -16,6 +16,7 @@
 pub mod capture;
 mod engine;
 mod heartbeats;
+mod interactions;
 mod lifecycle;
 pub mod minitoml;
 mod monitor;
