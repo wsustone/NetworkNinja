@@ -82,6 +82,13 @@ RADIO FAULTS (by site; need --radio-every)
     --drop-transmitter SITE[@T]  Site's radio stops sending Transmitter PDUs
                             but keeps transmitting
 
+LIFECYCLE FAULTS (ID is site:application:entity)
+    --no-final-report ID[@T]  Remove Entity, then silence: no final Deactivated report
+    --zombie ID[@T]         Remove Entity and a final report, then it keeps reporting
+    --static-moving ID[@T]  Entity reports DR algorithm Static while it drives
+    --type-change ID[@T]    Entity's type changes mid-life
+    --orphan-update ID[@T]  Entity State Updates for ID+1000, never described in full
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -94,6 +101,7 @@ PRESETS
     --all-defects           One of each PDU defect on site 1
     --all-handshake-faults  One of each handshake fault on site 2 (turns on
                             --siman-every 2 if it isn't set)
+    --all-lifecycle-faults  One of each lifecycle fault on site 1, entities 4-8
     --all-radio-faults      One of each radio fault, one site each (needs 4
                             sites; turns on --radio-every 5 if it isn't set)
 
@@ -130,7 +138,7 @@ fn parse_args() -> Result<Options, String> {
     let (mut multicast_if, mut ttl) = (None, 1u32);
     let mut pending: Vec<(EventKind, String)> = Vec::new();
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
-    let (mut all_handshake, mut all_radio) = (false, false);
+    let (mut all_handshake, mut all_radio, mut all_lifecycle) = (false, false, false);
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -192,6 +200,12 @@ fn parse_args() -> Result<Options, String> {
             "--bad-signal" => pending.push((EventKind::BadSignal, val()?)),
             "--drop-transmitter" => pending.push((EventKind::DropTransmitter, val()?)),
             "--all-radio-faults" => all_radio = true,
+            "--no-final-report" => pending.push((EventKind::NoFinalReport, val()?)),
+            "--zombie" => pending.push((EventKind::Zombie, val()?)),
+            "--static-moving" => pending.push((EventKind::StaticMoving, val()?)),
+            "--type-change" => pending.push((EventKind::TypeChange, val()?)),
+            "--orphan-update" => pending.push((EventKind::OrphanUpdate, val()?)),
+            "--all-lifecycle-faults" => all_lifecycle = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -245,6 +259,20 @@ fn parse_args() -> Result<Options, String> {
         pending.push((EventKind::WrongAck, format!("{second}@{}", d * 0.15)));
         pending.push((EventKind::OrphanResponse, format!("{second}@{}", d * 0.30)));
         pending.push((EventKind::NoResponse, format!("{second}@{}", d * 0.60)));
+    }
+    if all_lifecycle {
+        if cfg.entities_per_site < 8 {
+            return Err("--all-lifecycle-faults needs at least 8 entities per site".into());
+        }
+        for (n, kind) in [
+            (4, EventKind::NoFinalReport),
+            (5, EventKind::Zombie),
+            (6, EventKind::StaticMoving),
+            (7, EventKind::TypeChange),
+            (8, EventKind::OrphanUpdate),
+        ] {
+            pending.push((kind, format!("{first}:{app}:{n}@{}", d * (0.15 + 0.05 * n as f64))));
+        }
     }
     if all_radio {
         if cfg.sites < 4 {

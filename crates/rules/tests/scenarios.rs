@@ -595,14 +595,15 @@ fn every_pdu_type_sent_clean_is_silent() {
             assert!(events.is_empty(), "v{version} bundle={bundle}\n{}", describe(&events));
             assert_eq!(m.decode_errors, 0);
             // Every type went out, except Remove Entity and Stop/Freeze,
-            // which only the controls send.
+            // which only the controls send, and Entity State Update, which
+            // only follows a full Entity State (`entity_state_update`).
             let types: std::collections::BTreeSet<u8> = datagrams
                 .iter()
                 .flat_map(|d| decode_datagram(&d.payload))
                 .map(|p| p.unwrap().header.pdu_type)
                 .collect();
-            assert_eq!(types.len(), 70, "v{version}");
-            assert!(!types.contains(&12) && !types.contains(&14));
+            assert_eq!(types.len(), 69, "v{version}");
+            assert!(!types.contains(&12) && !types.contains(&14) && !types.contains(&67));
         }
     }
 }
@@ -1112,4 +1113,90 @@ fn a_type_that_stops_its_heartbeat_is_reported_once() {
             "fired at {at}"
         );
     }
+}
+
+// ------------------------------------------ entity lifecycle (Wave 1)
+
+#[test]
+fn removals_with_their_final_report_are_silent() {
+    let remove = |e, at| Event {
+        kind: EventKind::Remove,
+        target: Target::Entity(EntityId::new(1, 1, e)),
+        at,
+    };
+    let cfg = Config {
+        duration: 60.0,
+        sites: 2,
+        entities_per_site: 6,
+        events: vec![remove(1, 10.0), remove(2, 12.0), remove(3, 30.0)],
+        ..Default::default()
+    };
+    let (m, events) = monitor(&generate(&cfg));
+    assert!(events.is_empty(), "{}", describe(&events));
+    let rec = m.table.get(&key(1, 1)).unwrap();
+    assert!(rec.deactivated(), "the final report marks it deactivated");
+}
+
+#[test]
+fn each_lifecycle_fault_fires_on_its_entity() {
+    let ev = |kind, e, at| Event {
+        kind,
+        target: Target::Entity(EntityId::new(1, 1, e)),
+        at,
+    };
+    let cfg = Config {
+        duration: 220.0,
+        sites: 2,
+        entities_per_site: 8,
+        events: vec![
+            ev(EventKind::NoFinalReport, 4, 20.0),
+            ev(EventKind::Zombie, 5, 25.0),
+            ev(EventKind::StaticMoving, 6, 30.0),
+            ev(EventKind::TypeChange, 7, 35.0),
+            // Only reported once the monitor has watched 144 s.
+            ev(EventKind::OrphanUpdate, 8, 150.0),
+        ],
+        ..Default::default()
+    };
+    let (_, events) = monitor(&generate(&cfg));
+    let mut got: Vec<(String, String)> = firing(&events)
+        .iter()
+        .map(|e| {
+            let what = e
+                .reason
+                .split(": ")
+                .nth(1)
+                .unwrap_or("")
+                .split(' ')
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ");
+            (e.alert.key.id.to_string(), what)
+        })
+        .collect();
+    // An ongoing fault (Static while moving, orphan updates) is reported
+    // again each repeat window, like an enumeration violation.
+    got.sort();
+    got.dedup();
+    assert!(
+        firing(&events).iter().all(|e| e.alert.rule == Rule::EntityLifecycle),
+        "{}",
+        describe(&events)
+    );
+    assert!(firing(&events)
+        .iter()
+        .all(|e| e.alert.sender.unwrap().to_string() == "10.0.1.10:40000"));
+    assert_eq!(
+        got,
+        [
+            ("1:1:1008", "Entity State Update"),
+            ("1:1:4", "removed, but sent"),
+            ("1:1:5", "reports active again"),
+            ("1:1:6", "DR algorithm Static"),
+            ("1:1:7", "type changed from"),
+        ]
+        .map(|(a, b)| (a.to_string(), b.to_string())),
+        "{}",
+        describe(&events)
+    );
 }

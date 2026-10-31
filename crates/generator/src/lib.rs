@@ -60,6 +60,19 @@ pub enum EventKind {
     /// Structural fault: the datagram ends 4 bytes before the length field
     /// says the PDU does.
     TruncatedPdu,
+    /// Lifecycle fault: Remove Entity, then silence with no final
+    /// Deactivated report.
+    NoFinalReport,
+    /// Lifecycle fault: Remove Entity and the final report, then the entity
+    /// keeps reporting active.
+    Zombie,
+    /// Lifecycle fault: the entity reports DR algorithm Static while moving.
+    StaticMoving,
+    /// Lifecycle fault: the entity's type changes mid-life.
+    TypeChange,
+    /// Lifecycle fault: Entity State Updates for an ID (entity number +
+    /// 1000) no full Entity State describes.
+    OrphanUpdate,
     /// Heartbeat fault: the first site stops sending this PDU type (with
     /// `all_types`), as if the object it reports on had died.
     StopHeartbeat,
@@ -103,6 +116,11 @@ impl EventKind {
             EventKind::TruncatedPdu => "truncated-pdu",
             EventKind::BadEnum => "bad-enum",
             EventKind::StopHeartbeat => "stop-heartbeat",
+            EventKind::NoFinalReport => "no-final-report",
+            EventKind::Zombie => "zombie",
+            EventKind::StaticMoving => "static-moving",
+            EventKind::TypeChange => "type-change",
+            EventKind::OrphanUpdate => "orphan-update",
             EventKind::NoResponse => "no-response",
             EventKind::WrongAck => "wrong-ack",
             EventKind::OrphanResponse => "orphan-response",
@@ -140,6 +158,11 @@ impl EventKind {
                 | EventKind::TruncatedPdu
                 | EventKind::BadEnum
                 | EventKind::StopHeartbeat
+                | EventKind::NoFinalReport
+                | EventKind::Zombie
+                | EventKind::StaticMoving
+                | EventKind::TypeChange
+                | EventKind::OrphanUpdate
                 | EventKind::NoResponse
                 | EventKind::WrongAck
                 | EventKind::OrphanResponse
@@ -555,7 +578,8 @@ mod tests {
         assert_eq!(truth.events.len(), 7);
 
         assert!(entity_state_times(&sink, id(1), false).iter().all(|&t| t < 10.0));
-        assert!(entity_state_times(&sink, id(2), false).iter().all(|&t| t < 10.0));
+        // Removed at 10 s: its last report, Deactivated, goes out then.
+        assert!(entity_state_times(&sink, id(2), false).iter().all(|&t| t <= 10.0));
         assert_eq!(truth.pdus_by_type["RemoveEntity"], 1);
 
         let clones = entity_state_times(&sink, id(3), true);
