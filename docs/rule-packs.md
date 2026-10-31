@@ -43,6 +43,15 @@ allowed = "0-8"                   # integer, "lo-hi", "a, b-c", or [1, 2, "3-9"]
 severity = "warning"              # optional; "off" removes a lower layer's check
 ```
 
+## SISO-REF-010 enumerations
+
+`nn-server serve --siso SISO-REF-010.xml` reads the enumerations SISO publishes (free from
+sisostandards.org; NetworkNinja doesn't ship them) and adds an `[[enum]]` check for every
+registry field below that has a SISO UID, with SISO's defined values as `allowed`. It sits
+between the base pack and `--rulepack` files, so a site pack can still widen a field or turn
+it off (`severity = "off"`). Messages cite the UID: `transmitter.transmit_state = 7 is not
+defined in SISO-REF-010 UID 164 (Transmitter-Transmit State)`.
+
 ## Field registry
 
 - `header.protocol_version`, `header.pdu_type`, `header.protocol_family` —
@@ -55,6 +64,13 @@ severity = "warning"              # optional; "off" removes a lower layer's chec
   (same seven subfields)
 - `detonation.result`
 - `stop-freeze.reason`, `stop-freeze.frozen_behavior`
+- `fire.descriptor.warhead`, `fire.descriptor.fuse`, and the same under `detonation.`
+- SISO-only entity type checks, under each entity type prefix above: `platform_domain`
+  (kind 1), `munition_domain` (kind 2), and `land_category`, `air_category`,
+  `surface_category`, `subsurface_category`, `space_category` (kind 1 by domain)
+- Fields of PDU types that aren't deep decoded, read from their raw bytes, e.g.
+  `transmitter.transmit_state`, `acknowledge.acknowledge_flag`, `receiver.receiver_state`:
+  the full list with offsets and UIDs is `crates/decode/src/fields.rs`
 
 ## PDU capture tiers
 

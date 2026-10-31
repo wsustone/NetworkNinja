@@ -451,8 +451,8 @@ fn minefield_query(w: &mut Walk) -> Result<(), Stop> {
 /// Minefield Data PDU (7.9.4): which per-mine arrays are present follows
 /// the Data Filter bits.
 fn minefield_data(w: &mut Walk) -> Result<(), Stop> {
-    let (mines, sensors) = (w.u8(34)?, w.u8(35)?);
-    let filter = w.u32(40)?;
+    let (mines, sensors) = (w.u8(29)?, w.u8(30)?);
+    let filter = w.u32(32)?;
     let f = |bit: u32| (filter >> bit) & 1 == 1;
     let burial = f(0) || f(1) || f(2);
     w.records(sensors, 2);
@@ -557,7 +557,7 @@ fn gridded_data(w: &mut Walk) -> Result<(), Stop> {
 }
 
 fn linear_object(w: &mut Walk) -> Result<(), Stop> {
-    let n = w.u8(31)?;
+    let n = w.u8(27)?;
     w.records(n, 64);
     Ok(())
 }
@@ -734,12 +734,12 @@ static LAYOUTS: [Layout; 72] = [
     fixed(36, "IsPartOf", 7, "7.8.5", 52, E(12)),
     fixed(37, "MinefieldState", 8, "7.9.2", 72, E(12)).with(&[(21, 1), (30, 2)], minefield_state),
     fixed(38, "MinefieldQuery", 8, "7.9.3", 40, E(12)).with(&[(25, 1), (27, 1)], minefield_query),
-    fixed(39, "MinefieldData", 8, "7.9.4", 44, E(12)).with(&[(34, 1), (35, 1)], minefield_data),
+    fixed(39, "MinefieldData", 8, "7.9.4", 44, E(12)).with(&[(29, 1), (30, 1)], minefield_data),
     fixed(40, "MinefieldResponseNack", 8, "7.9.5", 26, E(12)).with(&[(25, 1)], minefield_nack),
     fixed(41, "EnvironmentalProcess", 9, "7.10.2", 32, E(12)).with(&[(28, 2)], environmental_process),
     fixed(42, "GriddedData", 9, "7.10.3", 64, E(12)).with(&[(26, 1)], gridded_data),
     fixed(43, "PointObjectState", 9, "7.10.4", 88, E(12)),
-    fixed(44, "LinearObjectState", 9, "7.10.5", 40, E(12)).with(&[(31, 1)], linear_object),
+    fixed(44, "LinearObjectState", 9, "7.10.5", 40, E(12)).with(&[(27, 1)], linear_object),
     fixed(45, "ArealObjectState", 9, "7.10.6", 48, E(12)).with(&[(38, 2)], areal_object),
     fixed(46, "TSPI", 11, "9.4.2.5", 54, L(12)).with(&[(53, 1)], tspi),
     fixed(47, "Appearance", 11, "9.4.3.5", 17, L(12)).with(&[], appearance),
@@ -799,17 +799,26 @@ impl Layout {
     }
 
     fn entity(&self, pdu: &[u8]) -> Option<EntityId> {
-        let u16_at = |at: usize| pdu.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
+        self.entity_at(pdu, 0)
+    }
+
+    /// The first identifier, reading `bytes` that start `base` bytes into
+    /// the PDU (0 for whole PDUs, 12 for bodies).
+    fn entity_at(&self, bytes: &[u8], base: usize) -> Option<EntityId> {
+        let u8_at = |at: usize| at.checked_sub(base).and_then(|i| bytes.get(i)).copied();
+        let u16_at = |at: usize| Some(u16::from_be_bytes([u8_at(at)?, u8_at(at + 1)?]));
         match self.id {
             IdField::Entity(at) => Some(EntityId::new(u16_at(at)?, u16_at(at + 2)?, u16_at(at + 4)?)),
             IdField::Simulation(at) => Some(EntityId::new(u16_at(at)?, u16_at(at + 2)?, 0)),
-            IdField::Live(at) => Some(EntityId::new(
-                *pdu.get(at)? as u16,
-                *pdu.get(at + 1)? as u16,
-                u16_at(at + 2)?,
-            )),
+            IdField::Live(at) => Some(EntityId::new(u8_at(at)? as u16, u8_at(at + 1)? as u16, u16_at(at + 2)?)),
         }
     }
+}
+
+/// The first identifier in a PDU body (the bytes after the header) of
+/// `pdu_type`: the entity, object or simulation the PDU is about.
+pub fn first_id(pdu_type: u8, body: &[u8]) -> Option<EntityId> {
+    layout(pdu_type)?.entity_at(body, HEADER_LEN)
 }
 
 /// Check the structure of the PDU at the start of `buf` (the rest of a

@@ -219,10 +219,35 @@ fn live_entity_flags_select_optional_fields() {
 fn minefield_data_follows_its_filter() {
     // Two mines, one sensor type, scalar detection coefficients present.
     let mut b = body(39);
-    b[34 - 12] = 2;
-    b[35 - 12] = 1;
-    put_u32(&mut b, 40, 1 << 9);
+    b[29 - 12] = 2;
+    b[30 - 12] = 1;
+    put_u32(&mut b, 32, 1 << 9);
     // sensors 2 + pad 2, locations 24, entity numbers 4 + coefficients 2 + pad 2
     b.extend([0; 36]);
     assert_eq!(findings(&pdu(7, 39, b)), vec![]);
+}
+
+#[test]
+fn linear_object_counts_its_segments() {
+    let mut b = body(44);
+    b[27 - 12] = 1;
+    b.extend([0; 64]);
+    assert_eq!(findings(&pdu(7, 44, b)), vec![]);
+}
+
+#[test]
+fn enum_fields_lie_inside_their_fixed_layouts() {
+    use nn_decode::fields::enum_fields;
+    for f in enum_fields() {
+        let l = layout(f.pdu_type).unwrap();
+        assert!(f.offset >= 12 && f.offset + f.width as usize <= l.fixed, "{}", f.name);
+        // Not on top of a count field.
+        for &(at, w) in l.counts {
+            assert!(
+                f.offset + f.width as usize <= at || at + w as usize <= f.offset,
+                "{}",
+                f.name
+            );
+        }
+    }
 }
