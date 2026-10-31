@@ -10,10 +10,11 @@
 #
 # Scenarios:
 #   clean  four vendors side by side (standard, legacy, body-axis, gateway;
-#          sites 1-8), every PDU type, SIMAN handshakes and radios. A clean
+#          sites 1-8), every PDU type, SIMAN handshakes, radios, collisions, damage and
+#          DE shots. A clean
 #          exercise: the dashboard should stay quiet.
 #   demo   the same, plus a "faulty vendor" on sites 9-12 that runs every
-#          fault, PDU defect, handshake, radio and lifecycle fault, then starts
+#          fault, PDU defect, handshake, radio, lifecycle, warfare and interaction fault, then starts
 #          over, every 5 minutes.
 #
 # Environment:
@@ -86,6 +87,7 @@ up() {
         start "$profile" "$bin/nn-generator" --profile "$profile" --target "127.0.0.1:$udp" \
             --duration 86400 --site-base $((2 * p + 1)) --sites 2 --application $((p + 1)) \
             --seed $((11 + p)) --fire-every 10 --all-types 10 --siman-every 3 --radio-every 6 \
+            --collision-every 20 --damage-every 60 --de-every 30 \
             --truth /dev/null
         p=$((p + 1))
     done
@@ -95,7 +97,8 @@ up() {
         start faulty bash -c "while true; do '$bin/nn-generator' --target 127.0.0.1:$udp \
             --duration 300 --site-base 9 --sites 4 --application 9 --fire-every 10 \
             --all-types 10 --all-faults --all-controls --all-defects \
-            --all-handshake-faults --all-radio-faults --all-lifecycle-faults --all-warfare-faults --truth /dev/null; done"
+            --all-handshake-faults --all-radio-faults --all-lifecycle-faults --all-warfare-faults --all-interaction-faults \
+            --collision-every 20 --damage-every 60 --de-every 30 --truth /dev/null; done"
     fi
     echo "$scenario" >"$state/scenario"
     status

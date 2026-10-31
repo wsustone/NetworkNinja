@@ -494,6 +494,9 @@ fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (DuplicateDelivery, "echo_window") => |c, v| c.echo_window = v,
         (EntityLifecycle, "final_report_window") => |c, v| c.final_report_window = v,
         (FireDetonation, "max_flight") => |c, v| c.max_flight = v,
+        (DirectedEnergy, "de_heartbeat") => |c, v| c.de_heartbeat = v,
+        (EntityDamage, "repair_window") => |c, v| c.repair_window = v,
+        (Collision, "collision_window") => |c, v| c.collision_window = v,
         _ => return None,
     })
 }
@@ -899,6 +902,9 @@ impl Merged {
                 Rule::Heartbeat,
                 Rule::EntityLifecycle,
                 Rule::FireDetonation,
+                Rule::DirectedEnergy,
+                Rule::EntityDamage,
+                Rule::Collision,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -916,6 +922,9 @@ impl Merged {
                 (Rule::Heartbeat, Severity::Warning),
                 (Rule::EntityLifecycle, Severity::Warning),
                 (Rule::FireDetonation, Severity::Warning),
+                (Rule::DirectedEnergy, Severity::Warning),
+                (Rule::EntityDamage, Severity::Warning),
+                (Rule::Collision, Severity::Warning),
             ]
             .into_iter()
             .collect(),

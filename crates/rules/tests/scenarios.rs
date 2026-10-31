@@ -1256,3 +1256,105 @@ fn each_warfare_fault_fires_once() {
         describe(&events)
     );
 }
+
+// ------------------------- collisions, damage, directed energy (Wave 1)
+
+fn interactions(events: Vec<Event>) -> Config {
+    Config {
+        duration: 240.0,
+        sites: 2,
+        entities_per_site: 5,
+        collision_every: Some(10.0),
+        damage_every: Some(40.0),
+        de_every: Some(20.0),
+        events,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn collisions_damage_and_de_shots_told_right_are_silent() {
+    for version in [6, 7] {
+        let cfg = Config {
+            version,
+            ..interactions(vec![])
+        };
+        let datagrams = generate(&cfg);
+        let (_, events) = monitor(&datagrams);
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+        let types: std::collections::BTreeSet<u8> = datagrams
+            .iter()
+            .flat_map(|d| decode_datagram(&d.payload))
+            .map(|p| p.unwrap().header.pdu_type)
+            .collect();
+        for t in [4, 68, 69] {
+            assert!(types.contains(&t), "type {t} sent");
+        }
+    }
+}
+
+#[test]
+fn each_interaction_fault_fires_on_its_own() {
+    let at = |kind, at| Event {
+        kind,
+        target: Target::Exercise,
+        at,
+    };
+    let cfg = interactions(vec![
+        at(EventKind::OneSidedCollision, 15.0),
+        at(EventKind::DuplicateCollision, 35.0),
+        at(EventKind::StaleAppearance, 45.0),
+        at(EventKind::DeDropout, 65.0),
+        // Its Detonation then has no Fire: fire-detonation judges that after
+        // max_flight (180 s) of watching, so the shot comes later.
+        at(EventKind::DeNoFire, 185.0),
+        Event {
+            kind: EventKind::Remove,
+            target: Target::Entity(EntityId::new(2, 1, 5)),
+            at: 100.0,
+        },
+        Event {
+            kind: EventKind::EdsAfterRemove,
+            target: Target::Entity(EntityId::new(2, 1, 5)),
+            at: 120.0,
+        },
+    ]);
+    let (_, events) = monitor(&generate(&cfg));
+    let mut got: Vec<(&str, String)> = firing(&events)
+        .iter()
+        .map(|e| {
+            // The first words after the entity, minus IDs (the RNG picks the pair).
+            let what = e
+                .reason
+                .split(": ")
+                .nth(1)
+                .unwrap_or("")
+                .split(' ')
+                .filter(|w| !w.contains(':'))
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ");
+            (e.alert.rule.name(), what)
+        })
+        .collect();
+    got.sort();
+    got.dedup();
+    assert_eq!(
+        got,
+        [
+            ("collision", "a second Collision"),
+            ("collision", "reported a Collision"),
+            ("directed-energy", "no Fire PDU"),
+            ("directed-energy", "weapon on, but"),
+            ("entity-damage", "Entity Damage Status"),
+            ("entity-damage", "repaired per Entity"),
+            // DeNoFire's Detonation has no Fire either.
+            ("fire-detonation", "no Fire with"),
+        ]
+        .iter()
+        .map(|(a, b)| (*a, b.to_string()))
+        .collect::<Vec<_>>(),
+        "{}",
+        describe(&events)
+    );
+}
