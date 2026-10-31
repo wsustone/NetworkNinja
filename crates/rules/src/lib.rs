@@ -15,6 +15,7 @@
 
 mod attribute;
 pub mod capture;
+mod emission;
 mod engine;
 mod heartbeats;
 mod interactions;

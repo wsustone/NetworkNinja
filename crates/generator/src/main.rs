@@ -55,6 +55,7 @@ EXERCISE
     --collision-every SECS  Two entities collide; both report it (default off)
     --damage-every SECS     An entity is damaged, then repaired 30 s later (default off)
     --de-every SECS         A 3 s directed-energy shot (default off)
+    --emission-every SECS   An entity's radar emits for 30 s, tracking another (default off)
     --bundle                Pack several PDUs per datagram
     --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
@@ -116,6 +117,17 @@ INTERACTION FAULTS (on the next interaction)
     --all-interaction-faults  The above, but eds-after-remove (turns on the
                             three interactions every 10/40/20 s if not set)
 
+EMISSION FAULTS (on the next emitter; need --emission-every)
+    --emitter-dropout T     Its EE PDUs stop with the beam still on
+    --emitter-rename T      Its Emitter Name changes after the first report
+    --reserved-beam T       Its beam is numbered NO_BEAM (0)
+    --dense-targets T       High Density Track/Jam selected, target still listed
+    --half-pulsed T         A PRF with no pulse width
+    --no-site-target T      Its Track/Jam target has site 0
+    --repeat-deactivated T  Its beam is reported Deactivated twice
+    --destroyed-emitting T  Its entity is destroyed and keeps emitting
+    --all-emission-faults   One of each (turns on --emission-every 40 if not set)
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -166,7 +178,7 @@ fn parse_args() -> Result<Options, String> {
     let mut pending: Vec<(EventKind, String)> = Vec::new();
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
     let (mut all_handshake, mut all_radio, mut all_lifecycle) = (false, false, false);
-    let (mut all_warfare, mut all_interaction) = (false, false);
+    let (mut all_warfare, mut all_interaction, mut all_emission) = (false, false, false);
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -258,6 +270,16 @@ fn parse_args() -> Result<Options, String> {
             "--bad-attribute" => pending.push((EventKind::BadAttribute, format!("@{}", val()?))),
             "--missing-extension" => pending.push((EventKind::MissingExtension, format!("@{}", val()?))),
             "--all-interaction-faults" => all_interaction = true,
+            "--emission-every" => cfg.emission_every = Some(num(val()?)?),
+            "--emitter-dropout" => pending.push((EventKind::EmitterDropout, format!("@{}", val()?))),
+            "--emitter-rename" => pending.push((EventKind::EmitterRename, format!("@{}", val()?))),
+            "--reserved-beam" => pending.push((EventKind::ReservedBeam, format!("@{}", val()?))),
+            "--dense-targets" => pending.push((EventKind::DenseTargets, format!("@{}", val()?))),
+            "--half-pulsed" => pending.push((EventKind::HalfPulsed, format!("@{}", val()?))),
+            "--no-site-target" => pending.push((EventKind::NoSiteTarget, format!("@{}", val()?))),
+            "--repeat-deactivated" => pending.push((EventKind::RepeatDeactivated, format!("@{}", val()?))),
+            "--destroyed-emitting" => pending.push((EventKind::DestroyedEmitting, format!("@{}", val()?))),
+            "--all-emission-faults" => all_emission = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -332,6 +354,24 @@ fn parse_args() -> Result<Options, String> {
         .enumerate()
         {
             pending.push((kind, format!("@{}", d * (0.1 + 0.08 * i as f64))));
+        }
+    }
+    if all_emission {
+        cfg.emission_every.get_or_insert(40.0);
+        for (i, kind) in [
+            EventKind::EmitterDropout,
+            EventKind::EmitterRename,
+            EventKind::ReservedBeam,
+            EventKind::DenseTargets,
+            EventKind::HalfPulsed,
+            EventKind::NoSiteTarget,
+            EventKind::RepeatDeactivated,
+            EventKind::DestroyedEmitting,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            pending.push((kind, format!("@{}", d * (0.05 + 0.1 * i as f64))));
         }
     }
     if all_warfare {
@@ -436,6 +476,14 @@ fn parse_args() -> Result<Options, String> {
             | EventKind::BadDeRecord
             | EventKind::BadAttribute
             | EventKind::MissingExtension
+            | EventKind::EmitterDropout
+            | EventKind::EmitterRename
+            | EventKind::ReservedBeam
+            | EventKind::DenseTargets
+            | EventKind::HalfPulsed
+            | EventKind::NoSiteTarget
+            | EventKind::RepeatDeactivated
+            | EventKind::DestroyedEmitting
             | EventKind::OneSidedCollision
             | EventKind::DuplicateCollision
             | EventKind::StaleAppearance
