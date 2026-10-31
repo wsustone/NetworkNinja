@@ -15,6 +15,7 @@
 
 pub mod capture;
 mod engine;
+mod heartbeats;
 pub mod minitoml;
 mod monitor;
 pub mod pack;
