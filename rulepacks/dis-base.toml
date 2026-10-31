@@ -118,8 +118,12 @@ severity = "warning"
 # seconds; a munition Detonation should match a Fire (mines, demolitions and
 # accidental detonations legitimately don't, so that finding names them); the
 # pair must agree on firing entity and munition type; the PDU Status fire /
-# detonation type indicator must agree with the descriptor's kind.
+# detonation type indicator must agree with the descriptor's kind. Mines and
+# demolitions (munition category Fixed) aren't fired. A Detonation with result
+# Entity Impact must land within impact_tolerance metres (plus the target's
+# speed x 1 s) of its target's dead-reckoned position.
 max_flight = 180.0
+impact_tolerance = 100.0
 severity = "warning"
 
 # --- Directed energy, damage status, collisions (5.4.5, 5.4.6, 5.3.3-4) -----
@@ -128,13 +132,15 @@ severity = "warning"
 # While a DE weapon is on (DE Fire Flags bit 0), DE Fire PDUs are due every
 # de_heartbeat seconds (HBT_PDU_DE_FIRE) x the heartbeat multiplier; a single
 # Fire follows the first DE Fire and a Detonation the final one (5.4.5.3).
+# DE records are Precision (4000, 88 bytes) or Area (4001) Aimpoints.
 de_heartbeat = 0.5
 severity = "warning"
 
 [rules.entity-damage]
 # No Entity Damage Status after the entity's Deactivated report; a repaired
 # report (no damage records) must be matched by an appearance without damage
-# within repair_window seconds (5.4.6.3).
+# within repair_window seconds (5.4.6.3). Damage records are DE Damage
+# Description records (4500, 40 bytes).
 repair_window = 6.0
 severity = "warning"
 
@@ -142,7 +148,18 @@ severity = "warning"
 # Both parties to a collision report it, once per collision event, within
 # collision_window seconds (COLLISION_ELASTIC_TIMEOUT); ENTITY_ID_UNKNOWN and
 # objects that aren't entities in the exercise owe nothing (5.3.3.4, 5.3.4).
+# A Collision needs one party moving faster than collision_speed m/s
+# (COLLISION_THRSH, 5.3.3.2 c).
 collision_window = 5.0
+collision_speed = 0.1
+severity = "warning"
+
+[rules.attribute]
+# Attribute PDU issuance (5.3.6.3): records match the Master Attribute Record
+# Type (or it is MULTIPLES_PRESENT, 0); no empty record sets; a real PDU type
+# and version; Coupled PDU Extension (PDU Status CEI) means the Attribute PDU
+# follows in the same bundle and matches the PDU it extends; transient PDUs
+# are only extended coupled.
 severity = "warning"
 
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------

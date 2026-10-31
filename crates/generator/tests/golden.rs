@@ -168,8 +168,8 @@ fn dense_faults_fast_heartbeat() {
 // (IEEE 1278.1 5.6.5.3.4), one more datagram in each scenario with a Remove
 // (A and C; B has none and is unchanged).
 const GOLDEN_A_COUNT: u64 = 720;
-const GOLDEN_A: u64 = 6538859908863107718;
+const GOLDEN_A: u64 = 11228665578557176969;
 const GOLDEN_B_COUNT: u64 = 994;
 const GOLDEN_B: u64 = 5356590278330725382;
 const GOLDEN_C_COUNT: u64 = 674;
-const GOLDEN_C: u64 = 939485741559262315;
+const GOLDEN_C: u64 = 3971600460032526477;

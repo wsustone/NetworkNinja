@@ -97,6 +97,8 @@ WARFARE FAULTS (on the next engagement; need --fire-every)
     --detonation-mismatch T The next Detonation names another munition type
     --wrong-fire-type T     The next Fire's PDU Status says expendable (v7)
     --orphan-detonation T   A Detonation for an Event ID never fired, at T
+    --mine-fired T          The next Fire fires a mine (munition category Fixed)
+    --impact-miss T         The next Detonation claims an entity impact 2 km off
     --all-warfare-faults    One of each (turns on --fire-every 10 if not set)
 
 INTERACTION FAULTS (on the next interaction)
@@ -106,6 +108,11 @@ INTERACTION FAULTS (on the next interaction)
     --eds-after-remove ID[@T]  An Entity Damage Status for a removed entity
     --de-dropout T          The next DE shot's DE Fires stop after the first
     --de-no-fire T          The next DE shot has no Fire PDU
+    --still-collision T     The next collision is between two parked entities
+                            (adds one parked entity per site if there are none)
+    --bad-de-record T       The next DE shot's DE Fire carries a damage record
+    --bad-attribute T       An Attribute PDU whose records don't match its master type
+    --missing-extension T   A Comment PDU flagged as coupled, with no Attribute PDU (v7)
     --all-interaction-faults  The above, but eds-after-remove (turns on the
                             three interactions every 10/40/20 s if not set)
 
@@ -231,6 +238,8 @@ fn parse_args() -> Result<Options, String> {
             "--detonation-mismatch" => pending.push((EventKind::DetonationMismatch, format!("@{}", val()?))),
             "--wrong-fire-type" => pending.push((EventKind::WrongFireType, format!("@{}", val()?))),
             "--orphan-detonation" => pending.push((EventKind::OrphanDetonation, format!("@{}", val()?))),
+            "--mine-fired" => pending.push((EventKind::MineFired, format!("@{}", val()?))),
+            "--impact-miss" => pending.push((EventKind::ImpactMiss, format!("@{}", val()?))),
             "--all-warfare-faults" => all_warfare = true,
             "--collision-every" => cfg.collision_every = Some(num(val()?)?),
             "--damage-every" => cfg.damage_every = Some(num(val()?)?),
@@ -241,6 +250,13 @@ fn parse_args() -> Result<Options, String> {
             "--eds-after-remove" => pending.push((EventKind::EdsAfterRemove, val()?)),
             "--de-dropout" => pending.push((EventKind::DeDropout, format!("@{}", val()?))),
             "--de-no-fire" => pending.push((EventKind::DeNoFire, format!("@{}", val()?))),
+            "--still-collision" => {
+                cfg.parked_per_site = cfg.parked_per_site.max(1);
+                pending.push((EventKind::StillCollision, format!("@{}", val()?)))
+            }
+            "--bad-de-record" => pending.push((EventKind::BadDeRecord, format!("@{}", val()?))),
+            "--bad-attribute" => pending.push((EventKind::BadAttribute, format!("@{}", val()?))),
+            "--missing-extension" => pending.push((EventKind::MissingExtension, format!("@{}", val()?))),
             "--all-interaction-faults" => all_interaction = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
@@ -300,17 +316,22 @@ fn parse_args() -> Result<Options, String> {
         cfg.collision_every.get_or_insert(10.0);
         cfg.damage_every.get_or_insert(40.0);
         cfg.de_every.get_or_insert(20.0);
+        cfg.parked_per_site = cfg.parked_per_site.max(1);
         for (i, kind) in [
             EventKind::OneSidedCollision,
             EventKind::DuplicateCollision,
             EventKind::StaleAppearance,
             EventKind::DeDropout,
             EventKind::DeNoFire,
+            EventKind::StillCollision,
+            EventKind::BadDeRecord,
+            EventKind::BadAttribute,
+            EventKind::MissingExtension,
         ]
         .into_iter()
         .enumerate()
         {
-            pending.push((kind, format!("@{}", d * (0.15 + 0.12 * i as f64))));
+            pending.push((kind, format!("@{}", d * (0.1 + 0.08 * i as f64))));
         }
     }
     if all_warfare {
@@ -320,11 +341,13 @@ fn parse_args() -> Result<Options, String> {
             EventKind::DetonationMismatch,
             EventKind::WrongFireType,
             EventKind::OrphanDetonation,
+            EventKind::MineFired,
+            EventKind::ImpactMiss,
         ]
         .into_iter()
         .enumerate()
         {
-            pending.push((kind, format!("@{}", d * (0.2 + 0.15 * i as f64))));
+            pending.push((kind, format!("@{}", d * (0.15 + 0.12 * i as f64))));
         }
     }
     if all_lifecycle {
@@ -407,6 +430,12 @@ fn parse_args() -> Result<Options, String> {
             | EventKind::DetonationMismatch
             | EventKind::WrongFireType
             | EventKind::OrphanDetonation
+            | EventKind::MineFired
+            | EventKind::ImpactMiss
+            | EventKind::StillCollision
+            | EventKind::BadDeRecord
+            | EventKind::BadAttribute
+            | EventKind::MissingExtension
             | EventKind::OneSidedCollision
             | EventKind::DuplicateCollision
             | EventKind::StaleAppearance
