@@ -122,6 +122,29 @@ severity = "warning"
 max_flight = 180.0
 severity = "warning"
 
+# --- Directed energy, damage status, collisions (5.4.5, 5.4.6, 5.3.3-4) -----
+
+[rules.directed-energy]
+# While a DE weapon is on (DE Fire Flags bit 0), DE Fire PDUs are due every
+# de_heartbeat seconds (HBT_PDU_DE_FIRE) x the heartbeat multiplier; a single
+# Fire follows the first DE Fire and a Detonation the final one (5.4.5.3).
+de_heartbeat = 0.5
+severity = "warning"
+
+[rules.entity-damage]
+# No Entity Damage Status after the entity's Deactivated report; a repaired
+# report (no damage records) must be matched by an appearance without damage
+# within repair_window seconds (5.4.6.3).
+repair_window = 6.0
+severity = "warning"
+
+[rules.collision]
+# Both parties to a collision report it, once per collision event, within
+# collision_window seconds (COLLISION_ELASTIC_TIMEOUT); ENTITY_ID_UNKNOWN and
+# objects that aren't entities in the exercise owe nothing (5.3.3.4, 5.3.4).
+collision_window = 5.0
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]
@@ -222,14 +245,15 @@ allowed = "0-5"
 field = "entity-state.alternative_entity_type.country"
 allowed = "0-999"
 
-# Warfare. Munition types use the same kind/domain/country ranges.
+# Warfare. Munition types use the same kind/country ranges; munition domains
+# (SISO UID 14) run to 12: anti-armor ... directed energy (12).
 [[enum]]
 field = "fire.descriptor.munition_type.kind"
 allowed = "0-9"
 
 [[enum]]
 field = "fire.descriptor.munition_type.domain"
-allowed = "0-5"
+allowed = "0-12"
 
 [[enum]]
 field = "detonation.descriptor.munition_type.kind"
@@ -237,7 +261,7 @@ allowed = "0-9"
 
 [[enum]]
 field = "detonation.descriptor.munition_type.domain"
-allowed = "0-5"
+allowed = "0-12"
 
 # Detonation result (0 = other, 1-6 = impact/proximity classes, more in v7).
 [[enum]]

@@ -2,6 +2,7 @@
 //! per-PDU enumeration checks loaded from rule packs.
 
 use crate::heartbeats::{HeartbeatConfig, Heartbeats};
+use crate::interactions::{Collisions, Damage, DirectedEnergy};
 use crate::lifecycle::Lifecycle;
 use crate::pack::{EnumCheck, Merged};
 use crate::radio::{RadioConfig, Radios};
@@ -45,6 +46,15 @@ pub enum Rule {
     EntityLifecycle,
     /// A Fire and its Detonation don't pair up (`crate::warfare`).
     FireDetonation,
+    /// A DE engagement's DE Fire, Fire and Detonation PDUs disagree
+    /// (`crate::interactions::DirectedEnergy`).
+    DirectedEnergy,
+    /// Entity Damage Status and appearance disagree
+    /// (`crate::interactions::Damage`).
+    EntityDamage,
+    /// A collision reported by one party only, or twice
+    /// (`crate::interactions::Collisions`).
+    Collision,
 }
 
 impl Rule {
@@ -63,6 +73,9 @@ impl Rule {
             Rule::Heartbeat => "heartbeat",
             Rule::EntityLifecycle => "entity-lifecycle",
             Rule::FireDetonation => "fire-detonation",
+            Rule::DirectedEnergy => "directed-energy",
+            Rule::EntityDamage => "entity-damage",
+            Rule::Collision => "collision",
         }
     }
 
@@ -81,6 +94,9 @@ impl Rule {
             "heartbeat" => Some(Rule::Heartbeat),
             "entity-lifecycle" => Some(Rule::EntityLifecycle),
             "fire-detonation" => Some(Rule::FireDetonation),
+            "directed-energy" => Some(Rule::DirectedEnergy),
+            "entity-damage" => Some(Rule::EntityDamage),
+            "collision" => Some(Rule::Collision),
             _ => None,
         }
     }
@@ -165,6 +181,12 @@ pub struct RuleConfig {
     pub final_report_window: f64,
     /// Longest a munition may fly: a Fire's Detonation is due within this.
     pub max_flight: f64,
+    /// HBT_PDU_DE_FIRE: a DE Fire is due this often while a shot is on.
+    pub de_heartbeat: f64,
+    /// Seconds a repaired entity's appearance has to stop showing damage.
+    pub repair_window: f64,
+    /// Seconds the other party has to report its side of a collision.
+    pub collision_window: f64,
 }
 
 impl Default for RuleConfig {
@@ -186,6 +208,9 @@ impl Default for RuleConfig {
             heartbeats: HeartbeatConfig::default(),
             final_report_window: 12.0,
             max_flight: 180.0,
+            de_heartbeat: 0.5,
+            repair_window: 6.0,
+            collision_window: 5.0,
         }
     }
 }
@@ -295,6 +320,9 @@ pub struct Engine {
     lifecycle: Lifecycle,
     /// Fires awaiting their Detonations.
     warfare: Warfare,
+    directed_energy: DirectedEnergy,
+    damage: Damage,
+    collisions: Collisions,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -330,6 +358,9 @@ impl Engine {
             heartbeats: Heartbeats::default(),
             lifecycle: Lifecycle::default(),
             warfare: Warfare::default(),
+            directed_energy: DirectedEnergy::default(),
+            damage: Damage::default(),
+            collisions: Collisions::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
@@ -649,6 +680,47 @@ impl Engine {
         out
     }
 
+    /// DE engagements, damage status and collisions on one PDU's bytes.
+    pub fn check_interactions(
+        &mut self,
+        now: f64,
+        source: SocketAddr,
+        raw: &[u8],
+        table: &EntityTable,
+    ) -> Vec<AlertEvent> {
+        let mut found = Vec::new();
+        if self.enabled(Rule::DirectedEnergy) {
+            found.extend(
+                self.directed_energy
+                    .observe(now, source, raw)
+                    .into_iter()
+                    .map(|f| (Rule::DirectedEnergy, f)),
+            );
+        }
+        if self.enabled(Rule::EntityDamage) {
+            found.extend(
+                self.damage
+                    .observe(now, source, raw, table)
+                    .into_iter()
+                    .map(|f| (Rule::EntityDamage, f)),
+            );
+        }
+        if self.enabled(Rule::Collision) {
+            let window = self.config.collision_window;
+            found.extend(
+                self.collisions
+                    .observe(now, source, raw, window)
+                    .into_iter()
+                    .map(|f| (Rule::Collision, f)),
+            );
+        }
+        let mut out = Vec::new();
+        for (rule, f) in found {
+            self.point_event(now, rule, f.kind, f.key, Some(f.sender), f.message, &mut out);
+        }
+        out
+    }
+
     /// Note an object of a heartbeat PDU type reporting.
     pub fn observe_heartbeat(&mut self, now: f64, source: SocketAddr, pdu: &[u8]) {
         if self.enabled(Rule::Heartbeat) {
@@ -895,6 +967,29 @@ impl Engine {
             };
             self.point_event(now, Rule::Heartbeat, f.kind, key, Some(f.sender), f.message, &mut out);
         }
+        let mult = self.config.heartbeats.timeout_multiplier;
+        let mut found: Vec<(Rule, crate::interactions::Finding)> = Vec::new();
+        found.extend(
+            self.directed_energy
+                .expire(now, self.config.de_heartbeat, mult)
+                .into_iter()
+                .map(|f| (Rule::DirectedEnergy, f)),
+        );
+        found.extend(
+            self.damage
+                .expire(now, self.config.repair_window, table)
+                .into_iter()
+                .map(|f| (Rule::EntityDamage, f)),
+        );
+        found.extend(
+            self.collisions
+                .expire(now, self.config.collision_window, table)
+                .into_iter()
+                .map(|f| (Rule::Collision, f)),
+        );
+        for (rule, f) in found {
+            self.point_event(now, rule, f.kind, f.key, Some(f.sender), f.message, &mut out);
+        }
         for f in self.warfare.expire(now, self.config.max_flight) {
             self.point_event(
                 now,
@@ -988,7 +1083,10 @@ impl Engine {
                 | Rule::DuplicateDelivery
                 | Rule::Heartbeat
                 | Rule::EntityLifecycle
-                | Rule::FireDetonation => {}
+                | Rule::FireDetonation
+                | Rule::DirectedEnergy
+                | Rule::EntityDamage
+                | Rule::Collision => {}
             }
         }
         out

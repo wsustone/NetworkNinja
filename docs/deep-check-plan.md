@@ -16,7 +16,7 @@ families so far did. Status per type is in [pdu-coverage.md](pdu-coverage.md).
 | H header and framing | all 72 types |
 | S structure (lengths, counts, record lengths) | all 72 on v7; types 1–27 on v6 |
 | E enumerations (SISO-REF-010) | 59 fixed-offset fields in 40 types, plus Entity State, Fire and Detonation fields |
-| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (munition end), SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
+| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
 
 Everything else is checked for shape and enumerations, but not for meaning.
 
@@ -97,6 +97,11 @@ is a warning with a generous default, and is suppressed for expendables.
 | A Detonation after the final DE Fire (weapon off) | cross-PDU | 5.4.5.3 |
 | DE record lengths and DE record types valid (precision or area aimpoint) | field | 7.3.4 |
 
+*Done:* rule `directed-energy` (`nn_rules::interactions::DirectedEnergy`): `dropout`, `no-fire`,
+`no-detonation`, `second-fire`, keyed by (exercise, Event ID). A DE Fire with the weapon off
+that never turned on (a minimal PDU) owes nothing. Generator `--de-every SECS`, faults
+`--de-dropout`, `--de-no-fire`. DE record checks are still to do.
+
 ### Entity Damage Status (69)
 
 | Check | Kind | Clause |
@@ -107,6 +112,10 @@ is a warning with a generous default, and is suppressed for expendables.
 | Entity State appearance Damage/Mobility/Firepower bits agree with EDS | cross-PDU | 5.4.6.3 e) |
 | Each EDS carries all present damage records, so the count shouldn't drop without a repair | lifecycle | 5.4.6.3 d) |
 
+*Done:* rule `entity-damage` (`after-deactivated`, `stale-appearance` after `repair_window`,
+platforms only); the heartbeat is the `heartbeat` rule's. Generator `--damage-every SECS`,
+faults `--stale-appearance`, `--eds-after-remove ID`. The record-count check is still to do.
+
 ### Collision (4) and Collision-Elastic (66)
 
 | Check | Kind | Clause |
@@ -116,6 +125,11 @@ is a warning with a generous default, and is suppressed for expendables.
 | Colliding entity unknown to the exercise but not ENTITY_ID_UNKNOWN | cross-PDU | 5.3.3.4 a) |
 | Collision-Elastic answered by a Collision-Elastic (Newtonian state machine) | cross-PDU | 5.3.4, Table 6 |
 | Collision speed below COLLISION_THRSH (0.1 m/s) (warning) | field | 6.1.8 |
+
+*Done:* rule `collision`: `one-sided` (pinned on the silent party; only for a known, active
+entity, so the "unknown" row is covered by saying nothing) and `duplicate` (per PDU type).
+Generator `--collision-every SECS`, faults `--one-sided-collision`, `--duplicate-collision`.
+The Elastic state machine and the speed threshold are still to do.
 
 ### Attribute (72)
 
@@ -248,8 +262,9 @@ silence and exact-detection tests, coverage-table update and docs.
    `nn_decode::heartbeat`, rule `heartbeat`, `[rules.heartbeat]`.
 3. **Entity State lifecycle**: deactivation, zombie, static-with-velocity, type change. *Done:*
    rule `entity-lifecycle`.
-4. **Fire ↔ Detonation pairing**, plus DE Fire. *Fire/Detonation done:* rule `fire-detonation`.
-5. **Entity Damage Status and Collision.**
+4. **Fire ↔ Detonation pairing**, plus DE Fire. *Done:* rules `fire-detonation`,
+   `directed-energy`.
+5. **Entity Damage Status and Collision.** *Done:* rules `entity-damage`, `collision`.
 6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations.
 7. **Designator, IFF.**
 8. **Logistics**, built on the SIMAN tracker.

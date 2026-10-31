@@ -83,6 +83,18 @@ pub enum EventKind {
     WrongFireType,
     /// Warfare fault: a Detonation for an Event ID never fired.
     OrphanDetonation,
+    /// Collision fault: only one party reports the next collision.
+    OneSidedCollision,
+    /// Collision fault: one party reports the next collision twice.
+    DuplicateCollision,
+    /// Damage fault: the next repair leaves the appearance damaged.
+    StaleAppearance,
+    /// Damage fault: an Entity Damage Status for this (removed) entity.
+    EdsAfterRemove,
+    /// DE fault: the next shot's DE Fires stop after the first.
+    DeDropout,
+    /// DE fault: the next shot has no Fire PDU.
+    DeNoFire,
     /// Heartbeat fault: the first site stops sending this PDU type (with
     /// `all_types`), as if the object it reports on had died.
     StopHeartbeat,
@@ -135,6 +147,12 @@ impl EventKind {
             EventKind::DetonationMismatch => "detonation-mismatch",
             EventKind::WrongFireType => "wrong-fire-type",
             EventKind::OrphanDetonation => "orphan-detonation",
+            EventKind::OneSidedCollision => "one-sided-collision",
+            EventKind::DuplicateCollision => "duplicate-collision",
+            EventKind::StaleAppearance => "stale-appearance",
+            EventKind::EdsAfterRemove => "eds-after-remove",
+            EventKind::DeDropout => "de-dropout",
+            EventKind::DeNoFire => "de-no-fire",
             EventKind::NoResponse => "no-response",
             EventKind::WrongAck => "wrong-ack",
             EventKind::OrphanResponse => "orphan-response",
@@ -181,6 +199,12 @@ impl EventKind {
                 | EventKind::DetonationMismatch
                 | EventKind::WrongFireType
                 | EventKind::OrphanDetonation
+                | EventKind::OneSidedCollision
+                | EventKind::DuplicateCollision
+                | EventKind::StaleAppearance
+                | EventKind::EdsAfterRemove
+                | EventKind::DeDropout
+                | EventKind::DeNoFire
                 | EventKind::NoResponse
                 | EventKind::WrongAck
                 | EventKind::OrphanResponse
@@ -249,6 +273,11 @@ pub struct Config {
     /// Seconds between 2 s radio transmissions, each site's first vehicle
     /// in turn; every such radio heartbeats Transmitter and Receiver PDUs.
     pub radio_every: Option<f64>,
+    /// Seconds between collisions, damage-and-repair and DE shots
+    /// (`families::interactions`).
+    pub collision_every: Option<f64>,
+    pub damage_every: Option<f64>,
+    pub de_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -293,6 +322,9 @@ impl Default for Config {
             all_types: None,
             siman_every: None,
             radio_every: None,
+            collision_every: None,
+            damage_every: None,
+            de_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,

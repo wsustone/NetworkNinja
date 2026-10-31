@@ -24,6 +24,8 @@ pub(crate) struct Coverage {
     next: BTreeMap<u8, f64>,
     /// Types `stop-heartbeat` has silenced.
     stopped: BTreeSet<u8>,
+    /// Collision events sent: each gets its own Event ID (5.3.3).
+    collisions: u16,
 }
 
 /// Types with real behaviour in another family, never sent minimal. (An
@@ -125,7 +127,15 @@ impl Family for Coverage {
                 _ => every,
             };
             *due = tick.t + interval;
-            if let Some(pdu) = minimal(w, tick, site, l.pdu_type) {
+            if let Some(mut pdu) = minimal(w, tick, site, l.pdu_type) {
+                // A collision is an event: number each one (Event ID at 24).
+                if let (4 | 66, PduBody::Other(body)) = (l.pdu_type, &mut pdu.body) {
+                    self.collisions = self.collisions.wrapping_add(1);
+                    let event = [site, w.cfg.application, self.collisions];
+                    for (i, v) in event.into_iter().enumerate() {
+                        body[12 + 2 * i..14 + 2 * i].copy_from_slice(&v.to_be_bytes());
+                    }
+                }
                 out.push((w.sender(site), pdu));
             }
         }

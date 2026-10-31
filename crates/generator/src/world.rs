@@ -61,6 +61,8 @@ pub(crate) struct SimEntity {
     /// Fault: also sends Entity State Updates for an ID (this one's entity
     /// number + 1000) no full Entity State ever describes.
     pub orphan_updates: bool,
+    /// Damaged: its appearance shows moderate damage (bits 3-4).
+    pub damaged: bool,
     pub last_sent: f64,
     pub last_pos: WorldCoord,
     pub last_vel: Vec3f,
@@ -195,6 +197,7 @@ impl<'a> World<'a> {
                     zombie: false,
                     static_moving: false,
                     orphan_updates: false,
+                    damaged: false,
                     // Stagger first reports across one heartbeat.
                     last_sent: -rng.range(0.0, cfg.heartbeat),
                     last_pos: WorldCoord::default(),
@@ -234,6 +237,7 @@ impl<'a> World<'a> {
                     zombie: false,
                     static_moving: false,
                     orphan_updates: false,
+                    damaged: false,
                     last_sent: -rng.range(0.0, cfg.stationary_heartbeat),
                     last_pos: WorldCoord::default(),
                     last_vel: Vec3f::default(),
