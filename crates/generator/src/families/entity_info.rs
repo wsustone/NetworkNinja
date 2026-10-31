@@ -76,13 +76,22 @@ impl Family for EntityInfo {
             return None;
         };
         let i = match ev.kind {
-            EventKind::DropHeartbeat | EventKind::Teleport | EventKind::CloneId => w.find(&id),
+            EventKind::DropHeartbeat
+            | EventKind::Teleport
+            | EventKind::CloneId
+            | EventKind::StaticMoving
+            | EventKind::TypeChange
+            | EventKind::OrphanUpdate => w.find(&id),
             _ => return None,
         };
         let Some(i) = i else { return Some(false) };
+        let e = &mut w.entities[i];
         match ev.kind {
-            EventKind::DropHeartbeat => w.entities[i].sending = false,
-            EventKind::Teleport => w.entities[i].centre_e += 20_000.0,
+            EventKind::DropHeartbeat => e.sending = false,
+            EventKind::Teleport => e.centre_e += 20_000.0,
+            EventKind::StaticMoving => e.static_moving = true,
+            EventKind::TypeChange => e.entity_type.category = if e.entity_type.category == 1 { 2 } else { 1 },
+            EventKind::OrphanUpdate => e.orphan_updates = true,
             _ => self.clone_of = Some((i, f64::NEG_INFINITY)),
         }
         Some(true)
@@ -97,6 +106,18 @@ impl Family for EntityInfo {
                 continue;
             }
             let kin @ (pos, vel, _) = e.kinematics(motion);
+            if e.final_due {
+                // The last report: appearance Deactivated.
+                let mut pdu = entity_state(tick, frozen, e, kin, e.marking, cfg.dr_algorithm);
+                if let PduBody::EntityState(es) = &mut pdu.body {
+                    es.appearance |= appearance::DEACTIVATED;
+                }
+                out.push((senders.get(e.id.site), pdu));
+                e.final_due = false;
+                e.sending = e.zombie;
+                e.last_sent = t;
+                continue;
+            }
             let heartbeat = if e.parked {
                 cfg.stationary_heartbeat
             } else {
@@ -105,7 +126,11 @@ impl Family for EntityInfo {
             let heartbeat_due = t - e.last_sent >= heartbeat;
             let dr_due = !e.parked && !frozen && e.last_sent >= 0.0 && e.dr_error(t, &pos) > cfg.dr_threshold;
             if heartbeat_due || dr_due {
-                let algorithm = if e.parked { 1 } else { cfg.dr_algorithm };
+                let algorithm = if e.parked || e.static_moving {
+                    1
+                } else {
+                    cfg.dr_algorithm
+                };
                 let full = !cfg.entity_state_update || e.reports % 6 == 0;
                 let mut pdu = entity_state(tick, frozen, e, kin, e.marking, algorithm);
                 if !full {
@@ -114,7 +139,19 @@ impl Family for EntityInfo {
                 e.reports += 1;
                 e.last_sent = t;
                 e.last_pos = pos;
-                e.last_vel = if frozen { Vec3f::default() } else { vel };
+                // A Static report is dead-reckoned as standing still.
+                e.last_vel = if frozen || e.static_moving {
+                    Vec3f::default()
+                } else {
+                    vel
+                };
+                if e.orphan_updates {
+                    let mut ghost = update_of(tick, entity_state(tick, frozen, e, kin, e.marking, algorithm));
+                    if let PduBody::EntityStateUpdate(u) = &mut ghost.body {
+                        u.entity_id.entity += 1000;
+                    }
+                    out.push((senders.get(e.id.site), ghost));
+                }
                 out.push((senders.get(e.id.site), pdu));
             }
         }

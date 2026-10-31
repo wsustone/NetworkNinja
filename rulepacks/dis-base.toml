@@ -100,6 +100,17 @@ idle_transmit = 30.0
 signal_slack = 1.0
 severity = "warning"
 
+# --- Entity lifecycle (5.3.2, 5.3.5, 5.6.5.3) --------------------------------
+
+[rules.entity-lifecycle]
+# After a Remove Entity, the entity's simulation must send at least one more
+# Entity State with appearance Deactivated, within final_report_window
+# seconds; after that, no more. Also: DR algorithm Static with a speed, one
+# sender changing an entity's type, force or marking mid-life, and Entity
+# State Updates for an entity no full Entity State has described.
+final_report_window = 12.0
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]
