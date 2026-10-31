@@ -69,6 +69,17 @@ severity = "warning"
 # The Protocol Family field doesn't match the PDU type.
 severity = "warning"
 
+# --- Simulation Management handshakes (ADR 0010 step 5) --------------------
+
+[rules.siman-handshake]
+# A request to one specific simulation or entity (Create/Remove Entity,
+# Start/Resume, Stop/Freeze, Action Request, Data Query, Set Data and the -R
+# forms) must be answered within response_timeout seconds (TI_TIMER2_DFLT);
+# an Acknowledge must carry the flag of the request it answers; and an
+# Acknowledge or Action Response must answer some request.
+response_timeout = 12.0
+severity = "warning"
+
 # --- Enumeration checks ----------------------------------------------------
 # field:    a path from the registry (header.* applies to every PDU)
 # allowed:  integer, "lo-hi" range, "a, b-c" list, or an array of those
