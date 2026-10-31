@@ -352,6 +352,7 @@ pub struct Metrics {
 pub fn entity_of(p: &Pdu) -> Option<EntityId> {
     Some(match &p.body {
         PduBody::EntityState(e) => e.entity_id,
+        PduBody::EntityStateUpdate(e) => e.entity_id,
         PduBody::Fire(f) => f.firing_entity,
         PduBody::Detonation(d) => d.firing_entity,
         PduBody::StartResume(s) => s.originating,

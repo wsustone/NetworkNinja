@@ -47,6 +47,10 @@ pub(crate) struct SimEntity {
     pub speed: f64,
     pub phase: f64,
     pub sending: bool,
+    /// Never moves; DR algorithm Static, stationary heartbeat.
+    pub parked: bool,
+    /// Entity State (or Update) reports sent so far.
+    pub reports: u32,
     pub last_sent: f64,
     pub last_pos: WorldCoord,
     pub last_vel: Vec3f,
@@ -175,8 +179,44 @@ impl<'a> World<'a> {
                     speed: rng.range(5.0, 25.0),
                     phase: rng.range(0.0, std::f64::consts::TAU),
                     sending: true,
+                    parked: false,
+                    reports: 0,
                     // Stagger first reports across one heartbeat.
                     last_sent: -rng.range(0.0, cfg.heartbeat),
+                    last_pos: WorldCoord::default(),
+                    last_vel: Vec3f::default(),
+                });
+            }
+        }
+        // Parked entities come after every moving one, so adding them leaves
+        // the moving entities (and the RNG draws for them) as they were.
+        for s in 0..cfg.sites {
+            let site = cfg.site_base + s;
+            let n = site - 1;
+            for p in 0..cfg.parked_per_site {
+                let i = cfg.entities_per_site + p;
+                entities.push(SimEntity {
+                    id: EntityId::new(site, cfg.application, i + 1),
+                    entity_type: EntityType {
+                        kind: 1,
+                        domain: 1,
+                        country: 225,
+                        category: 1 + (n % 3) as u8,
+                        subcategory: 1,
+                        specific: 1,
+                        extra: 0,
+                    },
+                    marking: Marking::ascii(&format!("S{site}P{:02}", p + 1)),
+                    force: 1 + (n % 2) as u8,
+                    centre_e: n as f64 * SITE_SPACING + rng.range(0.0, 4000.0),
+                    centre_n: rng.range(0.0, 4000.0),
+                    radius: 1.0,
+                    speed: 0.0,
+                    phase: 0.0,
+                    sending: true,
+                    parked: true,
+                    reports: 0,
+                    last_sent: -rng.range(0.0, cfg.stationary_heartbeat),
                     last_pos: WorldCoord::default(),
                     last_vel: Vec3f::default(),
                 });

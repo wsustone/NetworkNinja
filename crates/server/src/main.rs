@@ -107,6 +107,7 @@ impl Filter {
         if let Some(site) = self.site {
             let s = match &p.body {
                 PduBody::EntityState(e) => Some(e.entity_id.site),
+                PduBody::EntityStateUpdate(e) => Some(e.entity_id.site),
                 PduBody::Fire(f) => Some(f.firing_entity.site),
                 PduBody::Detonation(d) => Some(d.firing_entity.site),
                 PduBody::StartResume(x) => Some(x.originating.site),

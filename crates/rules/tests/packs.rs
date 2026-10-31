@@ -3,7 +3,7 @@
 //! every check.
 
 use nn_capture::Datagram;
-use nn_decode::{encode_pdu, pdu_type, DisTimestamp, EntityId, EntityState, Pdu, PduBody, PduHeader};
+use nn_decode::{encode_pdu, pdu_type, DisTimestamp, EntityId, EntityState, Pdu, PduBody, PduHeader, Vec3f};
 use nn_generator::{run, Config, Sender, Sink};
 use nn_rules::{AlertState, Merged, Monitor, MuteScope, Rule, RuleConfig, RulePack, Severity};
 use nn_state::EntityKey;
@@ -26,6 +26,7 @@ fn datagram(pdu: &Pdu, t: f64) -> Datagram {
     }
 }
 
+/// A moving entity (so the 5 s heartbeat, not the stationary one, applies).
 fn entity_state(force_id: u8) -> Pdu {
     Pdu {
         header: PduHeader::new(7, 1, pdu_type::ENTITY_STATE, DisTimestamp::default()),
@@ -34,7 +35,7 @@ fn entity_state(force_id: u8) -> Pdu {
             force_id,
             entity_type: Default::default(),
             alternative_entity_type: Default::default(),
-            linear_velocity: Default::default(),
+            linear_velocity: Vec3f { x: 5.0, y: 0.0, z: 0.0 },
             location: Default::default(),
             orientation: Default::default(),
             appearance: 0,
@@ -380,4 +381,12 @@ fn capture_keeps_fast_movers_whole_and_thins_slow_ones() {
     );
     let c = m.capture.as_ref().unwrap();
     assert_eq!((c.kept, c.skipped), (45, 75));
+}
+
+#[test]
+fn the_stationary_heartbeat_is_a_pack_threshold() {
+    assert_eq!(Merged::builtin().unwrap().config.stationary_heartbeat, 60.0);
+    let src = "[pack]\nid = \"s\"\nversion = 1\n\n[rules.entity-timeout]\nstationary_heartbeat = 30.0\n";
+    let merged = Merged::merge(vec![base(), RulePack::parse(src, "test").unwrap()]);
+    assert_eq!(merged.config.stationary_heartbeat, 30.0);
 }
