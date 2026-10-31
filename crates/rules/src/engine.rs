@@ -2,6 +2,7 @@
 //! per-PDU enumeration checks loaded from rule packs.
 
 use crate::heartbeats::{HeartbeatConfig, Heartbeats};
+use crate::lifecycle::Lifecycle;
 use crate::pack::{EnumCheck, Merged};
 use crate::radio::{RadioConfig, Radios};
 use crate::siman::Handshakes;
@@ -38,6 +39,9 @@ pub enum Rule {
     /// An object stopped sending a PDU type that has a heartbeat
     /// (`crate::heartbeats`).
     Heartbeat,
+    /// An entity's life told inconsistently: no final report after Remove
+    /// Entity, a zombie, a type change... (`crate::lifecycle`).
+    EntityLifecycle,
 }
 
 impl Rule {
@@ -54,6 +58,7 @@ impl Rule {
             Rule::Radio => "radio",
             Rule::DuplicateDelivery => "duplicate-delivery",
             Rule::Heartbeat => "heartbeat",
+            Rule::EntityLifecycle => "entity-lifecycle",
         }
     }
 
@@ -70,6 +75,7 @@ impl Rule {
             "radio" => Some(Rule::Radio),
             "duplicate-delivery" => Some(Rule::DuplicateDelivery),
             "heartbeat" => Some(Rule::Heartbeat),
+            "entity-lifecycle" => Some(Rule::EntityLifecycle),
             _ => None,
         }
     }
@@ -150,6 +156,8 @@ pub struct RuleConfig {
     pub echo_window: f64,
     /// Heartbeats of the PDU types without a rule of their own.
     pub heartbeats: HeartbeatConfig,
+    /// Seconds a removed entity has to send its final Deactivated report.
+    pub final_report_window: f64,
 }
 
 impl Default for RuleConfig {
@@ -169,6 +177,7 @@ impl Default for RuleConfig {
             radio: RadioConfig::default(),
             echo_window: 0.1,
             heartbeats: HeartbeatConfig::default(),
+            final_report_window: 12.0,
         }
     }
 }
@@ -274,6 +283,8 @@ pub struct Engine {
     radios: Radios,
     /// Objects of heartbeat PDU types, and when each last reported.
     heartbeats: Heartbeats,
+    /// Each entity's life so far.
+    lifecycle: Lifecycle,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -307,6 +318,7 @@ impl Engine {
             handshakes: Handshakes::default(),
             radios: Radios::default(),
             heartbeats: Heartbeats::default(),
+            lifecycle: Lifecycle::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
@@ -550,6 +562,45 @@ impl Engine {
                 id: f.id,
             };
             self.point_event(now, Rule::SimanHandshake, f.kind, key, f.sender, f.message, &mut out);
+        }
+        out
+    }
+
+    /// Entity lifecycle checks on one PDU, before it is applied to the table
+    /// (a Remove Entity matches entities as the table knows them).
+    pub fn check_lifecycle(&mut self, now: f64, source: SocketAddr, pdu: &Pdu, table: &EntityTable) -> Vec<AlertEvent> {
+        if !self.enabled(Rule::EntityLifecycle) {
+            return Vec::new();
+        }
+        let exercise = pdu.header.exercise_id;
+        let window = self.config.final_report_window;
+        let findings = match &pdu.body {
+            PduBody::EntityState(es) => self.lifecycle.observe(now, source, exercise, es, window),
+            PduBody::RemoveEntity(r) => {
+                self.lifecycle.removed(now, &table.matching(exercise, &r.receiving));
+                Vec::new()
+            }
+            // An update the monitor couldn't merge: no full report yet.
+            PduBody::EntityStateUpdate(u) => {
+                let grace = self.config.stationary_heartbeat * self.config.timeout_multiplier;
+                self.lifecycle
+                    .orphan_update(now, source, exercise, u.entity_id, grace)
+                    .into_iter()
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        for f in findings {
+            self.point_event(
+                now,
+                Rule::EntityLifecycle,
+                f.kind,
+                f.key,
+                Some(f.sender),
+                f.message,
+                &mut out,
+            );
         }
         out
     }
@@ -800,6 +851,17 @@ impl Engine {
             };
             self.point_event(now, Rule::Heartbeat, f.kind, key, Some(f.sender), f.message, &mut out);
         }
+        for f in self.lifecycle.expire(now, self.config.final_report_window) {
+            self.point_event(
+                now,
+                Rule::EntityLifecycle,
+                f.kind,
+                f.key,
+                Some(f.sender),
+                f.message,
+                &mut out,
+            );
+        }
         for f in self.radios.expire(now, &self.config.radio, frozen) {
             let key = EntityKey {
                 exercise: f.exercise,
@@ -869,7 +931,8 @@ impl Engine {
                 | Rule::SimanHandshake
                 | Rule::Radio
                 | Rule::DuplicateDelivery
-                | Rule::Heartbeat => {}
+                | Rule::Heartbeat
+                | Rule::EntityLifecycle => {}
             }
         }
         out

@@ -13,7 +13,7 @@
 #          sites 1-8), every PDU type, SIMAN handshakes and radios. A clean
 #          exercise: the dashboard should stay quiet.
 #   demo   the same, plus a "faulty vendor" on sites 9-12 that runs every
-#          fault, PDU defect, handshake fault and radio fault, then starts
+#          fault, PDU defect, handshake, radio and lifecycle fault, then starts
 #          over, every 5 minutes.
 #
 # Environment:
@@ -95,7 +95,7 @@ up() {
         start faulty bash -c "while true; do '$bin/nn-generator' --target 127.0.0.1:$udp \
             --duration 300 --site-base 9 --sites 4 --application 9 --fire-every 10 \
             --all-types 10 --all-faults --all-controls --all-defects \
-            --all-handshake-faults --all-radio-faults --truth /dev/null; done"
+            --all-handshake-faults --all-radio-faults --all-lifecycle-faults --truth /dev/null; done"
     fi
     echo "$scenario" >"$state/scenario"
     status

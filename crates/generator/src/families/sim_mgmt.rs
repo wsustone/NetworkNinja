@@ -40,22 +40,34 @@ impl Family for SimManagement {
 
     fn on_event(&mut self, w: &mut World, tick: &Tick, ev: &Event, out: &mut Out) -> Option<bool> {
         match (ev.kind, ev.target) {
-            (EventKind::Remove, Target::Entity(id)) => Some(match w.find(&id) {
-                Some(i) => {
-                    w.entities[i].sending = false;
-                    let pdu = Pdu {
-                        header: tick.header(pdu_type::REMOVE_ENTITY),
-                        body: PduBody::RemoveEntity(RemoveEntity {
-                            originating: sim_address(w, id.site),
-                            receiving: id,
-                            request_id: 100 + i as u32,
-                        }),
-                    };
-                    out.push((w.sender(id.site), pdu));
-                    true
-                }
-                None => false,
-            }),
+            (EventKind::Remove | EventKind::NoFinalReport | EventKind::Zombie, Target::Entity(id)) => {
+                Some(match w.find(&id) {
+                    Some(i) => {
+                        // The entity's last report says Deactivated (5.6.5.3.4);
+                        // the faults skip it, or keep reporting after it.
+                        let e = &mut w.entities[i];
+                        match ev.kind {
+                            EventKind::NoFinalReport => e.sending = false,
+                            EventKind::Zombie => {
+                                e.final_due = true;
+                                e.zombie = true;
+                            }
+                            _ => e.final_due = true,
+                        }
+                        let pdu = Pdu {
+                            header: tick.header(pdu_type::REMOVE_ENTITY),
+                            body: PduBody::RemoveEntity(RemoveEntity {
+                                originating: sim_address(w, id.site),
+                                receiving: id,
+                                request_id: 100 + i as u32,
+                            }),
+                        };
+                        out.push((w.sender(id.site), pdu));
+                        true
+                    }
+                    None => false,
+                })
+            }
             (EventKind::Freeze, _) => {
                 w.frozen = true;
                 let pdu = Pdu {

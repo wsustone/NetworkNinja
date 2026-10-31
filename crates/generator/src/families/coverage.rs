@@ -26,8 +26,11 @@ pub(crate) struct Coverage {
     stopped: BTreeSet<u8>,
 }
 
-/// Types with real behaviour in another family, never sent minimal.
-const ELSEWHERE: [u8; 6] = [
+/// Types with real behaviour in another family, never sent minimal. (An
+/// Entity State Update needs an Entity State before it: entity_info sends
+/// them, with `entity_state_update`.)
+const ELSEWHERE: [u8; 7] = [
+    pdu_type::ENTITY_STATE_UPDATE,
     pdu_type::ENTITY_STATE,
     pdu_type::FIRE,
     pdu_type::DETONATION,

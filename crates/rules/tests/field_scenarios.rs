@@ -67,6 +67,13 @@ fn acknowledge(from: EntityId, to: EntityId, flag: u16, request_id: u32) -> Vec<
     encode(15, PduBody::Other(body))
 }
 
+/// An Entity State with its appearance set to Deactivated.
+fn deactivated(mut pdu: Vec<u8>) -> Vec<u8> {
+    // Appearance is 32 bits at offset 84 (big-endian); Deactivated is bit 23.
+    pdu[85] |= 0x80;
+    pdu
+}
+
 /// A stationary land vehicle (DR algorithm 1).
 fn parked(entity: EntityId) -> Vec<u8> {
     entity_state(
@@ -347,6 +354,10 @@ fn wildcard_remove_entity_removes_every_entity_of_the_application() {
     run.feed(1.0, host(9, 4000), remove_all);
     let ack = acknowledge(EntityId::new(1, 1, 0xffff), EntityId::new(9, 9, 0xffff), 2, 1);
     run.feed(1.0, host(1, 4000), ack);
+    // Each removed entity's last report: appearance Deactivated (5.6.5.3.4).
+    for e in 1..=3 {
+        run.feed(1.5, host(1, 4000), deactivated(parked(id(1, e))));
+    }
     for i in 0..15 {
         run.feed(1.0 + i as f64 * 2.0, host(2, 4000), parked(id(2, 1)));
     }
