@@ -16,8 +16,11 @@ cargo clippy --workspace --all-targets # must be warning-free
   telling the user to run new flags (this burned us on `--db`).
 - `grep -c` prints 0 and exits 1 on no matches — don't chain `&&` after
   counting clippy warnings; it silently skips later commands.
-- Runtime files (`events.db*`, `events.jsonl`) are gitignored — don't
-  re-add them. Don't commit them.
+- Runtime files (`events.db*`, `events.jsonl`, `.nn/`) and the local SISO
+  copy (`siso/`) are gitignored — don't re-add them. Don't commit them.
+  Check `git status` before every commit and stage paths explicitly: a
+  `git add -A` on a branch cut before the ignore rule landed swept `.nn/`
+  logs and SISO-REF-010.xml into #13.
 - Dashboard = port 8080 (or `--http`); live UDP capture commonly on 3000;
   test instances on 3008/3009 + 8098/8099.
 

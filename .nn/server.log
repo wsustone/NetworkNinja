@@ -1,5 +1,0 @@
-nn-server: live on 0.0.0.0:3000 (receive-only)
-  dashboard: http://127.0.0.1:8080
-  rule packs: dis-base v1
-  event store: events.db (metric rollups kept 7 days)
-  recordings: .
