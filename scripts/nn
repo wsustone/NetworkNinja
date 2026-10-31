@@ -17,6 +17,9 @@
 #          over, every 5 minutes.
 #
 # Environment:
+#   NN_CONFIG a serve --config file (listeners, dashboard, database...); the
+#             generators still send to 127.0.0.1:NN_UDP, so give it a
+#             [[listen]] on that port
 #   NN_UDP    UDP port the server listens on (default 3000)
 #   NN_HTTP   dashboard address (default 127.0.0.1:8080)
 #   NN_DB     event database (default events.db)
@@ -56,9 +59,15 @@ up() {
     echo "building..."
     (cd "$root" && cargo build --release -q)
 
-    local serve=("$bin/nn-server" serve --port "$udp" --http "$http" --db "$db" --runs .)
-    if [[ -f $siso ]]; then
-        serve+=(--siso "$siso")
+    local serve
+    if [[ -n ${NN_CONFIG:-} ]]; then
+        # The file says where to listen; only the run directory comes from here.
+        serve=("$bin/nn-server" serve --config "$NN_CONFIG" --runs .)
+    else
+        serve=("$bin/nn-server" serve --port "$udp" --http "$http" --db "$db" --runs .)
+        if [[ -f $siso ]]; then
+            serve+=(--siso "$siso")
+        fi
     fi
     # shellcheck disable=SC2206
     serve+=(${NN_ARGS:-})

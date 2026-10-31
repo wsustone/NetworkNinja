@@ -68,6 +68,9 @@ pub struct Hub {
     )>,
     /// `--capture` file and its writer's counters (ADR 0009).
     capture: Mutex<Option<(std::path::PathBuf, Arc<crate::pdustore::CaptureStats>)>>,
+    /// The live listeners' configuration and counters, for `/api/inputs`;
+    /// empty while replaying.
+    inputs: Mutex<Vec<Arc<nn_capture::ListenerStats>>>,
 }
 
 /// A query for the serve loop and where to send the memory cells back.
@@ -112,6 +115,7 @@ impl Hub {
             query_tx: Mutex::new(None),
             metrics_flushed: Mutex::new(None),
             capture: Mutex::new(None),
+            inputs: Mutex::new(Vec::new()),
             conformance: Mutex::new((Vec::new(), BTreeMap::new())),
         }
     }
@@ -437,6 +441,11 @@ impl Hub {
     /// Serve `/api/capture` and `/api/pdus` from this capture file.
     pub fn set_capture(&self, path: std::path::PathBuf, stats: Arc<crate::pdustore::CaptureStats>) {
         *self.capture.lock().unwrap() = Some((path, stats));
+    }
+
+    /// The listeners `/api/inputs` reports on (empty while replaying).
+    pub fn set_inputs(&self, inputs: Vec<Arc<nn_capture::ListenerStats>>) {
+        *self.inputs.lock().unwrap() = inputs;
     }
 
     /// The directory `/api/runs` lists `.nnrec` recordings from.
@@ -825,6 +834,10 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                     &format!("{{\"error\":\"{}\"}}", esc(&e)),
                 ),
             };
+        }
+        ("GET", "/api/inputs") => {
+            let body = inputs_json(&hub.inputs.lock().unwrap(), nn_capture::steady_now());
+            let _ = respond(s, "200 OK", "application/json", &body);
         }
         ("GET", "/api/capture") => {
             let body = match hub.capture.lock().unwrap().as_ref() {
@@ -1290,6 +1303,40 @@ fn pdus_json(rows: &[crate::pdustore::StoredPdu]) -> String {
 /// A server event log entry body (`kind = "info"`).
 pub fn info_json(at: f64, message: &str) -> String {
     format!("{{\"at\":{},\"message\":\"{}\"}}", fnum(at), esc(message))
+}
+
+/// `/api/inputs`: every live listener with its address, multicast groups
+/// and interface, receive buffer, counters and seconds since its last
+/// datagram (`null` before the first). `{"inputs":[]}` while replaying.
+pub fn inputs_json(inputs: &[Arc<nn_capture::ListenerStats>], now: f64) -> String {
+    use std::sync::atomic::Ordering::Relaxed;
+    let items: Vec<String> = inputs
+        .iter()
+        .map(|l| {
+            let groups: Vec<String> = l.groups.iter().map(|g| format!("\"{g}\"")).collect();
+            let idle = l.last_at().map_or("null".to_string(), |t| fnum((now - t).max(0.0)));
+            let err = l
+                .last_error
+                .lock()
+                .unwrap()
+                .as_deref()
+                .map_or("null".to_string(), |e| format!("\"{}\"", esc(e)));
+            format!(
+                "{{\"name\":\"{}\",\"local\":\"{}\",\"groups\":[{}],\"interface\":\"{}\",\"share\":{},\"recv_buffer\":{},\"recv_buffer_asked\":{},\"datagrams\":{},\"bytes\":{},\"idle\":{idle},\"errors\":{},\"last_error\":{err}}}",
+                esc(&l.name),
+                l.local,
+                groups.join(","),
+                l.interface,
+                l.share,
+                l.recv_buffer,
+                l.recv_buffer_asked,
+                l.datagrams.load(Relaxed),
+                l.bytes.load(Relaxed),
+                l.errors.load(Relaxed),
+            )
+        })
+        .collect();
+    format!("{{\"inputs\":[{}]}}", items.join(","))
 }
 
 /// A decode-error log entry body (`kind = "error"`).

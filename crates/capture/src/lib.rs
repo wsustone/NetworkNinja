@@ -4,7 +4,10 @@
 //! addresses. Two sources exist today:
 //!
 //! - [`UdpSource`]: a receive-only UDP socket, with broadcast and IPv4
-//!   multicast (explicit IGMP join on a chosen interface).
+//!   multicast (explicit IGMP join on a chosen interface), optional port
+//!   sharing with a simulator on the same host, and a large receive buffer.
+//!   [`Listeners`] runs several at once (ports, groups, interfaces) into one
+//!   stream; [`iface`] lists interfaces and resolves them by name.
 //! - [`PcapReader`]: classic pcap files (Ethernet, Linux cooked or raw IP).
 //!
 //! [`PcapWriter`] writes Ethernet/IPv4/UDP frames, used by the generator and
@@ -13,11 +16,14 @@
 //! Still to come in milestone 1: live libpcap capture on a SPAN port, pcapng
 //! import, and kernel drop counters.
 
+pub mod iface;
+mod listen;
 mod pcap;
 mod udp;
 
+pub use listen::{ListenerStats, Listeners};
 pub use pcap::{PcapError, PcapReader, PcapStats, PcapWriter};
-pub use udp::{UdpConfig, UdpSource};
+pub use udp::{sender_socket, UdpConfig, UdpSource, DEFAULT_RECV_BUFFER};
 
 use std::net::SocketAddr;
 use std::sync::OnceLock;

@@ -1,0 +1,32 @@
+# NetworkNinja server configuration: copy to nn.toml and edit, then
+#   nn-server serve --config nn.toml        (or: NN_CONFIG=nn.toml scripts/nn up)
+# Command-line flags override [serve]; listeners given on the command line
+# replace these [[listen]] blocks. See docs/capture.md.
+
+[serve]
+http = "127.0.0.1:8080"        # "0.0.0.0:8080" to reach the dashboard from other machines
+db = "events.db"
+siso = "siso/SISO-REF-010.xml" # SISO-REF-010 enumerations (free from sisostandards.org)
+# rulepacks = ["site.toml"]
+# capture = "capture.db"
+# capture_budget_mb = 1024
+# users = "users.txt"
+# cert = "nn.crt"
+# key = "nn.key"
+
+# DIS broadcast on the default port. Broadcast needs no join: binding 0.0.0.0
+# (the default) receives it.
+[[listen]]
+name = "dis"
+port = 3000
+# share = true          # a simulator on this host already holds port 3000
+
+# A multicast exercise: join each group on the NIC that faces the exercise
+# network (see `nn-server interfaces`).
+# [[listen]]
+# name = "exercise-2"
+# port = 3000
+# multicast = ["239.1.2.3"]
+# interface = "en0"
+# share = true
+# receive_buffer_mb = 16

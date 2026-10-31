@@ -15,7 +15,7 @@
 
 pub mod capture;
 mod engine;
-mod minitoml;
+pub mod minitoml;
 mod monitor;
 pub mod pack;
 pub mod radio;
