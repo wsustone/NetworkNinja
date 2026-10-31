@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# One switch for a whole exercise: the server and every generator, in the
+# background, with their logs and process IDs under .nn/.
+#
+#   scripts/nn up [demo|clean]   start (default: demo)
+#   scripts/nn down              stop everything this script started
+#   scripts/nn status            what's running, and where the dashboard is
+#   scripts/nn logs [NAME]       follow a log (server, standard, legacy,
+#                                body-axis, gateway, faulty); default server
+#
+# Scenarios:
+#   clean  four vendors side by side (standard, legacy, body-axis, gateway;
+#          sites 1-8), every PDU type, SIMAN handshakes and radios. A clean
+#          exercise: the dashboard should stay quiet.
+#   demo   the same, plus a "faulty vendor" on sites 9-12 that runs every
+#          fault, PDU defect, handshake fault and radio fault, then starts
+#          over, every 5 minutes.
+#
+# Environment:
+#   NN_UDP    UDP port the server listens on (default 3000)
+#   NN_HTTP   dashboard address (default 127.0.0.1:8080)
+#   NN_DB     event database (default events.db)
+#   NN_SISO   SISO-REF-010.xml for enumeration checks (default: siso/SISO-REF-010.xml
+#             if it exists; the file is free from sisostandards.org)
+#   NN_ARGS   extra nn-server serve flags, e.g. "--capture cap.db"
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+state="$root/.nn"
+bin="$root/target/release"
+udp=${NN_UDP:-3000}
+http=${NN_HTTP:-127.0.0.1:8080}
+db=${NN_DB:-events.db}
+siso=${NN_SISO:-$root/siso/SISO-REF-010.xml}
+export PATH="$HOME/.cargo/bin:$PATH"
+
+running() { [[ -f $1 ]] && kill -0 "$(cat "$1")" 2>/dev/null; }
+
+# Start NAME in the background: its command runs from the repository root,
+# output goes to .nn/NAME.log, its process ID to .nn/NAME.pid.
+start() {
+    local name=$1
+    shift
+    (cd "$root" && exec "$@") >"$state/$name.log" 2>&1 &
+    echo $! >"$state/$name.pid"
+}
+
+up() {
+    local scenario=${1:-demo}
+    [[ $scenario == demo || $scenario == clean ]] || { echo "unknown scenario '$scenario' (demo or clean)" >&2; exit 2; }
+    mkdir -p "$state"
+    if running "$state/server.pid"; then
+        echo "already running (scripts/nn down first)" >&2
+        exit 1
+    fi
+    echo "building..."
+    (cd "$root" && cargo build --release -q)
+
+    local serve=("$bin/nn-server" serve --port "$udp" --http "$http" --db "$db" --runs .)
+    if [[ -f $siso ]]; then
+        serve+=(--siso "$siso")
+    fi
+    # shellcheck disable=SC2206
+    serve+=(${NN_ARGS:-})
+    start server "${serve[@]}"
+    sleep 1
+    if ! running "$state/server.pid"; then
+        echo "the server didn't start:" >&2
+        cat "$state/server.log" >&2
+        exit 1
+    fi
+
+    # Four vendors, each its own process (its own sockets), sites 2p+1..2p+2,
+    # application p+1. A day long: `down` stops them.
+    local p=0
+    for profile in standard legacy body-axis gateway; do
+        start "$profile" "$bin/nn-generator" --profile "$profile" --target "127.0.0.1:$udp" \
+            --duration 86400 --site-base $((2 * p + 1)) --sites 2 --application $((p + 1)) \
+            --seed $((11 + p)) --fire-every 10 --all-types 10 --siman-every 3 --radio-every 6 \
+            --truth /dev/null
+        p=$((p + 1))
+    done
+
+    if [[ $scenario == demo ]]; then
+        # Sites 9-12, application 9: every fault in a 5-minute run, over and over.
+        start faulty bash -c "while true; do '$bin/nn-generator' --target 127.0.0.1:$udp \
+            --duration 300 --site-base 9 --sites 4 --application 9 --fire-every 10 \
+            --all-types 10 --all-faults --all-controls --all-defects \
+            --all-handshake-faults --all-radio-faults --truth /dev/null; done"
+    fi
+    echo "$scenario" >"$state/scenario"
+    status
+}
+
+down() {
+    local any=0
+    for pidfile in "$state"/*.pid; do
+        [[ -e $pidfile ]] || continue
+        local pid
+        pid=$(cat "$pidfile")
+        if kill -0 "$pid" 2>/dev/null; then
+            # The faulty vendor is a loop: stop its current generator too.
+            pkill -P "$pid" 2>/dev/null || true
+            kill "$pid" 2>/dev/null || true
+            any=1
+        fi
+        rm -f "$pidfile"
+    done
+    rm -f "$state/scenario"
+    if [[ $any == 1 ]]; then echo "stopped"; else echo "nothing was running"; fi
+}
+
+status() {
+    local scenario
+    scenario=$(cat "$state/scenario" 2>/dev/null || echo "-")
+    local n=0
+    for pidfile in "$state"/*.pid; do
+        [[ -e $pidfile ]] || continue
+        local name
+        name=$(basename "$pidfile" .pid)
+        if running "$pidfile"; then
+            printf '  %-10s running (pid %s)\n' "$name" "$(cat "$pidfile")"
+            n=$((n + 1))
+        else
+            printf '  %-10s stopped (see .nn/%s.log)\n' "$name" "$name"
+        fi
+    done
+    if [[ $n == 0 ]]; then
+        echo "nothing running (scripts/nn up)"
+        return
+    fi
+    echo "scenario: $scenario    dashboard: http://$http    UDP: $udp"
+    if [[ -f $siso ]]; then echo "enumerations: $siso"; else echo "enumerations: base pack only (no SISO file at $siso)"; fi
+}
+
+logs() {
+    local name=${1:-server}
+    [[ -f $state/$name.log ]] || { echo "no log .nn/$name.log" >&2; exit 1; }
+    tail -f "$state/$name.log"
+}
+
+case ${1:-} in
+    up) up "${2:-}" ;;
+    down) down ;;
+    status) status ;;
+    logs) logs "${2:-}" ;;
+    *)
+        sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+        exit 2
+        ;;
+esac
