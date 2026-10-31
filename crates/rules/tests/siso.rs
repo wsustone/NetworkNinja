@@ -31,6 +31,7 @@ fn datagram(bytes: Vec<u8>, at: f64) -> Datagram {
         destination: None,
         payload: bytes,
         monotonic: None,
+        listener: None,
     }
 }
 
@@ -166,6 +167,7 @@ impl Sink for Collect {
             destination: None,
             payload: d.to_vec(),
             monotonic: None,
+            listener: None,
         });
         Ok(())
     }

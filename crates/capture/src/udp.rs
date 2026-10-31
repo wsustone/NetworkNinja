@@ -14,7 +14,7 @@ const MAX_DATAGRAM: usize = 65_535;
 pub const DEFAULT_RECV_BUFFER: usize = 8 << 20;
 
 /// How to open the socket.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UdpConfig {
     /// A label for status and logs, e.g. "dis" or "radio".
     pub name: String,
@@ -23,9 +23,14 @@ pub struct UdpConfig {
     pub port: u16,
     /// IPv4 multicast groups to join.
     pub multicast_groups: Vec<Ipv4Addr>,
-    /// Interface (by its IPv4 address) for the IGMP joins. 0.0.0.0 lets the
-    /// OS choose, which is often the wrong NIC on a multi-homed host.
-    pub multicast_interface: Ipv4Addr,
+    /// Interfaces (by IPv4 address) to join every group on; empty lets the
+    /// OS choose one, which is often the wrong NIC on a multi-homed host.
+    /// Joining a group on several interfaces still gives one copy of each
+    /// datagram: it arrives on one of them.
+    pub multicast_interfaces: Vec<Ipv4Addr>,
+    /// The interfaces as configured ("en0" or an address), parallel to
+    /// `multicast_interfaces`, for display and for saving the config back.
+    pub interface_names: Vec<String>,
     /// How long `recv` blocks before returning `Ok(None)`.
     pub read_timeout: Duration,
     /// Share the port with other sockets on this host (SO_REUSEADDR, and
@@ -46,7 +51,8 @@ impl Default for UdpConfig {
             bind: Ipv4Addr::UNSPECIFIED,
             port: 3000,
             multicast_groups: Vec::new(),
-            multicast_interface: Ipv4Addr::UNSPECIFIED,
+            multicast_interfaces: Vec::new(),
+            interface_names: Vec::new(),
             read_timeout: Duration::from_millis(250),
             share: false,
             recv_buffer: DEFAULT_RECV_BUFFER,
@@ -86,7 +92,14 @@ impl UdpSource {
                     format!("{group} is not a multicast address"),
                 ));
             }
-            socket.join_multicast_v4(group, &cfg.multicast_interface)?;
+            if cfg.multicast_interfaces.is_empty() {
+                socket.join_multicast_v4(group, &Ipv4Addr::UNSPECIFIED)?;
+            }
+            for iface in &cfg.multicast_interfaces {
+                socket
+                    .join_multicast_v4(group, iface)
+                    .map_err(|e| io::Error::new(e.kind(), format!("joining {group} on {iface}: {e}")))?;
+            }
         }
         socket.set_read_timeout(Some(cfg.read_timeout))?;
         let local = socket.local_addr()?;
@@ -116,6 +129,7 @@ impl UdpSource {
                     destination: Some(self.local),
                     payload: self.buf[..n].to_vec(),
                     monotonic: Some(crate::steady_now()),
+                    listener: None,
                 }))
             }
             Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => Ok(None),

@@ -59,4 +59,8 @@ pub struct Datagram {
     /// rules on this when present, and on `received_at` otherwise (pcap and
     /// recordings, whose stamps are all there is).
     pub monotonic: Option<f64>,
+    /// The listener that received it, for live sources (`Listeners`), so
+    /// the monitor can tell overlapping listeners from a network that
+    /// delivers twice, and show which input a sender arrives through.
+    pub listener: Option<std::sync::Arc<str>>,
 }

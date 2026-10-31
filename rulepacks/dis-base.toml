@@ -96,6 +96,18 @@ idle_transmit = 30.0
 signal_slack = 1.0
 severity = "warning"
 
+# --- Duplicate delivery ----------------------------------------------------
+
+[rules.duplicate-delivery]
+# The same datagram from the same sender twice within echo_window seconds is
+# one send delivered twice: two of the monitor's listeners overlap (the
+# message names them), or the network duplicates it (a loop, a sender on two
+# paths, a gateway echoing it back). The copy is counted once either way.
+# (Copies from a *different* sender are a relay's; see id-conflict
+# duplicate_window.)
+echo_window = 0.1
+severity = "warning"
+
 # --- Enumeration checks ----------------------------------------------------
 # field:    a path from the registry (header.* applies to every PDU)
 # allowed:  integer, "lo-hi" range, "a, b-c" list, or an array of those

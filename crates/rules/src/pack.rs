@@ -468,6 +468,7 @@ fn set_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (Radio, "timeout_multiplier") => |c, v| c.radio.timeout_multiplier = v,
         (Radio, "idle_transmit") => |c, v| c.radio.idle_transmit = v,
         (Radio, "signal_slack") => |c, v| c.radio.signal_slack = v,
+        (DuplicateDelivery, "echo_window") => |c, v| c.echo_window = v,
         _ => return None,
     })
 }
@@ -869,6 +870,7 @@ impl Merged {
                 Rule::PduFamily,
                 Rule::SimanHandshake,
                 Rule::Radio,
+                Rule::DuplicateDelivery,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -882,6 +884,7 @@ impl Merged {
                 (Rule::PduFamily, Severity::Warning),
                 (Rule::SimanHandshake, Severity::Warning),
                 (Rule::Radio, Severity::Warning),
+                (Rule::DuplicateDelivery, Severity::Warning),
             ]
             .into_iter()
             .collect(),

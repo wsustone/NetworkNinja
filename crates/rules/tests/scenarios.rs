@@ -31,6 +31,7 @@ impl Sink for Collect {
             destination: None,
             payload: d.to_vec(),
             monotonic: None,
+            listener: None,
         });
         Ok(())
     }
@@ -515,6 +516,7 @@ fn generate_process(cfg: &Config, p: u16) -> Vec<Datagram> {
                 destination: None,
                 payload: d.to_vec(),
                 monotonic: None,
+                listener: None,
             });
             Ok(())
         }
@@ -931,4 +933,57 @@ fn each_radio_fault_fires_once_on_its_site() {
         assert_eq!(sender, want_sender);
         assert!(msg.starts_with(want_msg), "{msg} / {want_msg}\n{}", describe(&events));
     }
+}
+
+// ------------------------------------------------ duplicate delivery
+
+fn copy_of(d: &Datagram, listener: &str, after: f64) -> Datagram {
+    Datagram {
+        received_at: d.received_at + Duration::from_secs_f64(after),
+        listener: Some(std::sync::Arc::from(listener)),
+        ..d.clone()
+    }
+}
+
+#[test]
+fn the_same_send_delivered_twice_is_counted_once_and_reported() {
+    let cfg = Config {
+        duration: 20.0,
+        sites: 1,
+        entities_per_site: 3,
+        ..Default::default()
+    };
+    let base = generate(&cfg);
+    let dup = |listener_b: &str, gap: f64| -> (Monitor, Vec<AlertEvent>) {
+        let mut all = Vec::new();
+        for d in &base {
+            all.push(copy_of(d, "lab", 0.0));
+            all.push(copy_of(d, listener_b, gap));
+        }
+        all.sort_by_key(|d| d.received_at);
+        monitor(&all)
+    };
+    // Through two listeners: the listeners overlap.
+    let (m, events) = dup("site-b", 0.002);
+    let f = firing(&events);
+    assert_eq!(f.len(), 1, "{}", describe(&events));
+    assert_eq!(f[0].alert.rule, Rule::DuplicateDelivery);
+    assert!(
+        f[0].reason.contains("two listeners") && f[0].reason.contains("'site-b'"),
+        "{}",
+        f[0].reason
+    );
+    assert_eq!(m.echoes as usize, base.len());
+    // Twice through one listener: the network duplicates it.
+    let (_, events) = dup("lab", 0.002);
+    let f = firing(&events);
+    assert_eq!(f.len(), 1, "{}", describe(&events));
+    assert!(
+        f[0].reason.contains("arrive twice on listener 'lab'"),
+        "{}",
+        f[0].reason
+    );
+    // The same bytes again after the echo window aren't an echo.
+    let (m, _) = dup("lab", 0.5);
+    assert_eq!(m.echoes, 0);
 }
