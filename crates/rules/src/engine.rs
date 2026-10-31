@@ -55,6 +55,9 @@ pub enum Rule {
     /// A collision reported by one party only, or twice
     /// (`crate::interactions::Collisions`).
     Collision,
+    /// An Attribute PDU or a Coupled PDU Extension breaks the issuance
+    /// rules (`crate::attribute`).
+    Attribute,
 }
 
 impl Rule {
@@ -76,6 +79,7 @@ impl Rule {
             Rule::DirectedEnergy => "directed-energy",
             Rule::EntityDamage => "entity-damage",
             Rule::Collision => "collision",
+            Rule::Attribute => "attribute",
         }
     }
 
@@ -97,6 +101,7 @@ impl Rule {
             "directed-energy" => Some(Rule::DirectedEnergy),
             "entity-damage" => Some(Rule::EntityDamage),
             "collision" => Some(Rule::Collision),
+            "attribute" => Some(Rule::Attribute),
             _ => None,
         }
     }
@@ -187,6 +192,11 @@ pub struct RuleConfig {
     pub repair_window: f64,
     /// Seconds the other party has to report its side of a collision.
     pub collision_window: f64,
+    /// COLLISION_THRSH: a collision needs one party faster than this, m/s.
+    pub collision_speed: f64,
+    /// How far an "entity impact" Detonation may be from its target's
+    /// dead-reckoned position, metres, plus the target's speed x 1 s.
+    pub impact_tolerance: f64,
 }
 
 impl Default for RuleConfig {
@@ -211,6 +221,8 @@ impl Default for RuleConfig {
             de_heartbeat: 0.5,
             repair_window: 6.0,
             collision_window: 5.0,
+            collision_speed: 0.1,
+            impact_tolerance: 100.0,
         }
     }
 }
@@ -660,8 +672,9 @@ impl Engine {
                 self.warfare.fire(now, source, h.exercise_id, status, f, table, grace)
             }
             PduBody::Detonation(d) => {
+                let limits = (self.config.max_flight, self.config.impact_tolerance);
                 self.warfare
-                    .detonation(now, source, h.exercise_id, status, d, self.config.max_flight)
+                    .detonation(now, source, h.exercise_id, status, d, table, limits)
             }
             _ => return Vec::new(),
         };
@@ -676,6 +689,26 @@ impl Engine {
                 f.message,
                 &mut out,
             );
+        }
+        out
+    }
+
+    /// Attribute PDU issuance and Coupled PDU Extension on one PDU's bytes,
+    /// with its neighbours in the datagram.
+    pub fn check_attribute(
+        &mut self,
+        now: f64,
+        source: SocketAddr,
+        pdu: &[u8],
+        prev: Option<&[u8]>,
+        next: Option<&[u8]>,
+    ) -> Vec<AlertEvent> {
+        if !self.enabled(Rule::Attribute) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for f in crate::attribute::check(source, pdu, prev, next) {
+            self.point_event(now, Rule::Attribute, f.kind, f.key, Some(f.sender), f.message, &mut out);
         }
         out
     }
@@ -706,10 +739,10 @@ impl Engine {
             );
         }
         if self.enabled(Rule::Collision) {
-            let window = self.config.collision_window;
+            let limits = (self.config.collision_window, self.config.collision_speed);
             found.extend(
                 self.collisions
-                    .observe(now, source, raw, window)
+                    .observe(now, source, raw, table, limits)
                     .into_iter()
                     .map(|f| (Rule::Collision, f)),
             );
@@ -1086,7 +1119,8 @@ impl Engine {
                 | Rule::FireDetonation
                 | Rule::DirectedEnergy
                 | Rule::EntityDamage
-                | Rule::Collision => {}
+                | Rule::Collision
+                | Rule::Attribute => {}
             }
         }
         out

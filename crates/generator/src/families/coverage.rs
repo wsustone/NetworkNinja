@@ -60,10 +60,40 @@ fn minimal(w: &World, tick: &Tick, site: u16, pdu_type: u8) -> Option<Pdu> {
     for f in enum_fields_of(pdu_type) {
         f.write(&mut body, HEADER_LEN, f.valid);
     }
+    let header = tick.header(pdu_type);
+    match pdu_type {
+        // Something must be moving (COLLISION_THRSH, 5.3.3.2 c): the
+        // issuer, at 2 m/s (Collision velocity at 32).
+        COLLISION => body[20..24].copy_from_slice(&2f32.to_be_bytes()),
+        // At least one record set with at least one record (5.3.6.3 a 2 iv).
+        ATTRIBUTE => minimal_attribute(&mut body, site, app, header.protocol_version),
+        _ => {}
+    }
     Some(Pdu {
-        header: tick.header(pdu_type),
+        header,
         body: PduBody::Other(body),
     })
+}
+
+const COLLISION: u8 = 4;
+const ATTRIBUTE: u8 = 72;
+const ELECTROMAGNETIC_EMISSION: u8 = 23;
+
+/// Fill a minimal Attribute body (offsets less the header) with one record
+/// set for the simulation, holding one 8-byte Blanking Sector attribute
+/// record (SISO 3500), extending Electromagnetic Emission PDUs, uncoupled.
+fn minimal_attribute(body: &mut Vec<u8>, site: u16, app: u16, version: u8) {
+    const BLANKING_SECTOR: u32 = 3500;
+    body[10] = ELECTROMAGNETIC_EMISSION;
+    body[11] = version;
+    body[12..16].copy_from_slice(&BLANKING_SECTOR.to_be_bytes());
+    body[18..20].copy_from_slice(&1u16.to_be_bytes());
+    for v in [site, app, 0, 1] {
+        body.extend(v.to_be_bytes());
+    }
+    body.extend(BLANKING_SECTOR.to_be_bytes());
+    body.extend(8u16.to_be_bytes());
+    body.extend([0, 0]);
 }
 
 impl Family for Coverage {
@@ -91,7 +121,9 @@ impl Family for Coverage {
                 let Some(&(at, width)) = layout(pdu_type).and_then(|l| l.counts.first()) else {
                     return Some(false);
                 };
-                body[at - HEADER_LEN + width as usize - 1] = 1;
+                // One more than the PDU holds.
+                let last = &mut body[at - HEADER_LEN + width as usize - 1];
+                *last = last.wrapping_add(1);
             }
             EventKind::PaddedPdu => body.extend([0; 8]),
             EventKind::WrongFamily => pdu.header.protocol_family = default_family(pdu_type) % 13 + 1,

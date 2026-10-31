@@ -13,6 +13,7 @@
 //! on every PDU all come from layered rule packs ([`pack`], ADR 0003): the
 //! base DIS pack ships in the binary and site packs layer on top.
 
+mod attribute;
 pub mod capture;
 mod engine;
 mod heartbeats;

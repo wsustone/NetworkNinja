@@ -83,6 +83,21 @@ pub enum EventKind {
     WrongFireType,
     /// Warfare fault: a Detonation for an Event ID never fired.
     OrphanDetonation,
+    /// Warfare fault: the next Fire fires a mine (munition category Fixed).
+    MineFired,
+    /// Warfare fault: the next Detonation claims an entity impact 2 km from
+    /// its target.
+    ImpactMiss,
+    /// Collision fault: the next collision's parties are both stationary.
+    StillCollision,
+    /// DE fault: the next shot's DE Fire carries a Damage Description record.
+    BadDeRecord,
+    /// Attribute fault: an Attribute PDU whose records don't match its
+    /// Master Attribute Record Type.
+    BadAttribute,
+    /// Attribute fault: a PDU says it is coupled (PDU Status CEI) and no
+    /// Attribute PDU follows it.
+    MissingExtension,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -147,6 +162,12 @@ impl EventKind {
             EventKind::DetonationMismatch => "detonation-mismatch",
             EventKind::WrongFireType => "wrong-fire-type",
             EventKind::OrphanDetonation => "orphan-detonation",
+            EventKind::MineFired => "mine-fired",
+            EventKind::ImpactMiss => "impact-miss",
+            EventKind::StillCollision => "still-collision",
+            EventKind::BadDeRecord => "bad-de-record",
+            EventKind::BadAttribute => "bad-attribute",
+            EventKind::MissingExtension => "missing-extension",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -199,6 +220,12 @@ impl EventKind {
                 | EventKind::DetonationMismatch
                 | EventKind::WrongFireType
                 | EventKind::OrphanDetonation
+                | EventKind::MineFired
+                | EventKind::ImpactMiss
+                | EventKind::StillCollision
+                | EventKind::BadDeRecord
+                | EventKind::BadAttribute
+                | EventKind::MissingExtension
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
                 | EventKind::StaleAppearance

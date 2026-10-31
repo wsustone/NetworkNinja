@@ -497,6 +497,8 @@ fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (DirectedEnergy, "de_heartbeat") => |c, v| c.de_heartbeat = v,
         (EntityDamage, "repair_window") => |c, v| c.repair_window = v,
         (Collision, "collision_window") => |c, v| c.collision_window = v,
+        (Collision, "collision_speed") => |c, v| c.collision_speed = v,
+        (FireDetonation, "impact_tolerance") => |c, v| c.impact_tolerance = v,
         _ => return None,
     })
 }
@@ -905,6 +907,7 @@ impl Merged {
                 Rule::DirectedEnergy,
                 Rule::EntityDamage,
                 Rule::Collision,
+                Rule::Attribute,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -925,6 +928,7 @@ impl Merged {
                 (Rule::DirectedEnergy, Severity::Warning),
                 (Rule::EntityDamage, Severity::Warning),
                 (Rule::Collision, Severity::Warning),
+                (Rule::Attribute, Severity::Warning),
             ]
             .into_iter()
             .collect(),

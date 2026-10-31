@@ -16,7 +16,7 @@ families so far did. Status per type is in [pdu-coverage.md](pdu-coverage.md).
 | H header and framing | all 72 types |
 | S structure (lengths, counts, record lengths) | all 72 on v7; types 1–27 on v6 |
 | E enumerations (SISO-REF-010) | 59 fixed-offset fields in 40 types, plus Entity State, Fire and Detonation fields |
-| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
+| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
 
 Everything else is checked for shape and enumerations, but not for meaning.
 
@@ -85,6 +85,10 @@ The PDUs every exercise uses. This wave has the most value.
 
 **Generator faults:** orphan-detonation, fire-without-detonation, mine-fired, wrong-FTI.
 
+*Done:* rule `fire-detonation`, all six rows: `fixed-munition` (munition category Fixed, 3),
+`impact-distance` (result Entity Impact more than `impact_tolerance` + speed × 1 s from the
+target's dead-reckoned position). Generator `--mine-fired`, `--impact-miss`.
+
 **False-alarm risk:** munitions that miss and are never detonated. That's why "no Detonation"
 is a warning with a generous default, and is suppressed for expendables.
 
@@ -100,7 +104,7 @@ is a warning with a generous default, and is suppressed for expendables.
 *Done:* rule `directed-energy` (`nn_rules::interactions::DirectedEnergy`): `dropout`, `no-fire`,
 `no-detonation`, `second-fire`, keyed by (exercise, Event ID). A DE Fire with the weapon off
 that never turned on (a minimal PDU) owes nothing. Generator `--de-every SECS`, faults
-`--de-dropout`, `--de-no-fire`. DE record checks are still to do.
+`--de-dropout`, `--de-no-fire`; `record-type` (aimpoint records only), `--bad-de-record`.
 
 ### Entity Damage Status (69)
 
@@ -114,7 +118,9 @@ that never turned on (a minimal PDU) owes nothing. Generator `--de-every SECS`, 
 
 *Done:* rule `entity-damage` (`after-deactivated`, `stale-appearance` after `repair_window`,
 platforms only); the heartbeat is the `heartbeat` rule's. Generator `--damage-every SECS`,
-faults `--stale-appearance`, `--eds-after-remove ID`. The record-count check is still to do.
+faults `--stale-appearance`, `--eds-after-remove ID`; `record-type` (DE Damage Description
+records only). The record-count row is dropped: 5.4.6.3 d) lets records be deleted, so a
+falling count is legitimate.
 
 ### Collision (4) and Collision-Elastic (66)
 
@@ -128,8 +134,9 @@ faults `--stale-appearance`, `--eds-after-remove ID`. The record-count check is 
 
 *Done:* rule `collision`: `one-sided` (pinned on the silent party; only for a known, active
 entity, so the "unknown" row is covered by saying nothing) and `duplicate` (per PDU type).
-Generator `--collision-every SECS`, faults `--one-sided-collision`, `--duplicate-collision`.
-The Elastic state machine and the speed threshold are still to do.
+Generator `--collision-every SECS`, faults `--one-sided-collision`, `--duplicate-collision`;
+`below-threshold` (Collision only: its issuer's velocity and the other's Entity State),
+`--still-collision`. The Elastic state machine needs more design and is left for later.
 
 ### Attribute (72)
 
@@ -139,6 +146,15 @@ The Elastic state machine and the speed threshold are still to do.
 | Each Record Set holds at least one record, and records apply to that set's entity only | field | 5.3.6.3 a)2)iv |
 | Coupled extension: PDU Status CEI set, bundled right after the PDU it extends, one instance | cross-PDU | 5.3.6.3 b)1 |
 | Attribute Record PDU Type is a real PDU type, and Protocol Version matches the extended PDU | field | 5.3.6.3 a)2)i–ii |
+
+*Done:* rule `attribute` (`crate::attribute`, per PDU with its bundle neighbours):
+`master-type`, `empty`, `pdu-type`, `self-coupled`, `missing-extension`, `coupled-mismatch`,
+`uncoupled-transient` (only state PDUs, those with a heartbeat, may be extended uncoupled).
+Generator `--bad-attribute`, `--missing-extension`; coverage's minimal Attribute PDU now holds
+one record.
+
+**Left for later (needs more design):** the Entity State variable-parameter and Attached Part
+row above, and the Collision-Elastic state machine.
 
 ## Wave 2: Distributed emission regeneration
 
@@ -264,7 +280,8 @@ silence and exact-detection tests, coverage-table update and docs.
    rule `entity-lifecycle`.
 4. **Fire ↔ Detonation pairing**, plus DE Fire. *Done:* rules `fire-detonation`,
    `directed-energy`.
-5. **Entity Damage Status and Collision.** *Done:* rules `entity-damage`, `collision`.
+5. **Entity Damage Status and Collision.** *Done:* rules `entity-damage`, `collision`; the
+   Wave 1 wrap-up added the field checks and rule `attribute`.
 6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations.
 7. **Designator, IFF.**
 8. **Logistics**, built on the SIMAN tracker.
