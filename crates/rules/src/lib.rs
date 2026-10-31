@@ -18,6 +18,7 @@ mod engine;
 mod minitoml;
 mod monitor;
 pub mod pack;
+pub mod radio;
 pub mod siman;
 pub mod siso;
 

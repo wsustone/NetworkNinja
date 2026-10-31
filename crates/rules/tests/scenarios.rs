@@ -663,6 +663,7 @@ fn multi_vendor(faults: &[(usize, Event)]) -> Vec<Datagram> {
             fire_every: Some(6.0),
             all_types: (p % 2 == 0).then_some(10.0),
             siman_every: Some(3.0),
+            radio_every: Some(4.0),
             seed: 11 + p as u64,
             events: vec![
                 Event {
@@ -829,4 +830,105 @@ fn each_handshake_fault_fires_once_on_the_answering_site() {
         "{}",
         describe(&events)
     );
+}
+
+// --------------------------------------------- radio (ADR 0010 step 5)
+
+fn radio_run(events: Vec<Event>) -> Config {
+    Config {
+        duration: 200.0,
+        sites: 4,
+        entities_per_site: 4,
+        radio_every: Some(5.0),
+        all_types: Some(20.0),
+        events,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn radio_traffic_is_silent() {
+    let freeze = vec![
+        Event {
+            kind: EventKind::Freeze,
+            target: Target::Exercise,
+            at: 60.0,
+        },
+        Event {
+            kind: EventKind::Resume,
+            target: Target::Exercise,
+            at: 90.0,
+        },
+    ];
+    for (version, bundle, silent_when_frozen) in [(7, false, false), (6, true, true), (7, true, true)] {
+        let cfg = Config {
+            version,
+            bundle,
+            silent_when_frozen,
+            ..radio_run(freeze.clone())
+        };
+        let datagrams = generate(&cfg);
+        let (m, events) = monitor(&datagrams);
+        assert!(
+            events.is_empty(),
+            "v{version} bundle={bundle} silent={silent_when_frozen}\n{}",
+            describe(&events)
+        );
+        assert_eq!(m.decode_errors, 0);
+        let signals = datagrams
+            .iter()
+            .flat_map(|d| decode_datagram(&d.payload))
+            .filter(|p| p.as_ref().unwrap().header.pdu_type == 26)
+            .count();
+        assert!(signals > 1000, "{signals} Signal PDUs");
+    }
+}
+
+#[test]
+fn each_radio_fault_fires_once_on_its_site() {
+    let at = |kind, site, at| Event {
+        kind,
+        target: Target::Site(site),
+        at,
+    };
+    let cfg = radio_run(vec![
+        at(EventKind::BadSignal, 1, 20.0),
+        at(EventKind::HotMic, 2, 30.0),
+        at(EventKind::DropTransmitter, 3, 40.0),
+        at(EventKind::OrphanSignal, 4, 180.0),
+    ]);
+    let (_, events) = monitor(&generate(&cfg));
+    let mut got: Vec<(String, String, String)> = firing(&events)
+        .iter()
+        .map(|e| {
+            (
+                e.alert.rule.name().to_string(),
+                e.alert.sender.unwrap().to_string(),
+                e.reason
+                    .split(": ")
+                    .nth(1)
+                    .unwrap_or("")
+                    .split(" (IEEE")
+                    .next()
+                    .unwrap()
+                    .to_string(),
+            )
+        })
+        .collect();
+    got.sort();
+    assert_eq!(got.len(), 4, "{}", describe(&events));
+    let expect = [
+        (
+            "10.0.1.10:40000",
+            "Signal Data Length 6392 bits, but 400 samples of encoding type 4 (16 bits each) are 6400",
+        ),
+        ("10.0.2.10:40000", "transmitting for"),
+        ("10.0.3.10:40000", "transmitting, but no Transmitter PDU for"),
+        ("10.0.4.10:40000", "Signal with no Transmitter PDU for this radio"),
+    ];
+    for ((rule, sender, msg), (want_sender, want_msg)) in got.iter().zip(expect) {
+        assert_eq!(rule, "radio");
+        assert_eq!(sender, want_sender);
+        assert!(msg.starts_with(want_msg), "{msg} / {want_msg}\n{}", describe(&events));
+    }
 }

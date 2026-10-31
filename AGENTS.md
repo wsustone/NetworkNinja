@@ -97,6 +97,16 @@ the second), faults `--no-response/--wrong-ack/--orphan-response SITE[@T]`,
 preset `--all-handshake-faults`. Test scenarios that send a directed
 Remove Entity or Stop/Freeze must also send the Acknowledge.
 
+Radio (ADR 0010 step 5): `nn_rules::radio::Radios` keyed by (exercise,
+Radio Reference ID, Radio Number), on raw bytes (`Engine::check_radio`,
+timeouts in `Engine::tick`, frozen time excluded); rule `radio`,
+`[rules.radio]` heartbeats/multiplier/idle_transmit/signal_slack. Signals
+for an unknown radio are only reported after a stationary timeout (144 s)
+of watching. Generator `--radio-every SECS`, faults `--hot-mic`,
+`--orphan-signal`, `--bad-signal`, `--drop-transmitter SITE[@T]`, preset
+`--all-radio-faults` (4 sites). Coverage's minimal Transmitter reports
+"transmitting" so its minimal Signal is legitimate.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

@@ -28,6 +28,13 @@ simulation must be answered within `response_timeout`, an Acknowledge must carry
 flag, and an Acknowledge or Action Response must answer a request. Their datum records are not
 decoded yet.
 
+**D** "radio" means Transmitter, Signal and Receiver are checked against each other and over
+time (`crates/rules/src/radio.rs`, rule `radio`): Signals need a transmitting Transmitter,
+Transmitter and Receiver heartbeats are held to HBT_PDU_TRANSMITTER / HBT_STATIONARY /
+HBT_PDU_RECEIVER, Signal fields must agree (5.8.4.3.2), a radio keeps one audio encoding, and
+a radio keyed with no Signal for `idle_transmit` is flagged. Modulation parameters, antenna
+patterns and frequency overlap are not checked yet.
+
 **G** "min" means `nn-generator --all-types SECS` sends a minimal valid PDU of the type (every
 count zero, optional fields absent) and `--defect KIND:TYPE` can bend it into each structural
 fault; "✓" means real traffic with behaviour.
@@ -68,9 +75,9 @@ Update this table in the same change that adds support.
 | 29 | Underwater Acoustic | Distributed Emission Regeneration (6) | 5.7.5 | 7.6.4 | ✓ | ✓ v7 | ✓ | – | min |
 | 28 | IFF | Distributed Emission Regeneration (6) | 5.7.6 | 7.6.5 | ✓ | ✓ v7 | – | – | min |
 | 30 | Supplemental Emission/Entity State | Distributed Emission Regeneration (6) | 5.7.7 | 7.6.6 | ✓ | ✓ v7 | – | – | min |
-| 25 | Transmitter | Radio Communications (4) | 5.8.3 | 7.7.2 | ✓ | ✓ | ✓ | – | min |
-| 26 | Signal | Radio Communications (4) | 5.8.4 | 7.7.3 | ✓ | ✓ | – | – | min |
-| 27 | Receiver | Radio Communications (4) | 5.8.5 | 7.7.4 | ✓ | ✓ | ✓ | – | min |
+| 25 | Transmitter | Radio Communications (4) | 5.8.3 | 7.7.2 | ✓ | ✓ | ✓ | radio | ✓ |
+| 26 | Signal | Radio Communications (4) | 5.8.4 | 7.7.3 | ✓ | ✓ | – | radio | ✓ |
+| 27 | Receiver | Radio Communications (4) | 5.8.5 | 7.7.4 | ✓ | ✓ | ✓ | radio | ✓ |
 | 31 | Intercom Signal | Radio Communications (4) | 5.8.6 | 7.7.5 | ✓ | ✓ v7 | – | – | min |
 | 32 | Intercom Control | Radio Communications (4) | 5.8.7 | 7.7.6 | ✓ | ✓ v7 | ✓ | – | min |
 | 33 | Aggregate State | Entity Management (7) | 5.9.2.2 | 7.8.2 | ✓ | ✓ v7 | ✓ | – | min |

@@ -46,6 +46,9 @@ EXERCISE
     --siman-every SECS      Every SECS, the first site (as simulation manager) sends
                             the second a Create Entity, Action Request, Data Query
                             or Set Data in turn, and it answers (default off)
+    --radio-every SECS      Every SECS, the next site's first vehicle talks for 2 s
+                            on its radio (Transmitter, PCM Signals); every such
+                            radio heartbeats Transmitter and Receiver (default off)
     --bundle                Pack several PDUs per datagram
     --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
@@ -67,6 +70,13 @@ HANDSHAKE FAULTS (on the answering site; need --siman-every and 2+ sites)
     --wrong-ack SITE[@T]    Site's next Acknowledge carries the wrong flag
     --orphan-response SITE[@T]  Site sends an Action Response nobody asked for
 
+RADIO FAULTS (by site; need --radio-every)
+    --hot-mic SITE[@T]      Site's radio keys up and never sends a Signal
+    --orphan-signal SITE[@T]  Site sends a Signal for a radio with no Transmitter
+    --bad-signal SITE[@T]   Site's next Signal has the wrong Data Length
+    --drop-transmitter SITE[@T]  Site's radio stops sending Transmitter PDUs
+                            but keeps transmitting
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -79,6 +89,8 @@ PRESETS
     --all-defects           One of each PDU defect on site 1
     --all-handshake-faults  One of each handshake fault on site 2 (turns on
                             --siman-every 2 if it isn't set)
+    --all-radio-faults      One of each radio fault, one site each (needs 4
+                            sites; turns on --radio-every 5 if it isn't set)
 
 ID is site:application:entity, e.g. 1:1:3. Synthetic simulators use application 1.
 ";
@@ -110,7 +122,7 @@ fn parse_args() -> Result<Options, String> {
     let (mut broadcast, mut pcap, mut truth) = (false, None, None);
     let mut pending: Vec<(EventKind, String)> = Vec::new();
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
-    let mut all_handshake = false;
+    let (mut all_handshake, mut all_radio) = (false, false);
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -164,6 +176,12 @@ fn parse_args() -> Result<Options, String> {
             "--wrong-ack" => pending.push((EventKind::WrongAck, val()?)),
             "--orphan-response" => pending.push((EventKind::OrphanResponse, val()?)),
             "--all-handshake-faults" => all_handshake = true,
+            "--radio-every" => cfg.radio_every = Some(num(val()?)?),
+            "--hot-mic" => pending.push((EventKind::HotMic, val()?)),
+            "--orphan-signal" => pending.push((EventKind::OrphanSignal, val()?)),
+            "--bad-signal" => pending.push((EventKind::BadSignal, val()?)),
+            "--drop-transmitter" => pending.push((EventKind::DropTransmitter, val()?)),
+            "--all-radio-faults" => all_radio = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -218,6 +236,18 @@ fn parse_args() -> Result<Options, String> {
         pending.push((EventKind::OrphanResponse, format!("{second}@{}", d * 0.30)));
         pending.push((EventKind::NoResponse, format!("{second}@{}", d * 0.60)));
     }
+    if all_radio {
+        if cfg.sites < 4 {
+            return Err("--all-radio-faults needs at least 4 sites".into());
+        }
+        cfg.radio_every.get_or_insert(5.0);
+        let site = |n: u16| cfg.site_base + n;
+        pending.push((EventKind::BadSignal, format!("{}@{}", site(0), d * 0.10)));
+        pending.push((EventKind::HotMic, format!("{}@{}", site(1), d * 0.15)));
+        pending.push((EventKind::DropTransmitter, format!("{}@{}", site(2), d * 0.20)));
+        // Late, so the monitor has watched a full stationary timeout first.
+        pending.push((EventKind::OrphanSignal, format!("{}@{}", site(3), d * 0.90)));
+    }
     if all_defects {
         // One type each, so no fault hides behind another's repeat window.
         // Collision, Transmitter, Designator, Signal, EE, Receiver
@@ -264,7 +294,14 @@ fn parse_args() -> Result<Options, String> {
         };
         let target = match kind {
             EventKind::Freeze | EventKind::Resume => Target::Exercise,
-            EventKind::RestartPort | EventKind::NoResponse | EventKind::WrongAck | EventKind::OrphanResponse => {
+            EventKind::RestartPort
+            | EventKind::NoResponse
+            | EventKind::WrongAck
+            | EventKind::OrphanResponse
+            | EventKind::HotMic
+            | EventKind::OrphanSignal
+            | EventKind::BadSignal
+            | EventKind::DropTransmitter => {
                 let site: u16 = what.parse().map_err(|e| format!("bad site '{what}': {e}"))?;
                 if !(cfg.site_base as u32..=last_site).contains(&(site as u32)) {
                     return Err(format!(
