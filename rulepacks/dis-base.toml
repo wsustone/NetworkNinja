@@ -80,6 +80,22 @@ severity = "warning"
 response_timeout = 12.0
 severity = "warning"
 
+# --- Radio communications (ADR 0010 step 5) --------------------------------
+
+[rules.radio]
+# Transmitter heartbeat while its antenna moves (HBT_PDU_TRANSMITTER) and
+# while it doesn't (HBT_STATIONARY); Receiver heartbeat (HBT_PDU_RECEIVER);
+# a radio times out after heartbeat x timeout_multiplier (HBT_TIMEOUT_MPLIER).
+transmitter_heartbeat = 2.0
+stationary_heartbeat = 60.0
+receiver_heartbeat = 5.0
+timeout_multiplier = 2.4
+# Seconds a radio may transmit with no Signal PDU before it looks stuck,
+# and seconds Signals may trail the Transmitter PDU that ends a transmission.
+idle_transmit = 30.0
+signal_slack = 1.0
+severity = "warning"
+
 # --- Enumeration checks ----------------------------------------------------
 # field:    a path from the registry (header.* applies to every PDU)
 # allowed:  integer, "lo-hi" range, "a, b-c" list, or an array of those

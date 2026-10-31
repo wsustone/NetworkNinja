@@ -68,6 +68,15 @@ pub enum EventKind {
     WrongAck,
     /// Handshake fault: the site sends an Action Response nobody asked for.
     OrphanResponse,
+    /// Radio fault: the site's radio keys up and never sends a Signal.
+    HotMic,
+    /// Radio fault: the site sends a Signal for a radio with no Transmitter.
+    OrphanSignal,
+    /// Radio fault: the site's next Signal has the wrong Data Length.
+    BadSignal,
+    /// Radio fault: the site's radio stops sending Transmitter PDUs while it
+    /// keeps transmitting.
+    DropTransmitter,
     /// Enumeration fault (tier E): the type's first enumerated field set to
     /// its largest value, which SISO-REF-010 leaves undefined. Caught with
     /// `serve --siso`.
@@ -93,6 +102,10 @@ impl EventKind {
             EventKind::NoResponse => "no-response",
             EventKind::WrongAck => "wrong-ack",
             EventKind::OrphanResponse => "orphan-response",
+            EventKind::HotMic => "hot-mic",
+            EventKind::OrphanSignal => "orphan-signal",
+            EventKind::BadSignal => "bad-signal",
+            EventKind::DropTransmitter => "drop-transmitter",
         }
     }
     /// The PDU defects (structural and enumeration), in preset order.
@@ -124,6 +137,10 @@ impl EventKind {
                 | EventKind::NoResponse
                 | EventKind::WrongAck
                 | EventKind::OrphanResponse
+                | EventKind::HotMic
+                | EventKind::OrphanSignal
+                | EventKind::BadSignal
+                | EventKind::DropTransmitter
         )
     }
 }
@@ -182,6 +199,9 @@ pub struct Config {
     /// Seconds between Simulation Management requests from the first site
     /// to the second, each answered (needs at least 2 sites).
     pub siman_every: Option<f64>,
+    /// Seconds between 2 s radio transmissions, each site's first vehicle
+    /// in turn; every such radio heartbeats Transmitter and Receiver PDUs.
+    pub radio_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -217,6 +237,7 @@ impl Default for Config {
             fire_every: None,
             all_types: None,
             siman_every: None,
+            radio_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,

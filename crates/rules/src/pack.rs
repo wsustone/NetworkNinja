@@ -462,6 +462,12 @@ fn set_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (PositionJump, "jump_dr_multiplier") => |c, v| c.jump_dr_multiplier = v,
         (PositionJump, "jump_timing_slack") => |c, v| c.jump_timing_slack = v,
         (SimanHandshake, "response_timeout") => |c, v| c.response_timeout = v,
+        (Radio, "transmitter_heartbeat") => |c, v| c.radio.transmitter_heartbeat = v,
+        (Radio, "stationary_heartbeat") => |c, v| c.radio.stationary_heartbeat = v,
+        (Radio, "receiver_heartbeat") => |c, v| c.radio.receiver_heartbeat = v,
+        (Radio, "timeout_multiplier") => |c, v| c.radio.timeout_multiplier = v,
+        (Radio, "idle_transmit") => |c, v| c.radio.idle_transmit = v,
+        (Radio, "signal_slack") => |c, v| c.radio.signal_slack = v,
         _ => return None,
     })
 }
@@ -862,6 +868,7 @@ impl Merged {
                 Rule::PduPadding,
                 Rule::PduFamily,
                 Rule::SimanHandshake,
+                Rule::Radio,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -874,6 +881,7 @@ impl Merged {
                 (Rule::PduPadding, Severity::Warning),
                 (Rule::PduFamily, Severity::Warning),
                 (Rule::SimanHandshake, Severity::Warning),
+                (Rule::Radio, Severity::Warning),
             ]
             .into_iter()
             .collect(),

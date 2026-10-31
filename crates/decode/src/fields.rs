@@ -20,7 +20,8 @@ pub struct EnumField {
     /// The SISO-REF-010 enumeration that defines the field's values.
     pub uid: u16,
     /// A value defined in SISO-REF-010 (v37), for building valid PDUs.
-    /// Mostly 0 ("Other"), but some enumerations don't define 0.
+    /// Mostly 0 ("Other"), but some enumerations don't define 0, and some
+    /// fields need a particular value for the PDU to make sense.
     pub valid: u32,
 }
 
@@ -74,7 +75,8 @@ static FIELDS: [EnumField; 59] = [
     f(23, "electromagnetic-emission.state_update_indicator", 24, 1, 77),
     f(24, "designator.code_name", 18, 2, 80),
     f(24, "designator.designator_code", 26, 2, 81),
-    f(25, "transmitter.transmit_state", 28, 1, 164),
+    // On and transmitting: the minimal Signal PDU that follows belongs to it.
+    v(f(25, "transmitter.transmit_state", 28, 1, 164), 2),
     f(25, "transmitter.input_source", 29, 1, 165),
     f(25, "transmitter.antenna_pattern_type", 68, 2, 167),
     f(25, "transmitter.major_modulation", 90, 2, 155),
