@@ -14,34 +14,38 @@
   .stat { color:var(--dim); } .stat b { color:var(--fg); }
   #conn.ws { color:var(--ok); } #conn.poll { color:var(--warn); } #conn.down { color:var(--crit); }
   .frozen { color:var(--warn); font-weight:600; }
-  main { display:grid; grid-template-columns: 200px 1fr 380px; gap:1em; padding:1em; }
-  #sidebar { grid-row:1/3; }
-  #sidelist { list-style:none; margin:0; padding:0; font-size:12px; }
-  #sidelist li { padding:.35em .6em; cursor:pointer; border-radius:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #sidelist li:hover { background:#21262d; }
-  #sidelist li.sel { background:#1f6feb44; }
-  #sidelist .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
-  #sidelist .id { color:var(--dim); font-size:10px; float:right; }
-  /* Tablet: sidebar becomes a horizontal strip; map spans the full width. */
+  /* Monitoring first: issues on the left, context (map, selected entity) on
+     the right, the entity table and traffic underneath. */
+  main { display:grid; gap:1em; padding:1em; grid-template-columns:minmax(0,1.35fr) minmax(340px,1fr);
+    grid-template-areas:"issues map" "issues detail" "ents ents" "traffic traffic"; }
+  #issues { grid-area:issues; display:flex; flex-direction:column; min-height:640px; }
+  #map { grid-area:map; height:380px; position:relative; }
+  #detailbox { grid-area:detail; }
+  #ents { grid-area:ents; }
+  #traffic { grid-area:traffic; }
+  /* Tablet and phone: one column, issues first. */
   @media (max-width:1100px) {
-    main { grid-template-columns:1fr 340px; }
-    #sidebar { grid-column:1/-1; grid-row:auto; }
-    #sidelist { display:flex; overflow-x:auto; gap:2px; }
-    #sidelist li { flex:none; }
-    #map { grid-column:1/-1; }
+    main { grid-template-columns:minmax(0,1fr); grid-template-areas:"issues" "map" "detail" "ents" "traffic"; }
+    #issues { min-height:0; }
   }
-  /* Phone: single column, capped panels, bigger tap targets. */
   @media (max-width:700px) {
-    main { grid-template-columns:1fr; padding:.5em; gap:.5em; }
+    main { padding:.5em; gap:.5em; }
     header { font-size:12px; padding:.4em .6em; gap:.4em 1em; }
-    #sidebar { grid-row:auto; }
     .tablewrap { overflow-x:auto; max-height:55vh; }
     #map { height:260px; }
-    #alerts { max-height:40vh; overflow-y:auto; }
+    #board, #alerts { max-height:60vh; }
     .albtn { padding:.35em .7em; font-size:12px; }
     th, td { padding:.3em .5em; }
     #filter, #efilter { padding:.55em .9em; font-size:14px; }
   }
+  /* Health strip: the worst active issue sets its colour. */
+  #health { display:flex; gap:.5em 1.6em; align-items:center; flex-wrap:wrap; padding:.55em 1em; border-bottom:1px solid var(--line); background:#0f1a14; }
+  #health.warn { background:#221a0b; } #health.crit { background:#2a1214; }
+  #health .verdict { font-weight:700; font-size:15px; letter-spacing:.3px; }
+  #health.ok .verdict { color:var(--ok); } #health.warn .verdict { color:var(--warn); } #health.crit .verdict { color:var(--crit); }
+  #health .n { color:var(--dim); } #health .n b { color:var(--fg); font-size:16px; font-variant-numeric:tabular-nums; }
+  #health .n.c b { color:var(--crit); } #health .n.w b { color:var(--warn); }
+  #health .n.zero b { color:var(--dim); }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   h2 { margin:0; padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); border-bottom:1px solid var(--line); }
   h2 span { float:right; font-weight:400; }
@@ -53,16 +57,35 @@
   tr.stale td { color:var(--dim); }
   tr.removed td { color:var(--dim); text-decoration:line-through; }
   tr.frozen td:last-child { color:var(--warn); }
-  ul#alerts { list-style:none; margin:0; padding:0; max-height:70vh; overflow-y:auto; }
+  #issues h2 .tabs { float:right; }
+  #issues h2 .tabs button { font-size:11px; text-transform:none; letter-spacing:0; padding:.05em .7em; }
+  ul#alerts, ul#board { list-style:none; margin:0; padding:0; flex:1; min-height:0; max-height:72vh; overflow-y:auto; }
   #alerts li { padding:.5em .9em; border-bottom:1px solid #21262d; cursor:pointer; font-size:13px; }
-  #alerts li:hover { background:#1f2d3d; }
-  #alerts li.crit { border-left:3px solid var(--crit); }
-  #alerts li.warn { border-left:3px solid var(--warn); }
+  #alerts li:hover, #board li:hover { background:#1f2d3d; }
+  #alerts li.crit, #board li.crit { border-left:3px solid var(--crit); }
+  #alerts li.warn, #board li.warn { border-left:3px solid var(--warn); }
   #alerts li.res { border-left:3px solid var(--ok); opacity:.65; }
-  #alerts li.err { border-left:3px solid var(--crit); background:#2d1f22; }
+  #alerts li.err, #board li.err { border-left:3px solid var(--crit); background:#2d1f22; }
   #alerts li.info { border-left:3px solid var(--line); color:var(--dim); }
   #alerts .t { color:var(--dim); font-size:11px; }
   #alerts .r { color:var(--dim); font-size:11px; float:right; }
+  /* Issues board: one row per (rule, entity), or per sender for decode errors. */
+  #board li { padding:.55em .9em .6em; border-bottom:1px solid #21262d; cursor:pointer; }
+  #board li.sel { background:#1f2d3d; }
+  #board li.quiet { opacity:.5; }
+  #board .l1 { display:flex; gap:.6em; align-items:baseline; flex-wrap:wrap; }
+  #board .rule { font-weight:600; }
+  #board .ent { font-family:ui-monospace,monospace; font-size:12px; }
+  #board .ent i { font-style:normal; color:var(--dim); font-family:system-ui,sans-serif; margin-left:.3em; }
+  #board .meta { margin-left:auto; color:var(--dim); font-size:11px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  #board .meta b { color:var(--fg); }
+  #board .l2 { color:var(--dim); font-size:12px; margin-top:.15em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #board .l3 { margin-top:.3em; }
+  #board .l3 .albtn { margin:0 .4em 0 0; }
+  .badge { font-size:10px; padding:0 .45em; border-radius:8px; border:1px solid currentColor; }
+  .badge.open { color:var(--crit); } .badge.acked { color:var(--ok); }
+  td.iss { font-variant-numeric:tabular-nums; }
+  td.iss .dot, .sdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; }
   .albtn { font-size:10px; padding:.1em .5em; margin-left:.5em; background:#21262d; color:var(--dim); border:1px solid var(--line); border-radius:3px; cursor:pointer; }
   .albtn:hover { color:var(--fg); border-color:var(--dim); }
   .acked { color:var(--ok); font-size:11px; }
@@ -83,7 +106,7 @@
   .tablewrap.short { max-height:32vh; }
   tbody tr { cursor:pointer; }
   tbody tr:hover td { background:#1c2129; }
-  #detail { border-top:1px solid var(--line); padding:.6em .9em .8em; font-size:12px; }
+  #detail { padding:.6em .9em .8em; font-size:12px; }
   #detail .dh { display:flex; gap:.7em; align-items:baseline; flex-wrap:wrap; margin-bottom:.5em; }
   #detail .dh b { font-size:15px; }
   #detail .dh .id { color:var(--dim); font-family:ui-monospace,monospace; }
@@ -99,10 +122,8 @@
   #detail .acts .albtn { margin:0; font-size:11px; padding:.2em .6em; }
   #detail .gone { color:var(--warn); }
   .empty { padding:1em; color:var(--dim); }
-  #map { grid-column:2 / -1; height:420px; position:relative; }
   .maplibregl-ctrl-attrib { font-size:10px; }
   /* Traffic chart (ADR 0008 /api/query). Series hues: validated dark palette, fixed order. */
-  #traffic { grid-column:2 / -1; }
   #traffic h2 select { margin-left:.4em; text-transform:none; letter-spacing:0; }
   #tlegend { display:flex; flex-wrap:wrap; gap:.25em 1em; padding:.5em .9em 0; font-size:11px; color:var(--dim); }
   #tlegend span { white-space:nowrap; } #tlegend b { color:var(--fg); font-weight:500; }
@@ -115,7 +136,6 @@
   #ttip i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; }
   #ttable { padding:0 .9em .6em; font-size:11px; }
   #tchart .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
-  @media (max-width:1100px) { #traffic { grid-column:1/-1; } }
   /* Conformance view (ADR 0008 slice 2). Heat: one hue, light→dark by count. */
   .tabs { display:flex; gap:2px; }
   .tabs button { background:none; color:var(--dim); border:1px solid var(--line); padding:.15em .7em; font:inherit; font-size:12px; cursor:pointer; }
@@ -145,16 +165,21 @@
   <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button></span>
   <span id="conn" class="down">connecting…</span>
   <span class="stat">exercise <b id="hEx">–</b></span>
-  <span class="stat">entities <b id="hEnt">0</b></span>
-  <span class="stat">PDU/s <b id="hRate">0</b></span>
-  <span class="stat">errors <b id="hErr">0</b></span>
-  <span class="stat">alerts <b id="hAlerts">0</b></span>
   <span class="stat" id="hFrozen"></span>
   <span class="stat">run <select id="runsel"><option value="">live</option></select></span>
   <span class="stat">speed <select id="pspeed"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></span>
   <span class="stat" style="margin-left:auto" id="hPacks"></span>
   <span class="stat" id="hUser" hidden><b id="hWho"></b> <button id="logout">sign out</button></span>
 </header>
+<div id="health" class="ok">
+  <span class="verdict" id="hVerdict">All clear</span>
+  <span class="n c" id="hCritN"><b id="hCrit">0</b> critical</span>
+  <span class="n w" id="hWarnN"><b id="hWarn">0</b> warning</span>
+  <span class="n" id="hErrN"><b id="hErr">0</b> decode errors</span>
+  <span class="n"><b id="hEnt">0</b> entities</span>
+  <span class="n"><b id="hRate">0</b> PDU/s</span>
+  <span class="n" title="alerts open now"><b id="hAlerts">0</b> open</span>
+</div>
 <div id="tlrow"><b>replay</b><span id="seekt">0:00</span><input type="range" id="seek" min="0" max="0" step="0.1"><span id="seekd">0:00</span></div>
 
 <section id="conf" hidden>
@@ -177,29 +202,31 @@
   <div class="hint">Counts are alert firings and decode errors attributed to each sender. Click a count to see those events in the live log.</div>
 </section>
 <main>
-  <section id="sidebar">
-    <h2>Entities</h2>
-    <ul id="sidelist"></ul>
+  <section id="issues">
+    <h2>Issues <span id="aCount"></span>
+      <span class="tabs"><button id="tabBoard" class="on">Issues</button><button id="tabLog">Log</button></span></h2>
+    <input id="filter" placeholder="filter: entity, rule, sender, message…">
+    <ul id="board"></ul>
+    <ul id="alerts" hidden></ul>
   </section>
-  <section>
+  <section id="map"></section>
+  <section id="detailbox">
+    <h2>Selected <span id="dHint">click an issue, a map symbol or a row</span></h2>
+    <div id="detail"><div class="empty">Nothing selected.</div></div>
+  </section>
+  <section id="ents">
     <h2>Entities <span id="eCount"></span></h2>
     <input id="efilter" placeholder="search: id, marking, type, site…">
     <div class="tablewrap"><table>
       <thead><tr>
+        <th data-k="issues">Issues</th>
         <th data-k="id">ID</th><th data-k="marking">Marking</th><th data-k="etype">Type</th>
         <th data-k="force">Force</th><th data-k="lat">Lat</th><th data-k="lon">Lon</th>
         <th data-k="speed">m/s</th><th data-k="age">Age</th><th data-k="senders">Src</th><th data-k="status">Status</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
-    <div id="detail" hidden></div>
   </section>
-  <section>
-    <h2>Event log <span id="aCount"></span></h2>
-    <input id="filter" placeholder="filter: entity, rule, message…">
-    <ul id="alerts"></ul>
-  </section>
-  <section id="map"></section>
   <section id="traffic">
     <h2>Traffic <span>
       split<select id="tsplit"><option value="">total</option><option value="pdu_type">PDU type</option><option value="site">site</option><option value="sender">sender</option></select>
@@ -222,7 +249,7 @@
 </div></div>
 <script>
 "use strict";
-let state = null, sortKey = "id", sortAsc = true, selected = null, seeded = false;
+let state = null, sortKey = "issues", sortAsc = false, selected = null, seeded = false;
 const $ = id => document.getElementById(id);
 const seen = new Set();
 const feed = [];
@@ -231,17 +258,69 @@ function fmtAge(a) { return a < 60 ? a.toFixed(0)+"s" : (a/60).toFixed(1)+"m"; }
 function fmtT(s) { const m = Math.floor(s/60), r = Math.floor(s%60); return `${m}:${String(r).padStart(2,"0")}`; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
+// --- issues board: the log grouped into problems ---
+// One issue per (exercise, rule, entity); decode errors per sender. An issue
+// is active while its alert is open or it fired in the last QUIET seconds;
+// it fades after that and leaves the board after DROP (the Log keeps all).
+const QUIET = 120, DROP = 900;
+const issues = new Map();
+const SEV = {critical: 2, warning: 1};
+const noEntity = id => !id || id === "0:0:0";
+function note(e) {
+  if (e.kind === "alert") {
+    const key = `a|${e.exercise}|${e.rule}|${e.entity}`;
+    let i = issues.get(key);
+    if (!i) issues.set(key, i = {key, kind: "alert", rule: e.rule, pack: e.pack, entity: e.entity, exercise: e.exercise,
+      severity: e.severity, count: 0, first: e.at, last: e.at, message: "", sender: ""});
+    if (e.state === "firing") {
+      i.count++;
+      i.last = Math.max(i.last, e.at);
+      if (SEV[e.severity] > SEV[i.severity]) i.severity = e.severity;
+      i.message = e.message; i.sender = e.sender || i.sender;
+    } else i.resolved = e.at;
+  } else if (e.kind === "error") {
+    const src = e.source || "unknown", key = `e|${src}`;
+    let i = issues.get(key);
+    if (!i) issues.set(key, i = {key, kind: "error", rule: "decode-error", entity: "", severity: "critical",
+      count: 0, first: e.at, last: e.at, message: "", sender: src});
+    i.count += e.count || 1; i.last = Math.max(i.last, e.at); i.message = e.message;
+  }
+}
+// The issue's open alert, if any: state.alerts is the truth for "open".
+function openAlert(i) {
+  return i.kind === "alert" && state ? state.alerts.find(a => a.rule === i.rule && a.entity === i.entity) : null;
+}
+function issueList() {
+  const now = state ? state.at : Date.now() / 1000;
+  const out = [];
+  for (const i of issues.values()) {
+    i.open = openAlert(i);
+    i.quiet = !i.open && now - i.last > QUIET;
+    if (!i.open && now - i.last > DROP) continue;
+    out.push(i);
+  }
+  return out.sort((a, b) => (!!b.open - !!a.open) || (a.quiet - b.quiet) || (SEV[b.severity] - SEV[a.severity]) || (b.last - a.last));
+}
+// Active issues per entity, for the table, the map and the detail panel.
+function issuesByEntity() {
+  const m = {};
+  for (const i of issueList()) {
+    if (i.quiet || noEntity(i.entity)) continue;
+    const x = m[i.entity] || (m[i.entity] = {n: 0, sev: 0, list: []});
+    x.n++; x.sev = Math.max(x.sev, SEV[i.severity] || 0); x.list.push(i);
+  }
+  return m;
+}
+
 function pushEntry(e, silent) {
   const k = e.seq ?? (e.kind + "|" + e.at + "|" + (e.entity||"") + "|" + (e.rule||"") + "|" + (e.state||""));
   if (seen.has(k)) return;
   seen.add(k);
   feed.push(e);
   if (feed.length > 2000) feed.shift();
+  note(e);
   renderFeed();
-  if (!silent && e.kind === "alert" && e.state === "firing" && e.severity === "critical") {
-    document.title = "⚠ NetworkNinja";
-    setTimeout(() => document.title = "NetworkNinja", 5000);
-  }
+  renderBoard();
 }
 
 function cmd(o) {
@@ -280,7 +359,60 @@ function renderFeed() {
     const {cls, ent, html} = entryHtml(e);
     return `<li class="${cls}" ${ent ? `data-ent="${esc(ent)}"` : ""}>${html}</li>`;
   }).reverse().join("");
-  $("aCount").textContent = `${state ? state.alerts.length : 0} open · ${feed.length} events`;
+}
+
+const stripLead = (msg, id) => msg.startsWith(id + " ") ? msg.slice(id.length + 1) : msg;
+let boardView = "board";
+function renderBoard() {
+  const terms = $("filter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = i => [i.rule, i.entity, i.sender, i.message, i.pack, byId[i.entity] ? byId[i.entity].marking : ""].join(" ").toLowerCase();
+  const all = issueList();
+  const list = all.filter(i => !terms.length || terms.every(t => hay(i).includes(t)));
+  const now = state ? state.at : Date.now() / 1000;
+  const active = all.filter(i => !i.quiet).length;
+  $("aCount").textContent = boardView === "board"
+    ? `${active} active · ${all.length - active} quiet` : `${feed.length} events`;
+  $("board").innerHTML = list.map(i => {
+    const cls = i.kind === "error" ? "err" : (i.severity === "critical" ? "crit" : "warn");
+    const ent = byId[i.entity];
+    const who = i.kind === "error" ? `<span class="ent">${esc(i.sender)}</span>`
+      : `<span class="ent">${esc(i.entity)}${ent && ent.marking ? `<i>${esc(ent.marking)}</i>` : ""}</span>`;
+    const badge = i.open ? (i.open.ack ? `<span class="badge acked">acked · ${esc(i.open.ack.by)}</span>` : '<span class="badge open">OPEN</span>') : "";
+    const times = i.count > 1 ? `<b>×${i.count}</b> · ` : "";
+    const ago = i.open ? `open ${fmtAge(Math.max(0, now - i.open.since))}` : `${fmtAge(Math.max(0, now - i.last))} ago`;
+    // The message without its leading entity, which the row already shows.
+    const msg = stripLead(i.open ? i.open.message : i.message, i.entity);
+    const btns = (i.open && !i.open.ack
+        ? `<button class="albtn" data-cmd="ack" data-rule="${esc(i.rule)}" data-ent="${esc(i.entity)}" data-ex="${i.exercise}">ack</button>` : "")
+      + (i.kind === "alert" ? `<button class="albtn" data-cmd="mute" data-ent="${esc(i.entity)}" data-ex="${i.exercise}" data-secs="300">mute 5m</button>` : "")
+      + `<button class="albtn" data-log="${esc(i.kind === "error" ? i.sender : i.rule + " " + i.entity)}">log</button>`;
+    const sel = selected && selected === i.entity ? " sel" : "";
+    return `<li class="${cls}${i.quiet ? " quiet" : ""}${sel}" ${noEntity(i.entity) ? "" : `data-ent="${esc(i.entity)}"`}>`
+      + `<div class="l1"><span class="rule">${esc(i.rule)}</span>${who}${badge}<span class="meta">${times}${ago}</span></div>`
+      + `<div class="l2" title="${esc(msg)}">${esc(msg)}${i.sender && i.kind !== "error" ? ` · <span>${esc(i.sender)}</span>` : ""}</div>`
+      + `<div class="l3">${btns}</div></li>`;
+  }).join("") || `<li class="empty">${all.length ? "no issues match the filter" : "No issues. Faults, defects and decode errors appear here as they happen."}</li>`;
+  renderHealth(all);
+}
+
+function renderHealth(all) {
+  if (!state) return;
+  const live = all.filter(i => !i.quiet);
+  const crit = live.filter(i => i.severity === "critical").length;
+  const warn = live.filter(i => i.severity === "warning").length;
+  const h = $("health");
+  h.className = crit ? "crit" : warn ? "warn" : "ok";
+  $("hVerdict").textContent = crit ? "Critical issues" : warn ? "Warnings" : "All clear";
+  $("hCrit").textContent = crit; $("hCritN").classList.toggle("zero", !crit);
+  $("hWarn").textContent = warn; $("hWarnN").classList.toggle("zero", !warn);
+  $("hErr").textContent = state.totals.errors; $("hErrN").classList.toggle("zero", !state.totals.errors);
+  document.title = crit ? `(${crit}) NetworkNinja` : "NetworkNinja";
+}
+function showBoard(v) {
+  boardView = v;
+  $("board").hidden = v !== "board"; $("alerts").hidden = v === "board";
+  $("tabBoard").classList.toggle("on", v === "board"); $("tabLog").classList.toggle("on", v !== "board");
+  renderBoard(); renderFeed();
 }
 
 const STATUS_COLOR = {live:"#3fb950", frozen:"#d29922", silent:"#d29922", deactivated:"#8b949e", removed:"#8b949e"};
@@ -333,9 +465,9 @@ const DR = ["other","static","FPW","RPW","RVW","FVW","FPB","RPB","RVB","FVB"];
 const fmtWhen = s => s ? new Date(s*1000).toLocaleTimeString() : "–";
 
 function renderDetail() {
-  const box = $("detail"), wrap = document.querySelector(".tablewrap");
-  if (!selected) { box.hidden = true; wrap.classList.remove("short"); return; }
-  box.hidden = false; wrap.classList.add("short");
+  const box = $("detail");
+  $("dHint").hidden = !!selected;
+  if (!selected) { box.innerHTML = '<div class="empty">Nothing selected.</div>'; return; }
   const e = byId[selected];
   if (!e) {
     box.innerHTML = `<div class="dh"><b class="id">${esc(selected)}</b><span class="gone">no longer in the entity table</span>`
@@ -347,7 +479,7 @@ function renderDetail() {
   const kd = (e.ek === 1 ? DOMAIN[e.edom] : KIND[e.ek]) || "";
   const muted = d && d.muted_until > now;
   const row = (k, v) => `<div><span>${k}</span> ${v}</div>`;
-  const alerts = (state ? state.alerts : []).filter(a => a.entity === e.id);
+  const mine = (issuesByEntity()[e.id] || {list: []}).list;
   let h = `<div class="dh"><b>${esc(e.marking) || "(no marking)"}</b><span class="id">${esc(e.id)}</span>`
     + `<span class="st" style="color:${STATUS_COLOR[st]}">${st}</span>`
     + (muted ? `<span class="st" style="color:var(--dim)">muted ${fmtAge(d.muted_until - now)}</span>` : "")
@@ -374,11 +506,13 @@ function renderDetail() {
       ? v.map(g => `${esc(g.tags.rule)} <b>${g.total}</b>${g.open ? '<span class="open">open</span>' : ""}`).join(" · ")
       : '<span>none</span>') + `</div>`;
   }
-  if (alerts.length) {
-    h += `<h3>open alerts (${alerts.length})</h3>` + alerts.map(a => {
-      const btns = a.ack ? `<span class="acked">· acked by ${esc(a.ack.by)}</span>`
-        : `<button class="albtn" data-cmd="ack" data-rule="${esc(a.rule)}" data-ent="${esc(a.entity)}" data-ex="${e.exercise}">ack</button>`;
-      return `<div class="al ${a.severity === "critical" ? "crit" : "warn"}"><b>${esc(a.rule)}</b> ${esc(a.message)} <span class="t">since ${fmtWhen(a.since)}</span>${btns}</div>`;
+  if (mine.length) {
+    h += `<h3>active issues (${mine.length})</h3>` + mine.map(i => {
+      const btns = i.open && !i.open.ack
+        ? `<button class="albtn" data-cmd="ack" data-rule="${esc(i.rule)}" data-ent="${esc(i.entity)}" data-ex="${e.exercise}">ack</button>`
+        : i.open && i.open.ack ? `<span class="acked">· acked by ${esc(i.open.ack.by)}</span>` : "";
+      const when = i.open ? `open since ${fmtWhen(i.open.since)}` : `last ${fmtWhen(i.last)}${i.count > 1 ? `, ×${i.count}` : ""}`;
+      return `<div class="al ${i.severity === "critical" ? "crit" : "warn"}"><b>${esc(i.rule)}</b> ${esc(stripLead(i.open ? i.open.message : i.message, e.id))} <span class="t">${when}</span>${btns}</div>`;
     }).join("");
   }
   if (d && d.sources) {
@@ -406,29 +540,31 @@ function render() {
   const live = state.entities.filter(e => !e.removed && !e.stale).length;
   $("hEnt").textContent = live + " / " + state.entities.length;
   $("hRate").textContent = state.rates.pdu_1s.toFixed(1);
-  $("hErr").textContent = state.totals.errors;
   $("hAlerts").textContent = state.alerts.length;
+  const iss = issuesByEntity();
   $("hPacks").textContent = state.packs.join(" + ");
   const anyFrozen = exIds.some(id => state.exercises[id].frozen);
   $("hFrozen").innerHTML = anyFrozen ? '<span class="frozen">FROZEN</span>' : "";
   const ef = $("efilter").value.trim().toLowerCase();
   const rows = [...state.entities]
-    .map(e => { e.age = Math.max(0, state.at - (e.seen || state.at)); e.status = statusOf(e); return e; })
+    .map(e => { e.age = Math.max(0, state.at - (e.seen || state.at)); e.status = statusOf(e); e.issues = iss[e.id] ? iss[e.id].n : 0; return e; })
     .filter(e => !ef || [e.id, e.marking, e.etype, e.force, e.exercise].join(" ").toLowerCase().includes(ef))
     .sort((a,b) => {
     let x = a[sortKey], y = b[sortKey];
-    if (typeof x === "string") return sortAsc ? x.localeCompare(y) : y.localeCompare(x);
-    return sortAsc ? x - y : y - x;
+    const c = typeof x === "string" ? x.localeCompare(y) : x - y;
+    return (sortAsc ? c : -c) || a.id.localeCompare(b.id);
   });
   $("rows").innerHTML = rows.map(e => {
     const cls = e.removed ? "removed" : (e.stale ? "stale" : (e.frozen ? "frozen" : ""));
     const sel = selected === e.id ? " sel" : "";
+    const x = iss[e.id];
+    const issueCell = x ? `<span class="dot" style="background:${x.sev === 2 ? "var(--crit)" : "var(--warn)"}"></span>${x.n}` : "";
     return `<tr class="${cls}${sel}" data-id="${esc(e.id)}">
-      <td>${esc(e.id)}</td><td>${esc(e.marking)}</td><td>${esc(e.etype)}</td><td>${e.force}</td>
+      <td class="iss">${issueCell}</td><td>${esc(e.id)}</td><td>${esc(e.marking)}</td><td>${esc(e.etype)}</td><td>${e.force}</td>
       <td>${e.lat.toFixed(4)}</td><td>${e.lon.toFixed(4)}</td>
       <td>${e.speed.toFixed(0)}</td><td>${fmtAge(e.age)}</td><td>${e.senders}</td>
       <td>${e.status}</td></tr>`;
-  }).join("") || '<tr><td colspan="10" class="empty">waiting for traffic…</td></tr>';
+  }).join("") || '<tr><td colspan="11" class="empty">waiting for traffic…</td></tr>';
   const tl = $("tlrow");
   if (state.replay) {
     tl.classList.add("on");
@@ -438,10 +574,8 @@ function render() {
     $("seekd").textContent = fmtT(state.replay.dur);
   } else tl.classList.remove("on");
   $("eCount").textContent = ef ? `${rows.length} / ${state.entities.length}` : state.entities.length;
-  $("sidelist").innerHTML = rows.map(e =>
-    `<li ${selected === e.id ? 'class="sel"' : ""} data-id="${esc(e.id)}"><span class="dot" style="background:${STATUS_COLOR[e.status]}"></span>${esc(e.marking)}<span class="id">${esc(e.id)}</span></li>`
-  ).join("") || '<li class="empty">–</li>';
   renderFeed();
+  renderBoard();
   renderDetail();
 }
 
@@ -514,6 +648,10 @@ function initMap() {
     map.addLayer({id:"grat", type:"line", source:"grat", paint:{"line-color":"#3a5068","line-width":0.5,"line-opacity":0.6}});
     map.addLayer({id:"coast", type:"line", source:"coast", paint:{"line-color":"#7ba0c4","line-width":1}});
     map.addLayer({id:"rivers", type:"line", source:"rivers", paint:{"line-color":"#3d6a9a","line-width":0.8}});
+    // Rings for entities with active issues, under the symbols.
+    for (const [id, color] of [["entwarn", "#d29922"], ["entcrit", "#f85149"]])
+      map.addLayer({id, type:"circle", source:"ents", filter:["==",["get","iss"],id === "entcrit" ? 2 : 1],
+        paint:{"circle-radius":17,"circle-color":color,"circle-opacity":0.18,"circle-stroke-color":color,"circle-stroke-width":2}});
     map.addLayer({id:"entsel", type:"circle", source:"ents",
       filter:["==",["get","id"],""],
       paint:{"circle-radius":13,"circle-color":"#0000","circle-stroke-color":"#e6edf3","circle-stroke-width":2}});
@@ -529,10 +667,11 @@ function initMap() {
 }
 function updateMap() {
   if (!mapReady || !state) return;
+  const iss = issuesByEntity();
   const feats = state.entities.filter(e => !e.removed).map(e => ({
     type:"Feature",
     geometry:{type:"Point", coordinates:[e.lon, e.lat]},
-    properties:{id:e.id, marking:e.marking, st:statusOf(e), k:e.ek||0, d:e.edom||0, f:e.force||0},
+    properties:{id:e.id, marking:e.marking, st:statusOf(e), k:e.ek||0, d:e.edom||0, f:e.force||0, iss:iss[e.id] ? iss[e.id].sev : 0},
   }));
   for (const ft of feats) {
     const p = ft.properties, name = iconName(p.k, p.d, p.f);
@@ -618,13 +757,18 @@ $("alerts").onclick = ev => {
   const li = ev.target.closest("li[data-ent]");
   if (li && selected !== li.dataset.ent) selectEntity(li.dataset.ent);
 };
+$("board").onclick = ev => {
+  const btn = ev.target.closest("button");
+  if (btn && btn.dataset.cmd) { ev.stopPropagation(); cmdButton(btn); return; }
+  if (btn && btn.dataset.log) { $("filter").value = btn.dataset.log; showBoard("log"); return; }
+  const li = ev.target.closest("li[data-ent]");
+  if (li && selected !== li.dataset.ent) selectEntity(li.dataset.ent);
+};
+$("tabBoard").onclick = () => showBoard("board");
+$("tabLog").onclick = () => showBoard("log");
 $("rows").onclick = ev => {
   const tr = ev.target.closest("tr[data-id]");
   if (tr) selectEntity(tr.dataset.id);
-};
-$("sidelist").onclick = ev => {
-  const li = ev.target.closest("li[data-id]");
-  if (li) selectEntity(li.dataset.id);
 };
 $("detail").onclick = ev => {
   const btn = ev.target.closest("button");
@@ -633,13 +777,13 @@ $("detail").onclick = ev => {
   const e = byId[selected], ex = e ? e.exercise : 0;
   switch (btn.dataset.act) {
     case "close": clearSelection(); break;
-    case "events": $("filter").value = selected; renderFeed(); break;
+    case "events": $("filter").value = selected; showBoard("log"); break;
     case "mute": cmd({cmd:"mute", entity:selected, exercise:ex, secs:300}); setTimeout(fetchDetail, 300); break;
     case "unmute": cmd({cmd:"unmute", entity:selected, exercise:ex}); setTimeout(fetchDetail, 300); break;
   }
 };
 document.addEventListener("keydown", ev => { if (ev.key === "Escape" && selected && !$("login").classList.contains("on")) clearSelection(); });
-$("filter").oninput = renderFeed;
+$("filter").oninput = () => { renderFeed(); renderBoard(); };
 $("efilter").oninput = render;
 $("runsel").onchange = ev => cmd(ev.target.value ? {cmd:"replay", file:ev.target.value} : {cmd:"live"});
 $("pspeed").onchange = ev => cmd({cmd:"speed", x:+ev.target.value});
@@ -728,7 +872,7 @@ $("ctable").onclick = ev => {
   const terms = pivot === "site" ? [td.dataset.b] : [td.dataset.a, td.dataset.b];
   showView("live");
   $("filter").value = terms.filter(Boolean).join(" ");
-  renderFeed();
+  showBoard("log");
   const ents = (td.dataset.ents || "").split(" ").filter(Boolean);
   if (+td.dataset.n === 1 && ents[0] !== selected) selectEntity(ents[0]);
 };
