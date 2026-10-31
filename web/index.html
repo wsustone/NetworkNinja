@@ -46,6 +46,11 @@
   #health .n { color:var(--dim); } #health .n b { color:var(--fg); font-size:16px; font-variant-numeric:tabular-nums; }
   #health .n.c b { color:var(--crit); } #health .n.w b { color:var(--warn); }
   #health .n.zero b { color:var(--dim); }
+  /* Inputs: one chip per listener; amber when quiet, red on receive errors. */
+  #inputs { display:flex; gap:.4em 1.2em; flex-wrap:wrap; align-items:center; padding:.3em 1em; border-bottom:1px solid var(--line); font-size:12px; color:var(--dim); }
+  #inputs .in b { color:var(--fg); font-weight:500; }
+  #inputs .in i { font-style:normal; font-family:ui-monospace,monospace; font-size:11px; }
+  #inputs .in.quiet b { color:var(--warn); } #inputs .in.bad b { color:var(--crit); }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   h2 { margin:0; padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); border-bottom:1px solid var(--line); }
   h2 span { float:right; font-weight:400; }
@@ -180,6 +185,7 @@
   <span class="n"><b id="hRate">0</b> PDU/s</span>
   <span class="n" title="alerts open now"><b id="hAlerts">0</b> open</span>
 </div>
+<div id="inputs" hidden></div>
 <div id="tlrow"><b>replay</b><span id="seekt">0:00</span><input type="range" id="seek" min="0" max="0" step="0.1"><span id="seekd">0:00</span></div>
 
 <section id="conf" hidden>
@@ -880,6 +886,34 @@ $("tabLive").onclick = () => showView("live");
 $("tabConf").onclick = () => showView("conf");
 $("cpivot").onchange = $("csince").onchange = confQuery;
 setInterval(confQuery, 5000);
+
+// --- inputs: the live listeners (/api/inputs), with a rate from successive polls ---
+let inputsPrev = null;
+function pollInputs() {
+  fetch("/api/inputs", auth()).then(r => r.ok ? r.json() : null).then(d => {
+    const box = $("inputs");
+    if (!d || !d.inputs.length) { box.hidden = true; inputsPrev = null; return; }
+    const now = Date.now() / 1000, prev = inputsPrev;
+    inputsPrev = {at: now, by: Object.fromEntries(d.inputs.map(i => [i.name, i]))};
+    box.hidden = false;
+    box.innerHTML = '<span>inputs</span>' + d.inputs.map(i => {
+      const p = prev && prev.by[i.name];
+      const rate = p ? Math.max(0, (i.datagrams - p.datagrams) / (now - prev.at)) : null;
+      const where = i.groups.length
+        ? `${i.groups.join(",")}:${i.local.split(":").pop()}${i.interface !== "0.0.0.0" ? " @" + i.interface : ""}`
+        : i.local;
+      const bad = p && i.errors > p.errors;
+      const quiet = i.idle === null || i.idle > 10;
+      const cls = bad ? "bad" : quiet ? "quiet" : "";
+      const what = bad ? `receive error: ${esc(i.last_error || "")}`
+        : i.idle === null ? "nothing received yet" : quiet ? `quiet ${fmtAge(i.idle)}` : `${rate === null ? "…" : rate.toFixed(rate < 10 ? 1 : 0)}/s`;
+      const tip = `${i.name}: ${i.local}${i.share ? " (shared)" : ""}, receive buffer ${Math.round(i.recv_buffer / 1024)} KB, ${i.datagrams} datagrams`;
+      return `<span class="in ${cls}" title="${esc(tip)}"><b>${esc(i.name)}</b> <i>${esc(where)}</i> ${what}</span>`;
+    }).join("");
+  }).catch(() => {});
+}
+setInterval(pollInputs, 2000);
+setTimeout(pollInputs, 300);
 
 // --- traffic chart: PDU/s from /api/query, split by type / site / sender ---
 const SERIES = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9"], OTHER = "#8b949e";

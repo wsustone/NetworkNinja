@@ -7,3 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Socket options std doesn't expose: SO_REUSEADDR/SO_REUSEPORT, SO_RCVBUF.
+socket2 = { version = "0.6", features = ["all"] }
+# Network interfaces by name, for multicast joins.
+if-addrs = "0.15"

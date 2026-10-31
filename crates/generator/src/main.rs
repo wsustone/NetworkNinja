@@ -18,7 +18,10 @@ USAGE:
 
 OUTPUT
     --target IP:PORT        Destination (default 127.0.0.1:3000)
-    --broadcast             Allow a broadcast destination address
+    --broadcast             Allow a broadcast destination address (255.255.255.255 or
+                            a subnet's, e.g. 10.0.0.255; see nn-server interfaces)
+    --iface NAME|IP         Send multicast out of this interface (default: OS choice)
+    --ttl N                 Multicast TTL (default 1: stay on the local subnet)
     --pcap FILE             Write a pcap file instead of sending; runs as fast as possible
     --truth FILE            Write ground-truth JSON here (default: print to stdout at the end)
 
@@ -109,6 +112,8 @@ struct Options {
     cfg: Config,
     target: SocketAddrV4,
     broadcast: bool,
+    multicast_if: Option<std::net::Ipv4Addr>,
+    ttl: u32,
     pcap: Option<String>,
     truth: Option<String>,
 }
@@ -120,6 +125,7 @@ fn parse_args() -> Result<Options, String> {
     };
     let mut target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3000);
     let (mut broadcast, mut pcap, mut truth) = (false, None, None);
+    let (mut multicast_if, mut ttl) = (None, 1u32);
     let mut pending: Vec<(EventKind, String)> = Vec::new();
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
     let (mut all_handshake, mut all_radio) = (false, false);
@@ -153,6 +159,8 @@ fn parse_args() -> Result<Options, String> {
             }
             "--target" => target = val()?.parse().map_err(|e| format!("--target: {e}"))?,
             "--broadcast" => broadcast = true,
+            "--iface" => multicast_if = Some(nn_capture::iface::resolve(&val()?).map_err(|e| format!("--iface: {e}"))?),
+            "--ttl" => ttl = val()?.parse().map_err(|e| format!("--ttl: {e}"))?,
             "--pcap" => pcap = Some(val()?),
             "--truth" => truth = Some(val()?),
             "--duration" => cfg.duration = num(val()?)?,
@@ -335,6 +343,8 @@ fn parse_args() -> Result<Options, String> {
         cfg,
         target,
         broadcast,
+        multicast_if,
+        ttl,
         pcap,
         truth,
     })
@@ -344,6 +354,8 @@ fn parse_args() -> Result<Options, String> {
 struct LiveSink {
     target: SocketAddrV4,
     broadcast: bool,
+    multicast_if: Option<std::net::Ipv4Addr>,
+    ttl: u32,
     start: Instant,
     sockets: HashMap<Sender, UdpSocket>,
     last_report: f64,
@@ -358,8 +370,7 @@ impl Sink for LiveSink {
             std::thread::sleep(due - now);
         }
         if !self.sockets.contains_key(&sender) {
-            let s = UdpSocket::bind("0.0.0.0:0")?;
-            s.set_broadcast(self.broadcast)?;
+            let s = nn_capture::sender_socket(self.broadcast, self.multicast_if, self.ttl)?;
             eprintln!(
                 "  sender site {}{} → source port {}",
                 sender.site,
@@ -451,6 +462,8 @@ fn real_main() -> Result<(), String> {
             let mut sink = LiveSink {
                 target: opts.target,
                 broadcast: opts.broadcast,
+                multicast_if: opts.multicast_if,
+                ttl: opts.ttl,
                 start: Instant::now(),
                 sockets: HashMap::new(),
                 last_report: 0.0,

@@ -122,6 +122,15 @@ of watching. Generator `--radio-every SECS`, faults `--hot-mic`,
 `--all-radio-faults` (4 sites). Coverage's minimal Transmitter reports
 "transmitting" so its minimal Signal is legitimate.
 
+Listening (docs/capture.md): `nn_capture::Listeners` runs one reader thread
+per `UdpConfig` (port, groups, interface, `share` = SO_REUSEADDR/PORT,
+receive buffer, default 8 MB) into one channel; `serve --config nn.toml`
+(`[serve]` + `[[listen]]`, `nn_server::config`), `--listen
+PORT[:GROUP,...][@IFACE]`, `--share`, `--receive-buffer MB`,
+`nn-server interfaces`; `/api/inputs` and the dashboard inputs line.
+`share` is for broadcast/multicast only: unicast reaches one sharer.
+Generator `--iface`/`--ttl` pick the multicast send interface.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

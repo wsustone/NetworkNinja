@@ -91,6 +91,10 @@ the dashboard should stay quiet. In the default `demo`, the faulty vendor (sites
 fault, PDU defect, handshake fault and radio fault, and starts over every 5 minutes. Put a copy of
 SISO-REF-010.xml (free from sisostandards.org) at `siso/SISO-REF-010.xml` to add enumeration checks.
 
+To listen to a real exercise (several ports, multicast groups, a particular network card, or a
+port a simulator on the same machine already uses), see [docs/capture.md](docs/capture.md) and
+start from [`nn.example.toml`](nn.example.toml): `nn-server serve --config nn.toml`.
+
 To run the pieces by hand instead:
 
 On Windows, the binaries are `target\release\nn-server.exe` and `nn-generator.exe`; the first `listen` may trigger a firewall prompt (allow it on private networks).
