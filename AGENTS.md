@@ -170,6 +170,15 @@ Remove (golden hashes changed for it); faults `--no-final-report`,
 final Deactivated report. Use `cargo test --no-fail-fast` when checking a
 change: plain `cargo test` stops at the first failing test binary.
 
+Fire/Detonation (`nn_rules::warfare`, rule `fire-detonation`): shots keyed
+by (exercise, Event ID); a munition Fire's Detonation is due within
+`max_flight` (180 s; expendables exempt); a munition Detonation with no Fire
+is judged only after `max_flight` of watching and names mines/demolitions as
+legitimate; Fire/Detonation must agree on firer and munition type; v7 PDU
+Status FTI/DTI must agree with the descriptor kind (2 munition, 8
+expendable). Generator faults `--no-detonation`, `--detonation-mismatch`,
+`--wrong-fire-type`, `--orphan-detonation T`, preset `--all-warfare-faults`.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock
