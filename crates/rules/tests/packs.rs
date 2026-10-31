@@ -22,6 +22,7 @@ fn datagram(pdu: &Pdu, t: f64) -> Datagram {
         destination: None,
         payload: encode_pdu(pdu),
         monotonic: None,
+        listener: None,
     }
 }
 
@@ -262,6 +263,7 @@ impl Sink for Collect {
             destination: None,
             payload: d.to_vec(),
             monotonic: None,
+            listener: None,
         });
         Ok(())
     }

@@ -15,7 +15,8 @@
 //! name = "radio"
 //! port = 3001
 //! multicast = ["239.1.2.10"]
-//! interface = "en0"          # name or IPv4 address
+//! interface = "en0"          # name or IPv4 address, or a list:
+//!                            # ["en0", "en5"] joins the group on both
 //! share = true               # a simulator on this host holds the port
 //! receive_buffer_mb = 16
 //! ```
@@ -149,8 +150,7 @@ fn listener(t: &Table, n: usize) -> Result<UdpConfig, String> {
         c.multicast_groups = groups(&strings(v, &format!("{what} multicast"))?).map_err(|e| format!("{what}: {e}"))?;
     }
     if let Some(v) = t.get("interface") {
-        c.multicast_interface =
-            iface::resolve(&string(v, &format!("{what} interface"))?).map_err(|e| format!("{what}: {e}"))?;
+        set_interfaces(&mut c, strings(v, &format!("{what} interface"))?).map_err(|e| format!("{what}: {e}"))?;
     }
     if let Some(v) = t.get("share") {
         c.share = matches!(v, Value::Bool(true));
@@ -166,6 +166,15 @@ fn listener(t: &Table, n: usize) -> Result<UdpConfig, String> {
         c.recv_buffer = (mb * 1024.0 * 1024.0) as usize;
     }
     Ok(c)
+}
+
+fn set_interfaces(c: &mut UdpConfig, names: Vec<String>) -> Result<(), String> {
+    c.multicast_interfaces = names
+        .iter()
+        .map(|n| iface::resolve(n.trim()))
+        .collect::<Result<_, _>>()?;
+    c.interface_names = names.into_iter().map(|n| n.trim().to_string()).collect();
+    Ok(())
 }
 
 /// Parse a config file's text.
@@ -218,10 +227,10 @@ pub fn load(path: &str) -> Result<ServeConfig, String> {
     parse(&text).map_err(|e| format!("{path}: {e}"))
 }
 
-/// `--listen PORT[:GROUP,GROUP...][@INTERFACE]`, e.g. `3000`,
-/// `3001:239.1.2.10`, `3001:239.1.2.10,239.1.2.11@en0`.
+/// `--listen PORT[:GROUP,GROUP...][@INTERFACE,INTERFACE...]`, e.g.
+/// `3000`, `3001:239.1.2.10`, `3001:239.1.2.10,239.1.2.11@en0,en5`.
 pub fn listen_spec(spec: &str, n: usize) -> Result<UdpConfig, String> {
-    let bad = |m: &str| format!("--listen '{spec}': {m} (expected PORT[:GROUP,...][@INTERFACE])");
+    let bad = |m: &str| format!("--listen '{spec}': {m} (expected PORT[:GROUP,...][@INTERFACE,...])");
     let (rest, interface) = match spec.split_once('@') {
         Some((r, i)) => (r, Some(i)),
         None => (spec, None),
@@ -241,9 +250,126 @@ pub fn listen_spec(spec: &str, n: usize) -> Result<UdpConfig, String> {
         c.multicast_groups = groups(&list).map_err(|e| bad(&e))?;
     }
     if let Some(i) = interface {
-        c.multicast_interface = iface::resolve(i).map_err(|e| bad(&e))?;
+        set_interfaces(&mut c, i.split(',').map(str::to_string).collect()).map_err(|e| bad(&e))?;
     }
     Ok(c)
+}
+
+/// A listener from the dashboard's fields (all strings, as a form sends
+/// them): name, port, bind, groups and interfaces (comma-separated), share
+/// ("true"/"false"), receive_buffer_mb. Validated like a `[[listen]]` block.
+pub fn listener_from_fields(f: &std::collections::BTreeMap<String, String>) -> Result<UdpConfig, String> {
+    let mut t = Table::new();
+    let list = |s: &str| {
+        Value::Array(
+            s.split(',')
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(|x| Value::String(x.to_string()))
+                .collect(),
+        )
+    };
+    for (k, v) in f {
+        let v = v.trim();
+        if v.is_empty() {
+            continue;
+        }
+        let value = match k.as_str() {
+            "name" | "bind" => Value::String(v.to_string()),
+            "port" => Value::Integer(v.parse().map_err(|_| format!("port '{v}' is not a number"))?),
+            "receive_buffer_mb" => Value::Float(
+                v.parse()
+                    .map_err(|_| format!("receive_buffer_mb '{v}' is not a number"))?,
+            ),
+            "share" => Value::Bool(v == "true" || v == "1" || v == "on"),
+            "groups" => {
+                t.insert("multicast".into(), list(v));
+                continue;
+            }
+            "interfaces" => {
+                t.insert("interface".into(), list(v));
+                continue;
+            }
+            other => return Err(format!("unknown listener field '{other}'")),
+        };
+        t.insert(k.clone(), value);
+    }
+    if !t.contains_key("name") {
+        return Err("a listener needs a name".into());
+    }
+    listener(&t, 0)
+}
+
+fn quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// `[[listen]]` blocks for these listeners, in config-file form.
+pub fn to_toml(listeners: &[UdpConfig]) -> String {
+    let mut out = String::new();
+    for c in listeners {
+        out += &format!("[[listen]]\nname = {}\nport = {}\n", quote(&c.name), c.port);
+        if !c.bind.is_unspecified() {
+            out += &format!("bind = {}\n", quote(&c.bind.to_string()));
+        }
+        if !c.multicast_groups.is_empty() {
+            let g: Vec<String> = c.multicast_groups.iter().map(|g| quote(&g.to_string())).collect();
+            out += &format!("multicast = [{}]\n", g.join(", "));
+        }
+        let names: Vec<String> = if c.interface_names.len() == c.multicast_interfaces.len() {
+            c.interface_names.clone()
+        } else {
+            c.multicast_interfaces.iter().map(|i| i.to_string()).collect()
+        };
+        match names.len() {
+            0 => {}
+            1 => out += &format!("interface = {}\n", quote(&names[0])),
+            _ => {
+                out += &format!(
+                    "interface = [{}]\n",
+                    names.iter().map(|n| quote(n)).collect::<Vec<_>>().join(", ")
+                )
+            }
+        }
+        if c.share {
+            out += "share = true\n";
+        }
+        if c.recv_buffer != nn_capture::DEFAULT_RECV_BUFFER {
+            out += &format!("receive_buffer_mb = {}\n", c.recv_buffer as f64 / (1024.0 * 1024.0));
+        }
+        out += "\n";
+    }
+    out
+}
+
+/// Rewrite a config file's `[[listen]]` blocks as `listeners`, keeping the
+/// rest of the file (`[serve]`, comments outside listener blocks) as it was.
+/// Comments inside the old listener blocks are dropped. The result is
+/// re-parsed before it is written, and the old file kept as FILE.bak.
+pub fn save_listeners(path: &str, listeners: &[UdpConfig]) -> Result<(), String> {
+    let old = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut kept = Vec::new();
+    let mut in_listen = false;
+    for line in old.lines() {
+        let t = line.trim_start();
+        if t.starts_with("[[listen]]") {
+            in_listen = true;
+            continue;
+        }
+        if t.starts_with('[') {
+            in_listen = false;
+        }
+        if !in_listen {
+            kept.push(line);
+        }
+    }
+    while kept.last().is_some_and(|l| l.trim().is_empty()) {
+        kept.pop();
+    }
+    let new = format!("{}\n\n{}", kept.join("\n"), to_toml(listeners));
+    parse(&new).map_err(|e| format!("the saved file wouldn't parse ({e}); not written"))?;
+    std::fs::write(format!("{path}.bak"), &old).map_err(|e| format!("{path}.bak: {e}"))?;
+    std::fs::write(path, new.trim_start()).map_err(|e| format!("{path}: {e}"))
 }
 
 #[cfg(test)]
@@ -284,7 +410,8 @@ receive_buffer_mb = 16
             r.multicast_groups,
             [Ipv4Addr::new(239, 1, 2, 10), Ipv4Addr::new(239, 1, 2, 11)]
         );
-        assert_eq!(r.multicast_interface, Ipv4Addr::LOCALHOST);
+        assert_eq!(r.multicast_interfaces, [Ipv4Addr::LOCALHOST]);
+        assert_eq!(r.interface_names, ["127.0.0.1"]);
         assert_eq!(r.recv_buffer, 16 << 20);
         assert!(!c.listeners[0].share, "sharing is opt-in");
     }
@@ -304,12 +431,73 @@ receive_buffer_mb = 16
 
     #[test]
     fn listen_specs() {
-        let c = listen_spec("3001:239.1.2.10,239.1.2.11@127.0.0.1", 2).unwrap();
+        let c = listen_spec("3001:239.1.2.10,239.1.2.11@127.0.0.1,127.0.0.1", 2).unwrap();
         assert_eq!(c.port, 3001);
         assert_eq!(c.multicast_groups.len(), 2);
-        assert_eq!(c.multicast_interface, Ipv4Addr::LOCALHOST);
+        assert_eq!(c.multicast_interfaces, [Ipv4Addr::LOCALHOST, Ipv4Addr::LOCALHOST]);
         assert!(listen_spec("3000", 1).unwrap().multicast_groups.is_empty());
         assert!(listen_spec("x", 1).is_err());
         assert!(listen_spec("3000:10.1.1.1", 1).unwrap_err().contains("not a multicast"));
+    }
+
+    #[test]
+    fn dashboard_fields_validate_like_the_file() {
+        let f = |pairs: &[(&str, &str)]| {
+            listener_from_fields(&pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+        };
+        let c = f(&[
+            ("name", "radio"),
+            ("port", "3001"),
+            ("groups", "239.1.2.10, 239.1.2.11"),
+            ("interfaces", "127.0.0.1"),
+            ("share", "true"),
+            ("receive_buffer_mb", "2"),
+        ])
+        .unwrap();
+        assert_eq!(
+            (c.port, c.share, c.multicast_groups.len(), c.recv_buffer),
+            (3001, true, 2, 2 << 20)
+        );
+        assert!(f(&[("name", "x"), ("port", "3000"), ("groups", "10.0.0.1")])
+            .unwrap_err()
+            .contains("not a multicast"));
+        assert!(f(&[("port", "3000")]).unwrap_err().contains("needs a name"));
+        assert!(f(&[("name", "x")]).unwrap_err().contains("needs a port"));
+    }
+
+    #[test]
+    fn saving_rewrites_only_the_listeners() {
+        let dir = std::env::temp_dir().join(format!("nn-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("nn.toml");
+        let path = path.to_str().unwrap();
+        std::fs::write(
+            path,
+            "# my exercise\n[serve]\nhttp = \"0.0.0.0:8080\" # all NICs\n\n[[listen]]\n# old\nname = \"old\"\nport = 1\n",
+        )
+        .unwrap();
+        let radio = listen_spec("3001:239.1.2.10@127.0.0.1", 1).unwrap();
+        let radio = UdpConfig {
+            name: "radio".into(),
+            share: true,
+            ..radio
+        };
+        let dis = UdpConfig {
+            name: "dis".into(),
+            ..listen_spec("3000", 2).unwrap()
+        };
+        save_listeners(path, &[dis, radio]).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(
+            text.starts_with("# my exercise\n[serve]\nhttp = \"0.0.0.0:8080\" # all NICs"),
+            "{text}"
+        );
+        assert!(!text.contains("old"), "{text}");
+        let back = parse(&text).unwrap();
+        assert_eq!(back.listeners.len(), 2);
+        assert_eq!(back.listeners[1].interface_names, ["127.0.0.1"]);
+        assert!(back.listeners[1].share);
+        assert!(std::fs::read_to_string(format!("{path}.bak")).unwrap().contains("old"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

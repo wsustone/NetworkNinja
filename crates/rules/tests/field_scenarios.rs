@@ -36,6 +36,7 @@ fn datagram(t: f64, source: SocketAddr, payload: Vec<u8>) -> Datagram {
         destination: None,
         payload,
         monotonic: None,
+        listener: None,
     }
 }
 

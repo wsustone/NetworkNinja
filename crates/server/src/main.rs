@@ -41,7 +41,7 @@ WHERE TO LISTEN (see docs/capture.md)
     --port N              One listener on UDP port N (default 3000)
     --bind IP             Local address (default 0.0.0.0, needed for broadcast/multicast)
     --multicast GROUP     Join an IPv4 multicast group (repeatable)
-    --iface NAME|IP       Interface for multicast joins (default: OS choice)
+    --iface NAME|IP       Interface for multicast joins (repeatable; default: OS choice)
     --share               Share the port(s) with a simulator on this host (safe
                           for broadcast and multicast; unicast goes to only one
                           of the sharing programs)
@@ -179,11 +179,14 @@ fn real_main() -> Result<(), String> {
     }
 
     // A config file seeds the settings; flags then override them.
+    let mut config_path: Option<String> = None;
     let file_cfg = match args.iter().position(|a| a == "--config") {
         Some(i) => {
             let f = args.get(i + 1).ok_or("--config needs a value")?.clone();
             args.drain(i..i + 2);
-            Some(nn_server::config::load(&f)?)
+            let c = nn_server::config::load(&f)?;
+            config_path = Some(f);
+            Some(c)
         }
         None => None,
     };
@@ -244,7 +247,10 @@ fn real_main() -> Result<(), String> {
                 legacy_listener = true;
             }
             "--iface" => {
-                udp.multicast_interface = nn_capture::iface::resolve(&val()?).map_err(|e| bad(&e))?;
+                let name = val()?;
+                udp.multicast_interfaces
+                    .push(nn_capture::iface::resolve(&name).map_err(|e| bad(&e))?);
+                udp.interface_names.push(name);
                 legacy_listener = true;
             }
             "--listen" => {
@@ -329,6 +335,7 @@ fn real_main() -> Result<(), String> {
         "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
         "serve" => serve(
             &listeners,
+            config_path.as_deref(),
             http,
             duration,
             log_file.as_deref(),
@@ -451,36 +458,39 @@ fn show(p: &mut Pipeline, d: &Datagram, t: f64, common: &Common) {
 /// One line per listener at startup: where it listens, what it joined,
 /// and a warning when the kernel granted less receive buffer than asked.
 fn describe_listeners(l: &Listeners) {
-    for st in &l.stats {
-        let groups = if st.groups.is_empty() {
-            "broadcast/unicast".to_string()
+    for st in l.stats() {
+        describe_listener(&st);
+    }
+}
+
+fn describe_listener(st: &nn_capture::ListenerStats) {
+    let c = &st.config;
+    let groups = if c.multicast_groups.is_empty() {
+        "broadcast/unicast".to_string()
+    } else {
+        let on = if c.interface_names.is_empty() {
+            "the OS's default interface".to_string()
         } else {
-            let iface = if st.interface.is_unspecified() {
-                "the OS's default interface".to_string()
-            } else {
-                st.interface.to_string()
-            };
-            format!(
-                "multicast {} on {iface}",
-                st.groups.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
-            )
+            c.interface_names.join(", ")
         };
-        let shared = if st.share { ", shared" } else { "" };
+        let g: Vec<String> = c.multicast_groups.iter().map(|g| g.to_string()).collect();
+        format!("multicast {} on {on}", g.join(", "))
+    };
+    let shared = if c.share { ", shared" } else { "" };
+    eprintln!(
+        "  listener '{}': {} ({groups}{shared}), receive buffer {} KB",
+        c.name,
+        st.local,
+        st.recv_buffer / 1024
+    );
+    // Linux reports twice what it reserves for data; anything below the
+    // request means the system limit capped it.
+    if st.recv_buffer < c.recv_buffer {
         eprintln!(
-            "  listener '{}': {} ({groups}{shared}), receive buffer {} KB",
-            st.name,
-            st.local,
-            st.recv_buffer / 1024
+            "    warning: asked for {} KB; raise the system limit to avoid drops at high rates \
+             (Linux: sysctl net.core.rmem_max; macOS: sysctl kern.ipc.maxsockbuf)",
+            c.recv_buffer / 1024
         );
-        // Linux reports twice what it reserves for data; anything below the
-        // request means the system limit capped it.
-        if st.recv_buffer < st.recv_buffer_asked {
-            eprintln!(
-                "    warning: asked for {} KB; raise the system limit to avoid drops at high rates \
-                 (Linux: sysctl net.core.rmem_max; macOS: sysctl kern.ipc.maxsockbuf)",
-                st.recv_buffer_asked / 1024
-            );
-        }
     }
 }
 
@@ -589,9 +599,44 @@ enum Src {
     Rec(nn_recorder::Reader),
 }
 
+/// One change to the live listeners; the message for the log on success.
+fn apply_input_change(
+    l: &mut Listeners,
+    change: &nn_server::web::InputChange,
+    config_file: Option<&str>,
+) -> Result<String, String> {
+    use nn_server::web::InputChange;
+    match change {
+        InputChange::Add(c) => {
+            l.add(c.clone())?;
+            Ok(format!("listener '{}' added on port {}", c.name, c.port))
+        }
+        InputChange::Replace(old, c) => {
+            l.replace(old, c.clone())?;
+            Ok(format!(
+                "listener '{old}' changed (now '{}' on port {})",
+                c.name, c.port
+            ))
+        }
+        InputChange::Remove(name) => {
+            if !l.remove(name) {
+                return Err(format!("no listener named '{name}'"));
+            }
+            Ok(format!("listener '{name}' removed"))
+        }
+        InputChange::Save => {
+            let path =
+                config_file.ok_or("the server wasn't started with --config FILE, so there's no file to save to")?;
+            nn_server::config::save_listeners(path, &l.configs())?;
+            Ok(format!("listeners saved to {path} (previous version in {path}.bak)"))
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn serve(
     cfg: &[UdpConfig],
+    config_file: Option<&str>,
     http: std::net::SocketAddr,
     duration: Option<f64>,
     log_file: Option<&str>,
@@ -629,7 +674,7 @@ fn serve(
     let desc = match &src {
         Src::Udp(l) => format!(
             "live on {}",
-            l.stats
+            l.stats()
                 .iter()
                 .map(|s| s.local.to_string())
                 .collect::<Vec<_>>()
@@ -638,9 +683,15 @@ fn serve(
         Src::Rec(_) => format!("replaying {} at {}x", replay_file.unwrap(), speed),
     };
     eprintln!("nn-server: {desc} (receive-only)");
-    if let Src::Udp(l) = &src {
-        describe_listeners(l);
-        hub.set_inputs(l.stats.clone());
+    // Listeners as last configured: a return from replay reopens these.
+    let mut live_cfgs = cfg.to_vec();
+    hub.set_config_file(config_file.map(str::to_string));
+    match &src {
+        Src::Udp(l) => {
+            describe_listeners(l);
+            hub.set_inputs(l.stats(), true);
+        }
+        Src::Rec(_) => hub.set_inputs(Vec::new(), false),
     }
     if addr.ip().is_unspecified() {
         // Bound on every interface: print addresses a browser can actually use.
@@ -748,9 +799,9 @@ fn serve(
                     if let Some(sw) = &out.switch {
                         let switched = match sw {
                             Switch::Live if matches!(src, Src::Udp(_)) => false,
-                            Switch::Live => match Listeners::open(cfg) {
+                            Switch::Live => match Listeners::open(&live_cfgs) {
                                 Ok(l) => {
-                                    hub.set_inputs(l.stats.clone());
+                                    hub.set_inputs(l.stats(), true);
                                     src = Src::Udp(l);
                                     cur_replay = None;
                                     replay_pos = None;
@@ -769,7 +820,7 @@ fn serve(
                                 let path = std::path::Path::new(dir).join(f);
                                 match nn_recorder::Reader::open(&path) {
                                     Ok(r) => {
-                                        hub.set_inputs(Vec::new());
+                                        hub.set_inputs(Vec::new(), false);
                                         src = Src::Rec(r);
                                         cur_replay = Some(path);
                                         skip_to = None;
@@ -783,6 +834,40 @@ fn serve(
                             }
                             Switch::Speed(x) => {
                                 speed = *x;
+                                false
+                            }
+                            Switch::Inputs(change) => {
+                                let result = match &mut src {
+                                    Src::Rec(_) => Err("listeners can only change during live capture".to_string()),
+                                    Src::Udp(l) => apply_input_change(l, change, config_file),
+                                };
+                                match result {
+                                    Ok(msg) => {
+                                        if let Src::Udp(l) = &src {
+                                            live_cfgs = l.configs();
+                                            hub.set_inputs(l.stats(), true);
+                                            if let nn_server::web::InputChange::Add(c)
+                                            | nn_server::web::InputChange::Replace(_, c) = change
+                                            {
+                                                if let Some(st) =
+                                                    l.stats().into_iter().find(|s| s.config.name == c.name)
+                                                {
+                                                    describe_listener(&st);
+                                                }
+                                            }
+                                        }
+                                        eprintln!("nn-server: {msg} (by {user})");
+                                        hub.log("info", &info_json(now_secs(), &format!("{msg} (by {user})")));
+                                        hub.set_input_result(true, msg);
+                                    }
+                                    Err(e) => {
+                                        hub.log(
+                                            "error",
+                                            &info_json(now_secs(), &format!("listener change failed: {e}")),
+                                        );
+                                        hub.set_input_result(false, e);
+                                    }
+                                }
                                 false
                             }
                             Switch::Seek(to) => {
@@ -820,6 +905,10 @@ fn serve(
                 }
                 Err(e) => {
                     hub.log("info", &info_json(now_secs(), &format!("command rejected: {e}")));
+                    // A listener change that didn't validate: tell the editor.
+                    if c.contains("\"cmd\":\"input") {
+                        hub.set_input_result(false, e);
+                    }
                 }
             }
         }

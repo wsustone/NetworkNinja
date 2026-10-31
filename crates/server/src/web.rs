@@ -71,6 +71,12 @@ pub struct Hub {
     /// The live listeners' configuration and counters, for `/api/inputs`;
     /// empty while replaying.
     inputs: Mutex<Vec<Arc<nn_capture::ListenerStats>>>,
+    /// Live capture (listeners can be edited) rather than a replay.
+    inputs_live: std::sync::atomic::AtomicBool,
+    /// The `--config` file listener changes can be saved to.
+    config_file: Mutex<Option<String>>,
+    /// The outcome of the latest listener change: (number, ok, message).
+    input_result: Mutex<(u64, bool, String)>,
 }
 
 /// A query for the serve loop and where to send the memory cells back.
@@ -116,6 +122,9 @@ impl Hub {
             metrics_flushed: Mutex::new(None),
             capture: Mutex::new(None),
             inputs: Mutex::new(Vec::new()),
+            inputs_live: std::sync::atomic::AtomicBool::new(false),
+            config_file: Mutex::new(None),
+            input_result: Mutex::new((0, true, String::new())),
             conformance: Mutex::new((Vec::new(), BTreeMap::new())),
         }
     }
@@ -443,9 +452,22 @@ impl Hub {
         *self.capture.lock().unwrap() = Some((path, stats));
     }
 
-    /// The listeners `/api/inputs` reports on (empty while replaying).
-    pub fn set_inputs(&self, inputs: Vec<Arc<nn_capture::ListenerStats>>) {
+    /// The listeners `/api/inputs` reports on, and whether they're live
+    /// (editable) or the server is replaying.
+    pub fn set_inputs(&self, inputs: Vec<Arc<nn_capture::ListenerStats>>, live: bool) {
         *self.inputs.lock().unwrap() = inputs;
+        self.inputs_live.store(live, Ordering::Relaxed);
+    }
+
+    /// The `--config` file listener changes may be saved to.
+    pub fn set_config_file(&self, path: Option<String>) {
+        *self.config_file.lock().unwrap() = path;
+    }
+
+    /// Record the outcome of a listener change, for the inputs editor.
+    pub fn set_input_result(&self, ok: bool, message: String) {
+        let mut r = self.input_result.lock().unwrap();
+        *r = (r.0 + 1, ok, message);
     }
 
     /// The directory `/api/runs` lists `.nnrec` recordings from.
@@ -836,8 +858,34 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
             };
         }
         ("GET", "/api/inputs") => {
-            let body = inputs_json(&hub.inputs.lock().unwrap(), nn_capture::steady_now());
+            let mut body = inputs_json(
+                &hub.inputs.lock().unwrap(),
+                nn_capture::steady_now(),
+                hub.inputs_live.load(Ordering::Relaxed),
+                hub.config_file.lock().unwrap().as_deref(),
+            );
+            let (n, ok, msg) = hub.input_result.lock().unwrap().clone();
+            body.pop();
+            body += &format!(
+                ",\"last_change\":{{\"n\":{n},\"ok\":{ok},\"message\":\"{}\"}}}}",
+                esc(&msg)
+            );
             let _ = respond(s, "200 OK", "application/json", &body);
+        }
+        // Listener changes: the same commands the dashboard sends over the
+        // WebSocket ({"cmd":"input_add", ...}); the result shows up in
+        // /api/inputs `last_change`.
+        ("POST", "/api/inputs") => {
+            let text = String::from_utf8_lossy(&req.body).to_string();
+            if !text.contains("\"cmd\"") || !jstr(&text, "cmd").is_some_and(|c| c.starts_with("input")) {
+                let _ = respond(s, "400 Bad Request", "application/json", "{\"error\":\"expected {\\\"cmd\\\":\\\"input_add|input_update|input_remove|inputs_save\\\", ...}\"}");
+            } else {
+                hub.send_command(user.clone().unwrap_or_else(|| "api".into()), text);
+                let _ = respond(s, "202 Accepted", "application/json", "{\"queued\":true}");
+            }
+        }
+        ("GET", "/api/interfaces") => {
+            let _ = respond(s, "200 OK", "application/json", &interfaces_json());
         }
         ("GET", "/api/capture") => {
             let body = match hub.capture.lock().unwrap().as_ref() {
@@ -1305,15 +1353,34 @@ pub fn info_json(at: f64, message: &str) -> String {
     format!("{{\"at\":{},\"message\":\"{}\"}}", fnum(at), esc(message))
 }
 
-/// `/api/inputs`: every live listener with its address, multicast groups
-/// and interface, receive buffer, counters and seconds since its last
-/// datagram (`null` before the first). `{"inputs":[]}` while replaying.
-pub fn inputs_json(inputs: &[Arc<nn_capture::ListenerStats>], now: f64) -> String {
+/// `/api/inputs`: every live listener with its configuration (the fields
+/// the dashboard's editor shows), the address it bound, the receive buffer
+/// granted, counters and seconds since its last datagram (`null` before
+/// the first). `editable` is false while replaying; `config_file` is the
+/// `--config` file listeners can be saved to, if any.
+pub fn inputs_json(
+    inputs: &[Arc<nn_capture::ListenerStats>],
+    now: f64,
+    editable: bool,
+    config_file: Option<&str>,
+) -> String {
     use std::sync::atomic::Ordering::Relaxed;
+    let strs = |v: Vec<String>| {
+        v.iter()
+            .map(|x| format!("\"{}\"", esc(x)))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     let items: Vec<String> = inputs
         .iter()
         .map(|l| {
-            let groups: Vec<String> = l.groups.iter().map(|g| format!("\"{g}\"")).collect();
+            let c = &l.config;
+            let groups = strs(c.multicast_groups.iter().map(|g| g.to_string()).collect());
+            let names = if c.interface_names.len() == c.multicast_interfaces.len() {
+                c.interface_names.clone()
+            } else {
+                c.multicast_interfaces.iter().map(|i| i.to_string()).collect()
+            };
             let idle = l.last_at().map_or("null".to_string(), |t| fnum((now - t).max(0.0)));
             let err = l
                 .last_error
@@ -1322,21 +1389,45 @@ pub fn inputs_json(inputs: &[Arc<nn_capture::ListenerStats>], now: f64) -> Strin
                 .as_deref()
                 .map_or("null".to_string(), |e| format!("\"{}\"", esc(e)));
             format!(
-                "{{\"name\":\"{}\",\"local\":\"{}\",\"groups\":[{}],\"interface\":\"{}\",\"share\":{},\"recv_buffer\":{},\"recv_buffer_asked\":{},\"datagrams\":{},\"bytes\":{},\"idle\":{idle},\"errors\":{},\"last_error\":{err}}}",
-                esc(&l.name),
+                "{{\"name\":\"{}\",\"port\":{},\"bind\":\"{}\",\"local\":\"{}\",\"groups\":[{groups}],\"interfaces\":[{}],\"share\":{},\"recv_buffer\":{},\"recv_buffer_asked\":{},\"datagrams\":{},\"bytes\":{},\"idle\":{idle},\"errors\":{},\"last_error\":{err}}}",
+                esc(&c.name),
+                c.port,
+                c.bind,
                 l.local,
-                groups.join(","),
-                l.interface,
-                l.share,
+                strs(names),
+                c.share,
                 l.recv_buffer,
-                l.recv_buffer_asked,
+                c.recv_buffer,
                 l.datagrams.load(Relaxed),
                 l.bytes.load(Relaxed),
                 l.errors.load(Relaxed),
             )
         })
         .collect();
-    format!("{{\"inputs\":[{}]}}", items.join(","))
+    let file = config_file.map_or("null".to_string(), |f| format!("\"{}\"", esc(f)));
+    format!(
+        "{{\"editable\":{editable},\"config_file\":{file},\"inputs\":[{}]}}",
+        items.join(",")
+    )
+}
+
+/// `/api/interfaces`: the host's IPv4 interfaces, for the inputs editor.
+pub fn interfaces_json() -> String {
+    let list = nn_capture::iface::list().unwrap_or_default();
+    let items: Vec<String> = list
+        .iter()
+        .map(|i| {
+            format!(
+                "{{\"name\":\"{}\",\"ip\":\"{}\",\"broadcast\":{},\"loopback\":{},\"up\":{}}}",
+                esc(&i.name),
+                i.ip,
+                i.broadcast.map_or("null".to_string(), |b| format!("\"{b}\"")),
+                i.loopback,
+                i.up
+            )
+        })
+        .collect();
+    format!("{{\"interfaces\":[{}]}}", items.join(","))
 }
 
 /// A decode-error log entry body (`kind = "error"`).
@@ -1383,6 +1474,43 @@ pub enum Switch {
     Speed(f64),
     /// Jump to this many seconds into the current recording.
     Seek(f64),
+    /// Change the live listeners.
+    Inputs(InputChange),
+}
+
+/// A change to the live listeners, from the dashboard's inputs editor or
+/// `POST /api/inputs`. Validated (groups, interfaces, port) when parsed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputChange {
+    Add(nn_capture::UdpConfig),
+    /// Replace the listener with this name.
+    Replace(String, nn_capture::UdpConfig),
+    Remove(String),
+    /// Write the current listeners to the `--config` file.
+    Save,
+}
+
+/// A listener from a command's fields; numbers may be strings or numbers.
+fn listener_fields(text: &str) -> Result<nn_capture::UdpConfig, String> {
+    let mut f = BTreeMap::new();
+    for k in [
+        "name",
+        "bind",
+        "groups",
+        "interfaces",
+        "share",
+        "port",
+        "receive_buffer_mb",
+    ] {
+        let v = jstr(text, k)
+            .map(str::to_string)
+            .or_else(|| jnum(text, k).map(|n| n.to_string()))
+            .or_else(|| (k == "share" && text.contains("\"share\":true")).then(|| "true".to_string()));
+        if let Some(v) = v {
+            f.insert(k.to_string(), v);
+        }
+    }
+    crate::config::listener_from_fields(&f)
 }
 
 /// The outcome of one client command: alert events to log, a note for the
@@ -1463,6 +1591,36 @@ pub fn apply_command_by(m: &mut Monitor, text: &str, by: &str) -> Result<CmdOut,
                 switch: Some(Switch::Replay(file.to_string())),
             })
         }
+        "input_add" => {
+            let c = listener_fields(text)?;
+            Ok(CmdOut {
+                events: vec![],
+                note: format!("adding listener '{}'", c.name),
+                switch: Some(Switch::Inputs(InputChange::Add(c))),
+            })
+        }
+        "input_update" => {
+            let old = jstr(text, "old").ok_or("missing \"old\"")?.to_string();
+            let c = listener_fields(text)?;
+            Ok(CmdOut {
+                events: vec![],
+                note: format!("changing listener '{old}'"),
+                switch: Some(Switch::Inputs(InputChange::Replace(old, c))),
+            })
+        }
+        "input_remove" => {
+            let name = jstr(text, "name").ok_or("missing \"name\"")?.to_string();
+            Ok(CmdOut {
+                events: vec![],
+                note: format!("removing listener '{name}'"),
+                switch: Some(Switch::Inputs(InputChange::Remove(name))),
+            })
+        }
+        "inputs_save" => Ok(CmdOut {
+            events: vec![],
+            note: "saving listeners".to_string(),
+            switch: Some(Switch::Inputs(InputChange::Save)),
+        }),
         "live" => Ok(CmdOut {
             events: vec![],
             note: "back to live capture".to_string(),
@@ -1526,8 +1684,15 @@ fn entity_json(rec: &nn_state::EntityRecord, now: f64, timeout: f64) -> String {
 /// Everything the dashboard's detail panel shows for one entity: the
 /// [`entity_json`] fields plus type breakdown, altitude, first seen, DR
 /// algorithm, raw appearance, an entity mute if any, and one record per
-/// sender (reports, heartbeat mean and jitter, the type it claimed).
-fn entity_detail_json(rec: &nn_state::EntityRecord, now: f64, timeout: f64, muted_until: Option<f64>) -> String {
+/// sender (reports, heartbeat mean and jitter, the type it claimed, and the
+/// listener it arrives through when live).
+fn entity_detail_json(
+    rec: &nn_state::EntityRecord,
+    now: f64,
+    timeout: f64,
+    muted_until: Option<f64>,
+    via: impl Fn(&std::net::SocketAddr) -> Option<String>,
+) -> String {
     let mut s = entity_json(rec, now, timeout);
     s.pop(); // reopen the object
     let t = &rec.entity_type;
@@ -1552,8 +1717,9 @@ fn entity_detail_json(rec: &nn_state::EntityRecord, now: f64, timeout: f64, mute
             s.push(',');
         }
         first = false;
+        let via = via(addr).map_or("null".to_string(), |l| format!("\"{}\"", esc(&l)));
         s.push_str(&format!(
-            "{{\"addr\":\"{}\",\"first_seen\":{},\"seen\":{},\"reports\":{},\"hb_mean\":{},\"hb_sd\":{},\"etype\":\"{}\"}}",
+            "{{\"addr\":\"{}\",\"via\":{via},\"first_seen\":{},\"seen\":{},\"reports\":{},\"hb_mean\":{},\"hb_sd\":{},\"etype\":\"{}\"}}",
             addr,
             fnum(src.first_seen),
             fnum(src.last_seen),
@@ -1581,7 +1747,10 @@ pub fn entity_details(m: &Monitor) -> BTreeMap<String, String> {
                 .filter(|mu| mu.scope == MuteScope::Entity(r.key) && mu.until > m.now)
                 .map(|mu| mu.until)
                 .fold(None, |acc: Option<f64>, u| Some(acc.map_or(u, |a| a.max(u))));
-            (r.key.to_string(), entity_detail_json(r, m.now, timeout, muted))
+            (
+                r.key.to_string(),
+                entity_detail_json(r, m.now, timeout, muted, |a| m.via(a).map(str::to_string)),
+            )
         })
         .collect()
 }

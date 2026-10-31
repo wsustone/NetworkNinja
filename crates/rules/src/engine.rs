@@ -31,6 +31,9 @@ pub enum Rule {
     /// Transmitter, Signal and Receiver PDUs contradict each other or stop
     /// (ADR 0010 step 5, `crate::radio`).
     Radio,
+    /// The same datagram from the same sender arrived twice: overlapping
+    /// listeners, or a network that delivers it twice.
+    DuplicateDelivery,
 }
 
 impl Rule {
@@ -45,6 +48,7 @@ impl Rule {
             Rule::PduFamily => "pdu-family",
             Rule::SimanHandshake => "siman-handshake",
             Rule::Radio => "radio",
+            Rule::DuplicateDelivery => "duplicate-delivery",
         }
     }
 
@@ -59,6 +63,7 @@ impl Rule {
             "pdu-family" => Some(Rule::PduFamily),
             "siman-handshake" => Some(Rule::SimanHandshake),
             "radio" => Some(Rule::Radio),
+            "duplicate-delivery" => Some(Rule::DuplicateDelivery),
             _ => None,
         }
     }
@@ -131,6 +136,9 @@ pub struct RuleConfig {
     pub response_timeout: f64,
     /// Radio heartbeats and limits (`[rules.radio]`).
     pub radio: RadioConfig,
+    /// The same datagram from the same sender within this many seconds is
+    /// a second delivery of one send, not a second send.
+    pub echo_window: f64,
 }
 
 impl Default for RuleConfig {
@@ -147,6 +155,7 @@ impl Default for RuleConfig {
             tick_interval: 0.25,
             response_timeout: 12.0,
             radio: RadioConfig::default(),
+            echo_window: 0.1,
         }
     }
 }
@@ -265,6 +274,11 @@ impl Engine {
             mutes: Vec::new(),
             last_tick: f64::NEG_INFINITY,
         }
+    }
+
+    /// Seconds between repeats of a point event (pack `enum_repeat_seconds`).
+    pub fn repeat_seconds(&self) -> f64 {
+        self.enum_repeat
     }
 
     pub fn enabled(&self, rule: Rule) -> bool {
@@ -518,7 +532,7 @@ impl Engine {
     /// A finding of a stateless rule as a point event, at most one of each
     /// kind per entity every `enum_repeat` seconds.
     #[allow(clippy::too_many_arguments)]
-    fn point_event(
+    pub(crate) fn point_event(
         &mut self,
         at: f64,
         rule: Rule,
@@ -792,7 +806,8 @@ impl Engine {
                 | Rule::PduPadding
                 | Rule::PduFamily
                 | Rule::SimanHandshake
-                | Rule::Radio => {}
+                | Rule::Radio
+                | Rule::DuplicateDelivery => {}
             }
         }
         out

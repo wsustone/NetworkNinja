@@ -51,6 +51,24 @@
   #inputs .in b { color:var(--fg); font-weight:500; }
   #inputs .in i { font-style:normal; font-family:ui-monospace,monospace; font-size:11px; }
   #inputs .in.quiet b { color:var(--warn); } #inputs .in.bad b { color:var(--crit); }
+  #inputs .albtn { margin-left:auto; }
+  /* Inputs editor: change listeners while the server runs. */
+  #inputsEd { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center; z-index:8; overflow-y:auto; padding:4vh 1em; }
+  #inputsEd.on { display:flex; }
+  #inputsEd>div { background:var(--panel); border:1px solid var(--line); border-radius:8px; width:min(860px,100%); }
+  #inputsEd table { font-size:12px; }
+  #inputsEd td .albtn { margin:0 .3em 0 0; }
+  #inputsEd form { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:.6em 1em; padding:.8em .9em; border-top:1px solid var(--line); }
+  #inputsEd label { display:flex; flex-direction:column; gap:.2em; font-size:11px; color:var(--dim); }
+  #inputsEd input[type=text], #inputsEd input[type=number] { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.4em .6em; font:inherit; font-size:13px; }
+  #inputsEd .ifs { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:.3em 1em; font-size:12px; color:var(--fg); }
+  #inputsEd .ifs label { flex-direction:row; align-items:center; gap:.35em; color:var(--fg); font-size:12px; }
+  #inputsEd .row { grid-column:1/-1; display:flex; gap:.6em; align-items:center; flex-wrap:wrap; }
+  #inputsEd .row button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.45em 1em; font:inherit; font-weight:600; cursor:pointer; }
+  #inputsEd .row button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
+  #inputsEd .msg { font-size:12px; } #inputsEd .msg.bad { color:var(--crit); } #inputsEd .msg.good { color:var(--ok); }
+  #inputsEd .foot { padding:.6em .9em .8em; border-top:1px solid var(--line); font-size:12px; color:var(--dim); display:flex; gap:1em; align-items:center; flex-wrap:wrap; }
+  #inputsEd .hint { grid-column:1/-1; font-size:11px; color:var(--dim); }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   h2 { margin:0; padding:.6em .9em; font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); border-bottom:1px solid var(--line); }
   h2 span { float:right; font-weight:400; }
@@ -245,6 +263,24 @@
   </section>
 </main>
 <script src="/vendor/maplibre-gl.js"></script>
+
+<div id="inputsEd"><div>
+  <h2>Inputs: where the server listens <span><button class="albtn" id="ieClose">close</button></span></h2>
+  <div class="tablewrap"><table><thead><tr><th>name</th><th>port</th><th>multicast groups</th><th>interfaces</th><th>shared</th><th>buffer</th><th>status</th><th></th></tr></thead>
+    <tbody id="ieRows"></tbody></table></div>
+  <form id="ieForm" autocomplete="off">
+    <label>name<input type="text" id="ieName" placeholder="e.g. radio" required></label>
+    <label>UDP port<input type="number" id="iePort" min="1" max="65535" placeholder="3000" required></label>
+    <label>multicast groups<input type="text" id="ieGroups" placeholder="none = broadcast/unicast; 239.1.2.3, …"></label>
+    <label>receive buffer (MB)<input type="number" id="ieBuf" min="0.1" step="0.1" placeholder="8"></label>
+    <label>bind address<input type="text" id="ieBind" placeholder="0.0.0.0 (every interface)"></label>
+    <label style="flex-direction:row;align-items:center;gap:.4em;color:var(--fg)"><input type="checkbox" id="ieShare"> share the port with a simulator on this machine</label>
+    <div class="ifs" id="ieIfs"></div>
+    <div class="hint">Interfaces are where multicast groups are joined; tick none to let the OS choose. Sharing is safe for broadcast and multicast; unicast to a shared port reaches only one program (docs/capture.md).</div>
+    <div class="row"><button type="submit" id="ieSubmit">add listener</button><button type="button" class="plain" id="ieCancel" hidden>cancel</button><span class="msg" id="ieMsg"></span></div>
+  </form>
+  <div class="foot" id="ieFoot"></div>
+</div></div>
 
 <div id="login"><div>
   <b>NetworkNinja</b>
@@ -522,8 +558,8 @@ function renderDetail() {
     }).join("");
   }
   if (d && d.sources) {
-    h += `<h3>senders (${d.sources.length})</h3><table><thead><tr><th>address</th><th>reports</th><th>heartbeat</th><th>jitter</th><th>last</th><th>type</th></tr></thead><tbody>`
-      + d.sources.map(s => `<tr class="${s.etype !== e.etype ? "conflict" : ""}"><td>${esc(s.addr)}</td><td>${s.reports}</td>`
+    h += `<h3>senders (${d.sources.length})</h3><table><thead><tr><th>address</th><th>via</th><th>reports</th><th>heartbeat</th><th>jitter</th><th>last</th><th>type</th></tr></thead><tbody>`
+      + d.sources.map(s => `<tr class="${s.etype !== e.etype ? "conflict" : ""}"><td>${esc(s.addr)}</td><td>${s.via ? esc(s.via) : "–"}</td><td>${s.reports}</td>`
         + `<td>${s.hb_mean ? s.hb_mean.toFixed(2) + " s" : "–"}</td><td>${s.hb_sd ? "±" + s.hb_sd.toFixed(2) + " s" : "–"}</td>`
         + `<td>${fmtAge(Math.max(0, now - s.seen))} ago</td><td>${esc(s.etype)}</td></tr>`).join("")
       + `</tbody></table>`;
@@ -892,7 +928,10 @@ let inputsPrev = null;
 function pollInputs() {
   fetch("/api/inputs", auth()).then(r => r.ok ? r.json() : null).then(d => {
     const box = $("inputs");
-    if (!d || !d.inputs.length) { box.hidden = true; inputsPrev = null; return; }
+    if (!d) return;
+    inputsState = d;
+    renderInputsEditor();
+    if (!d.inputs.length && !d.editable) { box.hidden = true; inputsPrev = null; return; }
     const now = Date.now() / 1000, prev = inputsPrev;
     inputsPrev = {at: now, by: Object.fromEntries(d.inputs.map(i => [i.name, i]))};
     box.hidden = false;
@@ -900,7 +939,7 @@ function pollInputs() {
       const p = prev && prev.by[i.name];
       const rate = p ? Math.max(0, (i.datagrams - p.datagrams) / (now - prev.at)) : null;
       const where = i.groups.length
-        ? `${i.groups.join(",")}:${i.local.split(":").pop()}${i.interface !== "0.0.0.0" ? " @" + i.interface : ""}`
+        ? `${i.groups.join(",")}:${i.port}${i.interfaces.length ? " @" + i.interfaces.join(",") : ""}`
         : i.local;
       const bad = p && i.errors > p.errors;
       const quiet = i.idle === null || i.idle > 10;
@@ -909,11 +948,95 @@ function pollInputs() {
         : i.idle === null ? "nothing received yet" : quiet ? `quiet ${fmtAge(i.idle)}` : `${rate === null ? "…" : rate.toFixed(rate < 10 ? 1 : 0)}/s`;
       const tip = `${i.name}: ${i.local}${i.share ? " (shared)" : ""}, receive buffer ${Math.round(i.recv_buffer / 1024)} KB, ${i.datagrams} datagrams`;
       return `<span class="in ${cls}" title="${esc(tip)}"><b>${esc(i.name)}</b> <i>${esc(where)}</i> ${what}</span>`;
-    }).join("");
+    }).join("") + (d.inputs.length ? "" : '<span class="in quiet"><b>no listeners</b></span>')
+      + (d.editable ? '<button class="albtn" id="ieOpen">edit</button>' : "");
+    const open = $("ieOpen"); if (open) open.onclick = openInputsEditor;
   }).catch(() => {});
 }
 setInterval(pollInputs, 2000);
 setTimeout(pollInputs, 300);
+
+// --- inputs editor: add, change, remove and save listeners (POST /api/inputs) ---
+let inputsState = null, ieEditing = null, ieWaitFor = null, ifaces = [];
+function openInputsEditor() {
+  $("inputsEd").classList.add("on");
+  fetch("/api/interfaces", auth()).then(r => r.ok ? r.json() : null)
+    .then(d => { if (d) { ifaces = d.interfaces; renderIfaceChoices(); } }).catch(() => {});
+  ieReset(); renderInputsEditor();
+}
+function renderIfaceChoices(checked = []) {
+  $("ieIfs").innerHTML = '<span style="color:var(--dim);font-size:11px">join on:</span>' + ifaces.map(i =>
+    `<label><input type="checkbox" value="${esc(i.name)}" ${checked.includes(i.name) || checked.includes(i.ip) ? "checked" : ""}>${esc(i.name)} <i style="color:var(--dim);font-style:normal">${esc(i.ip)}${i.loopback ? " · loopback" : i.up ? "" : " · down"}</i></label>`).join("");
+}
+function ieReset() {
+  ieEditing = null;
+  for (const k of ["ieName", "iePort", "ieGroups", "ieBuf", "ieBind"]) $(k).value = "";
+  $("ieShare").checked = false;
+  renderIfaceChoices();
+  $("ieSubmit").textContent = "add listener"; $("ieCancel").hidden = true;
+}
+function ieEdit(name) {
+  const i = inputsState.inputs.find(x => x.name === name);
+  if (!i) return;
+  ieEditing = name;
+  $("ieName").value = i.name; $("iePort").value = i.port; $("ieGroups").value = i.groups.join(", ");
+  $("ieBuf").value = i.recv_buffer_asked !== 8 * 1024 * 1024 ? +(i.recv_buffer_asked / 1048576).toFixed(2) : "";
+  $("ieBind").value = i.bind === "0.0.0.0" ? "" : i.bind; $("ieShare").checked = i.share;
+  renderIfaceChoices(i.interfaces);
+  $("ieSubmit").textContent = "save changes"; $("ieCancel").hidden = false;
+  $("ieName").focus();
+}
+function ieSend(body) {
+  const before = inputsState ? inputsState.last_change.n : 0;
+  ieWaitFor = before;
+  $("ieMsg").className = "msg"; $("ieMsg").textContent = "applying…";
+  fetch("/api/inputs", auth({method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}))
+    .then(r => { if (!r.ok) return r.text().then(t => Promise.reject(t)); setTimeout(pollInputs, 300); setTimeout(pollInputs, 1200); })
+    .catch(e => { ieWaitFor = null; $("ieMsg").className = "msg bad"; $("ieMsg").textContent = String(e); });
+}
+function renderInputsEditor() {
+  const d = inputsState;
+  if (!d || !$("inputsEd").classList.contains("on")) return;
+  const now = d.inputs;
+  $("ieRows").innerHTML = now.map(i => {
+    const st = i.errors ? `<span style="color:var(--crit)">${esc(i.last_error || "errors")}</span>`
+      : i.idle === null ? '<span style="color:var(--warn)">nothing yet</span>'
+      : i.idle > 10 ? `<span style="color:var(--warn)">quiet ${fmtAge(i.idle)}</span>` : `${i.datagrams} datagrams`;
+    return `<tr><td><b>${esc(i.name)}</b></td><td>${i.port}${i.bind !== "0.0.0.0" ? " on " + esc(i.bind) : ""}</td>`
+      + `<td>${i.groups.length ? esc(i.groups.join(", ")) : '<span style="color:var(--dim)">broadcast/unicast</span>'}</td>`
+      + `<td>${i.interfaces.length ? esc(i.interfaces.join(", ")) : '<span style="color:var(--dim)">' + (i.groups.length ? "OS default" : "–") + "</span>"}</td>`
+      + `<td>${i.share ? "yes" : "no"}</td><td>${Math.round(i.recv_buffer / 1024)} KB</td><td>${st}</td>`
+      + `<td><button class="albtn" data-ie="edit" data-n="${esc(i.name)}">edit</button><button class="albtn" data-ie="rm" data-n="${esc(i.name)}">remove</button></td></tr>`;
+  }).join("") || '<tr><td colspan="8" class="empty">No listeners: nothing is being received. Add one below.</td></tr>';
+  if (ieWaitFor !== null && d.last_change.n > ieWaitFor) {
+    ieWaitFor = null;
+    $("ieMsg").className = "msg " + (d.last_change.ok ? "good" : "bad");
+    $("ieMsg").textContent = d.last_change.message;
+    if (d.last_change.ok) ieReset();
+  }
+  $("ieFoot").innerHTML = !d.editable ? "Replaying a recording: listeners can be changed during live capture."
+    : d.config_file ? `<button class="albtn" id="ieSave">save to ${esc(d.config_file)}</button><span>Changes apply now; saving keeps them across restarts (the previous file is kept as .bak).</span>`
+    : "<span>Changes apply now and last until the server restarts. Start it with <code>--config FILE</code> to save them.</span>";
+  const save = $("ieSave"); if (save) save.onclick = () => ieSend({cmd: "inputs_save"});
+}
+$("ieRows").onclick = ev => {
+  const b = ev.target.closest("button[data-ie]");
+  if (!b) return;
+  if (b.dataset.ie === "edit") ieEdit(b.dataset.n);
+  else if (confirm(`Stop listening on '${b.dataset.n}'?`)) ieSend({cmd: "input_remove", name: b.dataset.n});
+};
+$("ieForm").onsubmit = ev => {
+  ev.preventDefault();
+  const body = {cmd: ieEditing ? "input_update" : "input_add", name: $("ieName").value.trim(), port: $("iePort").value.trim(),
+    groups: $("ieGroups").value.trim(), receive_buffer_mb: $("ieBuf").value.trim(), bind: $("ieBind").value.trim(),
+    interfaces: [...$("ieIfs").querySelectorAll("input:checked")].map(c => c.value).join(","),
+    share: $("ieShare").checked ? "true" : "false"};
+  if (ieEditing) body.old = ieEditing;
+  ieSend(body);
+};
+$("ieCancel").onclick = ieReset;
+$("ieClose").onclick = () => $("inputsEd").classList.remove("on");
+document.addEventListener("keydown", ev => { if (ev.key === "Escape") $("inputsEd").classList.remove("on"); });
 
 // --- traffic chart: PDU/s from /api/query, split by type / site / sender ---
 const SERIES = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9"], OTHER = "#8b949e";
