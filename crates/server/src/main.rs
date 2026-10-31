@@ -4,7 +4,7 @@
 //! `replay` decodes a pcap file. Both print one line per PDU (unless
 //! --quiet) and a running summary.
 
-use nn_capture::{Datagram, PcapReader, UdpConfig, UdpSource};
+use nn_capture::{Datagram, Listeners, PcapReader, UdpConfig};
 use nn_decode::{Pdu, PduBody};
 use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
 use nn_server::web::{
@@ -16,7 +16,6 @@ use nn_state::{secs, Metric};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufReader;
-use std::net::Ipv4Addr;
 use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -31,12 +30,24 @@ USAGE:
     nn-server cert OUT [--host NAME]...       Write a self-signed OUT.crt + OUT.key
                           (--host: DNS name or IP, repeatable; default
                           localhost, 127.0.0.1, ::1)
+    nn-server interfaces                      List network interfaces (for --iface)
 
-LISTEN / SERVE OPTIONS
-    --port N              UDP port (default 3000)
+WHERE TO LISTEN (see docs/capture.md)
+    --config FILE         Listeners ([[listen]]) and [serve] settings from FILE;
+                          flags below override it
+    --listen SPEC         A listener: PORT[:GROUP,GROUP...][@INTERFACE], e.g.
+                          3000, or 3001:239.1.2.10@en0 (repeatable; replaces
+                          the config file's listeners)
+    --port N              One listener on UDP port N (default 3000)
     --bind IP             Local address (default 0.0.0.0, needed for broadcast/multicast)
     --multicast GROUP     Join an IPv4 multicast group (repeatable)
-    --iface IP            Interface address for multicast joins (default: OS choice)
+    --iface NAME|IP       Interface for multicast joins (default: OS choice)
+    --share               Share the port(s) with a simulator on this host (safe
+                          for broadcast and multicast; unicast goes to only one
+                          of the sharing programs)
+    --receive-buffer MB   Kernel receive buffer per listener (default 8)
+
+LISTEN / SERVE OPTIONS
     --duration SECS       Stop after this long (default: run until killed)
     --http ADDR           Dashboard bind (serve only; default 127.0.0.1:8080)
     --log FILE            Append the event log to FILE and show past runs
@@ -167,42 +178,81 @@ fn real_main() -> Result<(), String> {
         file = Some(args.remove(0));
     }
 
-    let mut udp = UdpConfig::default();
+    // A config file seeds the settings; flags then override them.
+    let file_cfg = match args.iter().position(|a| a == "--config") {
+        Some(i) => {
+            let f = args.get(i + 1).ok_or("--config needs a value")?.clone();
+            args.drain(i..i + 2);
+            Some(nn_server::config::load(&f)?)
+        }
+        None => None,
+    };
+    let fc = file_cfg.clone().unwrap_or_default();
+    let mut udp = UdpConfig {
+        name: "dis".into(),
+        ..Default::default()
+    };
+    let mut legacy_listener = false;
+    let mut cli_listeners: Vec<UdpConfig> = Vec::new();
+    let mut share = false;
+    let mut recv_buffer_mb: Option<f64> = None;
     let mut duration = None;
     let mut speed = None;
-    let mut http: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
-    let mut log_file: Option<String> = None;
-    let mut db_file: Option<String> = None;
-    let mut retention_days = 7.0;
-    let mut capture_file: Option<String> = None;
-    let mut capture_budget_mb = 1024.0;
-    let mut record_file: Option<String> = None;
+    let mut http: std::net::SocketAddr = fc
+        .http
+        .as_deref()
+        .unwrap_or("127.0.0.1:8080")
+        .parse()
+        .map_err(|e| format!("serve.http: {e}"))?;
+    let mut log_file: Option<String> = fc.log.clone();
+    let mut db_file: Option<String> = fc.db.clone();
+    let mut retention_days = fc.metrics_retention_days.unwrap_or(7.0);
+    let mut capture_file: Option<String> = fc.capture.clone();
+    let mut capture_budget_mb = fc.capture_budget_mb.unwrap_or(1024.0);
+    let mut record_file: Option<String> = fc.record.clone();
     let mut replay_file: Option<String> = None;
-    let mut runs_dir: Option<String> = None;
-    let mut pack_files: Vec<String> = Vec::new();
-    let mut siso_file: Option<String> = None;
+    let mut runs_dir: Option<String> = fc.runs.clone();
+    let mut pack_files: Vec<String> = fc.rulepacks.clone();
+    let mut siso_file: Option<String> = fc.siso.clone();
     let mut common = Common {
         filter: Filter::default(),
         quiet: false,
         every: 10.0,
     };
-    let mut users_file = None;
+    let mut users_file = fc.users.clone();
     let mut passwd_user = None;
     let mut passwd_pass = None;
-    let mut cert_file: Option<String> = None;
-    let mut key_file: Option<String> = None;
+    let mut cert_file: Option<String> = fc.cert.clone();
+    let mut key_file: Option<String> = fc.key.clone();
     let mut cert_hosts: Vec<String> = Vec::new();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{a} needs a value"));
         let bad = |e: &dyn std::fmt::Display| format!("{a}: {e}");
         match a.as_str() {
-            "--port" => udp.port = val()?.parse().map_err(|e| bad(&e))?,
-            "--bind" => udp.bind = val()?.parse().map_err(|e| bad(&e))?,
-            "--multicast" => udp
-                .multicast_groups
-                .push(val()?.parse::<Ipv4Addr>().map_err(|e| bad(&e))?),
-            "--iface" => udp.multicast_interface = val()?.parse().map_err(|e| bad(&e))?,
+            "--port" => {
+                udp.port = val()?.parse().map_err(|e| bad(&e))?;
+                legacy_listener = true;
+            }
+            "--bind" => {
+                udp.bind = val()?.parse().map_err(|e| bad(&e))?;
+                legacy_listener = true;
+            }
+            "--multicast" => {
+                let g = nn_server::config::groups(&[val()?]).map_err(|e| bad(&e))?;
+                udp.multicast_groups.extend(g);
+                legacy_listener = true;
+            }
+            "--iface" => {
+                udp.multicast_interface = nn_capture::iface::resolve(&val()?).map_err(|e| bad(&e))?;
+                legacy_listener = true;
+            }
+            "--listen" => {
+                let n = cli_listeners.len() + 1;
+                cli_listeners.push(nn_server::config::listen_spec(&val()?, n)?);
+            }
+            "--share" => share = true,
+            "--receive-buffer" => recv_buffer_mb = Some(val()?.parse::<f64>().map_err(|e| bad(&e))?),
             "--duration" => duration = Some(val()?.parse::<f64>().map_err(|e| bad(&e))?),
             "--speed" => speed = Some(val()?.parse::<f64>().map_err(|e| bad(&e))?),
             "--exercise" => common.filter.exercise = Some(val()?.parse().map_err(|e| bad(&e))?),
@@ -231,6 +281,30 @@ fn real_main() -> Result<(), String> {
         }
     }
 
+    // Listeners: the command line's, else the config file's, else one on
+    // --port (3000). --share and --receive-buffer apply to the command line's.
+    let from_cli = !cli_listeners.is_empty() || legacy_listener || fc.listeners.is_empty();
+    let mut listeners = if !cli_listeners.is_empty() {
+        if legacy_listener {
+            return Err("use either --listen or --port/--bind/--multicast/--iface, not both".into());
+        }
+        cli_listeners
+    } else if legacy_listener || fc.listeners.is_empty() {
+        vec![udp]
+    } else {
+        fc.listeners.clone()
+    };
+    if from_cli {
+        for l in &mut listeners {
+            l.share |= share;
+            if let Some(mb) = recv_buffer_mb {
+                l.recv_buffer = (mb.max(0.1) * 1024.0 * 1024.0) as usize;
+            }
+        }
+    } else if share || recv_buffer_mb.is_some() {
+        return Err("--share and --receive-buffer apply to command-line listeners; set share / receive_buffer_mb per [[listen]] in the config file".into());
+    }
+
     let tls = match (cert_file.as_deref(), key_file.as_deref()) {
         (Some(c), Some(k)) => Some(nn_server::tls::load(c.as_ref(), k.as_ref())?),
         (None, None) => None,
@@ -250,10 +324,11 @@ fn real_main() -> Result<(), String> {
     }
     let packs = Merged::load_with(siso.as_ref(), &pack_files).map_err(|e| e.to_string())?;
     match command.as_str() {
-        "listen" => listen(&udp, duration, &common, &packs),
+        "listen" => listen(&listeners, duration, &common, &packs),
+        "interfaces" => interfaces(),
         "replay" => replay(file.as_deref().unwrap(), speed, &common, &packs),
         "serve" => serve(
-            &udp,
+            &listeners,
             http,
             duration,
             log_file.as_deref(),
@@ -295,7 +370,7 @@ fn real_main() -> Result<(), String> {
             Ok(())
         }
         other => Err(format!(
-            "unknown command '{other}' (expected listen, replay, serve or passwd)"
+            "unknown command '{other}' (expected listen, replay, serve, interfaces, cert or passwd)"
         )),
     }
 }
@@ -373,13 +448,71 @@ fn show(p: &mut Pipeline, d: &Datagram, t: f64, common: &Common) {
     p.print_alerts(&events);
 }
 
-fn listen(cfg: &UdpConfig, duration: Option<f64>, common: &Common, packs: &Merged) -> Result<(), String> {
-    let mut src = UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?;
-    eprintln!("nn-server: listening on {} (receive-only)", src.local_addr());
-    eprintln!("  rule packs: {}", packs.packs.join(" + "));
-    for g in &cfg.multicast_groups {
-        eprintln!("  joined multicast {g} on {}", cfg.multicast_interface);
+/// One line per listener at startup: where it listens, what it joined,
+/// and a warning when the kernel granted less receive buffer than asked.
+fn describe_listeners(l: &Listeners) {
+    for st in &l.stats {
+        let groups = if st.groups.is_empty() {
+            "broadcast/unicast".to_string()
+        } else {
+            let iface = if st.interface.is_unspecified() {
+                "the OS's default interface".to_string()
+            } else {
+                st.interface.to_string()
+            };
+            format!(
+                "multicast {} on {iface}",
+                st.groups.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
+            )
+        };
+        let shared = if st.share { ", shared" } else { "" };
+        eprintln!(
+            "  listener '{}': {} ({groups}{shared}), receive buffer {} KB",
+            st.name,
+            st.local,
+            st.recv_buffer / 1024
+        );
+        // Linux reports twice what it reserves for data; anything below the
+        // request means the system limit capped it.
+        if st.recv_buffer < st.recv_buffer_asked {
+            eprintln!(
+                "    warning: asked for {} KB; raise the system limit to avoid drops at high rates \
+                 (Linux: sysctl net.core.rmem_max; macOS: sysctl kern.ipc.maxsockbuf)",
+                st.recv_buffer_asked / 1024
+            );
+        }
     }
+}
+
+fn interfaces() -> Result<(), String> {
+    let all = nn_capture::iface::list().map_err(|e| format!("cannot list interfaces: {e}"))?;
+    println!(
+        "{:<12} {:<16} {:<16} {:<16} state",
+        "interface", "IPv4", "netmask", "broadcast"
+    );
+    for i in all {
+        let state = match (i.loopback, i.up) {
+            (true, _) => "loopback",
+            (false, true) => "up",
+            (false, false) => "down",
+        };
+        println!(
+            "{:<12} {:<16} {:<16} {:<16} {state}",
+            i.name,
+            i.ip.to_string(),
+            i.netmask.to_string(),
+            i.broadcast.map_or("-".to_string(), |b| b.to_string())
+        );
+    }
+    println!("\nJoin multicast on one with --iface NAME (or interface = \"NAME\" in a [[listen]] block).");
+    Ok(())
+}
+
+fn listen(cfgs: &[UdpConfig], duration: Option<f64>, common: &Common, packs: &Merged) -> Result<(), String> {
+    let src = Listeners::open(cfgs)?;
+    eprintln!("nn-server: listening (receive-only)");
+    describe_listeners(&src);
+    eprintln!("  rule packs: {}", packs.packs.join(" + "));
     let start = Instant::now();
     let mut p = Pipeline::new(packs);
     p.origin = nn_capture::steady_now();
@@ -393,7 +526,7 @@ fn listen(cfg: &UdpConfig, duration: Option<f64>, common: &Common, packs: &Merge
             eprint!("--- {t:.0} s: {}", p.summary(nn_capture::steady_now()));
             next_summary += common.every;
         }
-        match src.recv().map_err(|e| format!("receive failed: {e}"))? {
+        match src.recv(std::time::Duration::from_millis(250)) {
             Some(d) => show(&mut p, &d, start.elapsed().as_secs_f64(), common),
             None => {
                 let events = p.monitor.tick(nn_capture::steady_now());
@@ -452,13 +585,13 @@ fn replay(path: &str, speed: Option<f64>, common: &Common, packs: &Merged) -> Re
 /// alerts the moment they fire, over WebSocket. Every alert, decode error
 /// and server event lands in the event log (`/api/log`, `--log` on disk).
 enum Src {
-    Udp(UdpSource),
+    Udp(Listeners),
     Rec(nn_recorder::Reader),
 }
 
 #[allow(clippy::too_many_arguments)]
 fn serve(
-    cfg: &UdpConfig,
+    cfg: &[UdpConfig],
     http: std::net::SocketAddr,
     duration: Option<f64>,
     log_file: Option<&str>,
@@ -479,7 +612,7 @@ fn serve(
                 .map_err(|e| format!("cannot open recording {path}: {e}"))?;
             Src::Rec(r)
         }
-        None => Src::Udp(UdpSource::open(cfg).map_err(|e| format!("cannot open UDP {}:{}: {e}", cfg.bind, cfg.port))?),
+        None => Src::Udp(Listeners::open(cfg)?),
     };
     let mut rec_w = record_file
         .map(|p| {
@@ -494,10 +627,21 @@ fn serve(
     }
     .map_err(|e| format!("cannot bind dashboard on {http}: {e}"))?;
     let desc = match &src {
-        Src::Udp(s) => format!("live on {}", s.local_addr()),
+        Src::Udp(l) => format!(
+            "live on {}",
+            l.stats
+                .iter()
+                .map(|s| s.local.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Src::Rec(_) => format!("replaying {} at {}x", replay_file.unwrap(), speed),
     };
     eprintln!("nn-server: {desc} (receive-only)");
+    if let Src::Udp(l) = &src {
+        describe_listeners(l);
+        hub.set_inputs(l.stats.clone());
+    }
     if addr.ip().is_unspecified() {
         // Bound on every interface: print addresses a browser can actually use.
         eprintln!("  dashboard: {scheme}://localhost:{}", addr.port());
@@ -508,9 +652,6 @@ fn serve(
         eprintln!("  dashboard: {scheme}://{addr}");
     }
     eprintln!("  rule packs: {}", packs.packs.join(" + "));
-    for g in &cfg.multicast_groups {
-        eprintln!("  joined multicast {g} on {}", cfg.multicast_interface);
-    }
     if let Some(path) = log_file {
         let n = hub
             .open_log(std::path::Path::new(path))
@@ -606,9 +747,11 @@ fn serve(
                     }
                     if let Some(sw) = &out.switch {
                         let switched = match sw {
-                            Switch::Live => match UdpSource::open(cfg) {
-                                Ok(s) => {
-                                    src = Src::Udp(s);
+                            Switch::Live if matches!(src, Src::Udp(_)) => false,
+                            Switch::Live => match Listeners::open(cfg) {
+                                Ok(l) => {
+                                    hub.set_inputs(l.stats.clone());
+                                    src = Src::Udp(l);
                                     cur_replay = None;
                                     replay_pos = None;
                                     true
@@ -626,6 +769,7 @@ fn serve(
                                 let path = std::path::Path::new(dir).join(f);
                                 match nn_recorder::Reader::open(&path) {
                                     Ok(r) => {
+                                        hub.set_inputs(Vec::new());
                                         src = Src::Rec(r);
                                         cur_replay = Some(path);
                                         skip_to = None;
@@ -684,7 +828,7 @@ fn serve(
         }
         let errs_before = m.decode_errors;
         let next = match &mut src {
-            Src::Udp(s) => s.recv().map_err(|e| format!("receive failed: {e}"))?,
+            Src::Udp(l) => l.recv(std::time::Duration::from_millis(250)),
             Src::Rec(r) => {
                 let d = r.next_datagram().map_err(|e| format!("replay failed: {e}"))?;
                 if let Some(d) = &d {
