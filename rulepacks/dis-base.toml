@@ -111,6 +111,17 @@ severity = "warning"
 final_report_window = 12.0
 severity = "warning"
 
+# --- Fire and Detonation (5.4.3, 5.4.4) ------------------------------------
+
+[rules.fire-detonation]
+# A munition Fire's Detonation (same Event ID) is due within max_flight
+# seconds; a munition Detonation should match a Fire (mines, demolitions and
+# accidental detonations legitimately don't, so that finding names them); the
+# pair must agree on firing entity and munition type; the PDU Status fire /
+# detonation type indicator must agree with the descriptor's kind.
+max_flight = 180.0
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]

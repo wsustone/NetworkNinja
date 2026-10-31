@@ -1,9 +1,15 @@
 //! Warfare (family 2): every `fire_every` seconds of running time a random
 //! entity fires on one from another site; the Detonation follows 2 s later.
+//!
+//! Faults (on the next engagement): its Detonation never comes
+//! (`no-detonation`), names another munition type (`detonation-mismatch`),
+//! or its Fire's PDU Status calls the munition an expendable
+//! (`wrong-fire-type`, v7); or a Detonation for an Event ID never fired
+//! (`orphan-detonation`), now.
 
 use super::{Family, Out};
 use crate::world::{Tick, World};
-use crate::Config;
+use crate::{Config, Event, EventKind};
 use nn_decode::*;
 use nn_state::geo;
 
@@ -12,6 +18,9 @@ pub(crate) struct Warfare {
     next_fire: f64,
     /// Detonations due, with when.
     detonations: Vec<(f64, Detonation)>,
+    drop_next: bool,
+    mismatch_next: bool,
+    wrong_type_next: bool,
 }
 
 impl Warfare {
@@ -20,11 +29,52 @@ impl Warfare {
             fire_count: 0,
             next_fire: cfg.fire_every.unwrap_or(f64::INFINITY),
             detonations: Vec::new(),
+            drop_next: false,
+            mismatch_next: false,
+            wrong_type_next: false,
         }
     }
 }
 
 impl Family for Warfare {
+    fn on_event(&mut self, w: &mut World, tick: &Tick, ev: &Event, out: &mut Out) -> Option<bool> {
+        match ev.kind {
+            EventKind::NoDetonation => self.drop_next = true,
+            EventKind::DetonationMismatch => self.mismatch_next = true,
+            EventKind::WrongFireType => self.wrong_type_next = true,
+            EventKind::OrphanDetonation => {
+                let Some(e) = w.entities.iter().find(|e| e.sending) else {
+                    return Some(false);
+                };
+                let (at, _, _) = e.kinematics(w.motion_time);
+                let id = e.id;
+                let d = Detonation {
+                    firing_entity: id,
+                    target_entity: EntityId::default(),
+                    munition_id: EntityId::default(),
+                    event_id: EventId {
+                        site: id.site,
+                        application: id.application,
+                        event_number: 60_000,
+                    },
+                    velocity: Vec3f::default(),
+                    location: at,
+                    descriptor: munition(),
+                    location_in_entity: Vec3f::default(),
+                    result: 5, // ground impact
+                    variable_parameters: Vec::new(),
+                };
+                let pdu = Pdu {
+                    header: tick.header(pdu_type::DETONATION),
+                    body: PduBody::Detonation(d),
+                };
+                out.push((w.sender(id.site), pdu));
+            }
+            _ => return None,
+        }
+        Some(true)
+    }
+
     fn emit(&mut self, w: &mut World, tick: &Tick, out: &mut Out) {
         let t = tick.t;
         if !w.frozen && t >= self.next_fire {
@@ -54,24 +104,14 @@ impl Family for Warfare {
                     event_number: self.fire_count,
                 };
                 let munition_id = EntityId::new(firer.site, firer.application, 1000 + self.fire_count);
-                let descriptor = BurstDescriptor {
-                    munition_type: EntityType {
-                        kind: 2,
-                        domain: 1,
-                        country: 225,
-                        category: 2,
-                        subcategory: 1,
-                        specific: 0,
-                        extra: 0,
-                    },
-                    warhead: 1000,
-                    fuse: 1000,
-                    quantity: 1,
-                    rate: 0,
-                };
+                let descriptor = munition();
                 let range = geo::distance(&from, &to) as f32;
+                let mut header = tick.header(pdu_type::FIRE);
+                if std::mem::take(&mut self.wrong_type_next) {
+                    header.pdu_status |= 1 << 4; // FTI: expendable
+                }
                 let fire = Pdu {
-                    header: tick.header(pdu_type::FIRE),
+                    header,
                     body: PduBody::Fire(Fire {
                         firing_entity: firer,
                         target_entity: target,
@@ -89,25 +129,31 @@ impl Family for Warfare {
                     }),
                 };
                 out.push((w.sender(firer.site), fire));
-                self.detonations.push((
-                    t + 2.0,
-                    Detonation {
-                        firing_entity: firer,
-                        target_entity: target,
-                        munition_id,
-                        event_id,
-                        velocity: Vec3f {
-                            x: 0.0,
-                            y: 0.0,
-                            z: -250.0,
+                let mut det_descriptor = descriptor;
+                if std::mem::take(&mut self.mismatch_next) {
+                    det_descriptor.munition_type.category += 1;
+                }
+                if !std::mem::take(&mut self.drop_next) {
+                    self.detonations.push((
+                        t + 2.0,
+                        Detonation {
+                            firing_entity: firer,
+                            target_entity: target,
+                            munition_id,
+                            event_id,
+                            velocity: Vec3f {
+                                x: 0.0,
+                                y: 0.0,
+                                z: -250.0,
+                            },
+                            location: to,
+                            descriptor: det_descriptor,
+                            location_in_entity: Vec3f::default(),
+                            result: 1, // entity impact
+                            variable_parameters: Vec::new(),
                         },
-                        location: to,
-                        descriptor,
-                        location_in_entity: Vec3f::default(),
-                        result: 1, // entity impact
-                        variable_parameters: Vec::new(),
-                    },
-                ));
+                    ));
+                }
             }
         }
 
@@ -123,5 +169,24 @@ impl Family for Warfare {
                 true
             }
         });
+    }
+}
+
+/// The munition every engagement fires: a US land-attack round.
+fn munition() -> BurstDescriptor {
+    BurstDescriptor {
+        munition_type: EntityType {
+            kind: 2,
+            domain: 1,
+            country: 225,
+            category: 2,
+            subcategory: 1,
+            specific: 0,
+            extra: 0,
+        },
+        warhead: 1000,
+        fuse: 1000,
+        quantity: 1,
+        rate: 0,
     }
 }

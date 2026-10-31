@@ -89,6 +89,13 @@ LIFECYCLE FAULTS (ID is site:application:entity)
     --type-change ID[@T]    Entity's type changes mid-life
     --orphan-update ID[@T]  Entity State Updates for ID+1000, never described in full
 
+WARFARE FAULTS (on the next engagement; need --fire-every)
+    --no-detonation T       The next Fire's Detonation never comes
+    --detonation-mismatch T The next Detonation names another munition type
+    --wrong-fire-type T     The next Fire's PDU Status says expendable (v7)
+    --orphan-detonation T   A Detonation for an Event ID never fired, at T
+    --all-warfare-faults    One of each (turns on --fire-every 10 if not set)
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -139,6 +146,7 @@ fn parse_args() -> Result<Options, String> {
     let mut pending: Vec<(EventKind, String)> = Vec::new();
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
     let (mut all_handshake, mut all_radio, mut all_lifecycle) = (false, false, false);
+    let mut all_warfare = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -206,6 +214,11 @@ fn parse_args() -> Result<Options, String> {
             "--type-change" => pending.push((EventKind::TypeChange, val()?)),
             "--orphan-update" => pending.push((EventKind::OrphanUpdate, val()?)),
             "--all-lifecycle-faults" => all_lifecycle = true,
+            "--no-detonation" => pending.push((EventKind::NoDetonation, format!("@{}", val()?))),
+            "--detonation-mismatch" => pending.push((EventKind::DetonationMismatch, format!("@{}", val()?))),
+            "--wrong-fire-type" => pending.push((EventKind::WrongFireType, format!("@{}", val()?))),
+            "--orphan-detonation" => pending.push((EventKind::OrphanDetonation, format!("@{}", val()?))),
+            "--all-warfare-faults" => all_warfare = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -259,6 +272,20 @@ fn parse_args() -> Result<Options, String> {
         pending.push((EventKind::WrongAck, format!("{second}@{}", d * 0.15)));
         pending.push((EventKind::OrphanResponse, format!("{second}@{}", d * 0.30)));
         pending.push((EventKind::NoResponse, format!("{second}@{}", d * 0.60)));
+    }
+    if all_warfare {
+        cfg.fire_every.get_or_insert(10.0);
+        for (i, kind) in [
+            EventKind::NoDetonation,
+            EventKind::DetonationMismatch,
+            EventKind::WrongFireType,
+            EventKind::OrphanDetonation,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            pending.push((kind, format!("@{}", d * (0.2 + 0.15 * i as f64))));
+        }
     }
     if all_lifecycle {
         if cfg.entities_per_site < 8 {
@@ -334,7 +361,12 @@ fn parse_args() -> Result<Options, String> {
             None => (spec.as_str(), d / 3.0),
         };
         let target = match kind {
-            EventKind::Freeze | EventKind::Resume => Target::Exercise,
+            EventKind::Freeze
+            | EventKind::Resume
+            | EventKind::NoDetonation
+            | EventKind::DetonationMismatch
+            | EventKind::WrongFireType
+            | EventKind::OrphanDetonation => Target::Exercise,
             EventKind::RestartPort
             | EventKind::NoResponse
             | EventKind::WrongAck

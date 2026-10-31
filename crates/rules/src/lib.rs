@@ -23,6 +23,7 @@ pub mod pack;
 pub mod radio;
 pub mod siman;
 pub mod siso;
+mod warfare;
 
 pub use capture::{Capture, Captured};
 pub use engine::{Ack, Alert, AlertEvent, AlertState, Engine, Mute, MuteScope, Rule, RuleConfig, Severity};
