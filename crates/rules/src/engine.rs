@@ -177,7 +177,8 @@ pub struct Mute {
 }
 
 /// The entity a PDU is about, for keying alerts that don't track entity
-/// state. `0:0:0` for PDUs with no entity (e.g. an unknown type).
+/// state: for types that aren't deep decoded, the layout's first
+/// identifier. `0:0:0` for PDUs with none (e.g. an unknown type).
 fn primary_entity(pdu: &Pdu) -> EntityId {
     match &pdu.body {
         PduBody::EntityState(e) => e.entity_id,
@@ -186,7 +187,7 @@ fn primary_entity(pdu: &Pdu) -> EntityId {
         PduBody::StartResume(s) => s.originating,
         PduBody::StopFreeze(s) => s.originating,
         PduBody::RemoveEntity(r) => r.originating,
-        PduBody::Other(_) => EntityId::default(),
+        PduBody::Other(body) => nn_decode::structure::first_id(pdu.header.pdu_type, body).unwrap_or_default(),
     }
 }
 
@@ -366,13 +367,16 @@ impl Engine {
             return;
         }
         self.enum_last.insert(dedup, at);
-        let message = format!(
-            "{} {} = {} is outside the allowed set ({})",
-            key.id,
-            check.spec.name,
-            value,
-            check.allowed_str()
-        );
+        let message = match &check.source {
+            Some(source) => format!("{} {} = {} is not defined in {source}", key.id, check.spec.name, value),
+            None => format!(
+                "{} {} = {} is outside the allowed set ({})",
+                key.id,
+                check.spec.name,
+                value,
+                check.allowed_str()
+            ),
+        };
         out.push(AlertEvent {
             at,
             state: AlertState::Firing,

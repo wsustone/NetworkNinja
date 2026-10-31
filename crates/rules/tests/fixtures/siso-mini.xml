@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A hand-made file in the SISO-REF-010 XML layout, for tests. Its values
+     are a small made-up subset: it is not the SISO enumerations, which each
+     site downloads from SISO (serve --siso FILE). -->
+<ebv xmlns="http://www.sisostds.org/schemas/SISO-REF-010/2.7" title="SISO-REF-010-v99" date="2026-01-01">
+  <copyright><![CDATA[ Test fixture. <enum uid="999"> inside CDATA must be ignored. ]]></copyright>
+  <enum uid="4" name="DIS-PDU Type" size="8">
+    <cr value="1"/>
+    <enumrow value="0" description="Other"/>
+    <enumrow_range value_min="1" value_max="72" description="PDU types"/>
+  </enum>
+  <enum uid="7" name="Entity Kind" size="8">
+    <enumrow value="0" description="Other"/>
+    <enumrow value="1" description="Platform"/>
+    <enumrow value="2" description="Munition"/>
+  </enum>
+  <enum uid="9" name="Platform-Land Category" size="8">
+    <enumrow value="0" description="Other"/>
+    <enumrow value="1" description="One"/>
+    <enumrow value="2" description="Two"/>
+    <enumrow value="3" description="Three"/>
+  </enum>
+  <enum uid="69" name="Acknowledge-Acknowledge Flag" size="16">
+    <enumrow value="1" description="Create &amp; Entity"/>
+    <enumrow value="2" description="Remove Entity"/>
+  </enum>
+  <enum uid="164" name="Transmitter-Transmit State" size="8">
+    <enumrow value="0" description="Off"/>
+    <enumrow value="1" description="On but not transmitting"/>
+    <enumrow value="2" description="On and transmitting" deprecated="false"/>
+  </enum>
+  <enum uid="179" name="Receiver-Receiver State" size="16">
+    <enumrow value="0" description="Off"/>
+    <enumrow value="1" description="On, not receiving"/>
+    <enumrow value="2" description="On, receiving"/>
+  </enum>
+  <enum uid="500" name="Empty" size="8"/>
+  <bitfield uid="68" name="Stop/Freeze-Frozen Behavior" size="8">
+    <field name="Run Simulation Clock" bit_position="0"/>
+  </bitfield>
+</ebv>

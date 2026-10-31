@@ -18,8 +18,10 @@ mod engine;
 mod minitoml;
 mod monitor;
 pub mod pack;
+pub mod siso;
 
 pub use capture::{Capture, Captured};
 pub use engine::{Ack, Alert, AlertEvent, AlertState, Engine, Mute, MuteScope, Rule, RuleConfig, Severity};
 pub use monitor::Monitor;
 pub use pack::{builtin as builtin_packs, CaptureRule, EnumCheck, FieldSpec, Merged, PackError, RulePack};
+pub use siso::Siso;

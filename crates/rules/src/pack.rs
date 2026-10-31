@@ -10,6 +10,7 @@
 
 use crate::engine::{Rule, RuleConfig, Severity};
 use crate::minitoml::{self, Table, Value};
+use nn_decode::fields::{enum_fields, EnumField};
 use nn_decode::{pdu_type, Detonation, EntityState, EntityType, Fire, Pdu, PduBody, StopFreeze};
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
@@ -59,6 +60,34 @@ pub struct FieldSpec {
     pub scope: Option<u8>,
     /// Extract the field's value, or `None` on a body type mismatch.
     pub get: fn(&Pdu) -> Option<u64>,
+    /// The SISO-REF-010 enumeration defining the field's values, if any;
+    /// `--siso` turns it into a check (ADR 0010 tier E).
+    pub uid: Option<u16>,
+    /// A field read from the raw bytes of a PDU type that isn't deep
+    /// decoded; `get` is unused for these.
+    pub raw: Option<&'static EnumField>,
+}
+
+impl FieldSpec {
+    /// The field's value in `pdu`, or `None` if it isn't there.
+    pub fn value(&self, pdu: &Pdu) -> Option<u64> {
+        match (self.raw, &pdu.body) {
+            (Some(f), PduBody::Other(body)) => f.read_body(body),
+            (Some(_), _) => None,
+            (None, _) => (self.get)(pdu),
+        }
+    }
+}
+
+/// A decoded field.
+const fn spec(name: &'static str, scope: Option<u8>, uid: Option<u16>, get: fn(&Pdu) -> Option<u64>) -> FieldSpec {
+    FieldSpec {
+        name,
+        scope,
+        get,
+        uid,
+        raw: None,
+    }
 }
 
 impl std::fmt::Debug for FieldSpec {
@@ -108,118 +137,145 @@ fn det_munition(p: &Pdu) -> Option<EntityType> {
     detonation(p).map(|d| d.descriptor.munition_type)
 }
 
-/// Expand an EntityType-shaped record into its seven subfield specs.
+/// Expand an EntityType-shaped record into its seven subfield specs, plus
+/// the SISO-only checks that depend on kind and domain: platform domain
+/// (UID 8), munition domain (UID 14) and platform category by domain
+/// (UIDs 9-13).
 macro_rules! etype_fields {
     ($scope:expr, $prefix:literal, $extract:ident) => {
         [
-            FieldSpec {
-                name: concat!($prefix, ".kind"),
-                scope: $scope,
-                get: |p| $extract(p).map(|t| t.kind as u64),
-            },
-            FieldSpec {
-                name: concat!($prefix, ".domain"),
-                scope: $scope,
-                get: |p| $extract(p).map(|t| t.domain as u64),
-            },
-            FieldSpec {
-                name: concat!($prefix, ".country"),
-                scope: $scope,
-                get: |p| $extract(p).map(|t| t.country as u64),
-            },
-            FieldSpec {
-                name: concat!($prefix, ".category"),
-                scope: $scope,
-                get: |p| $extract(p).map(|t| t.category as u64),
-            },
-            FieldSpec {
-                name: concat!($prefix, ".subcategory"),
-                scope: $scope,
-                get: |p| $extract(p).map(|t| t.subcategory as u64),
-            },
-            FieldSpec {
-                name: concat!($prefix, ".specific"),
-                scope: $scope,
-                get: |p| $extract(p).map(|t| t.specific as u64),
-            },
-            FieldSpec {
-                name: concat!($prefix, ".extra"),
-                scope: $scope,
-                get: |p| $extract(p).map(|t| t.extra as u64),
-            },
+            spec(concat!($prefix, ".kind"), $scope, Some(7), |p| {
+                $extract(p).map(|t| t.kind as u64)
+            }),
+            spec(concat!($prefix, ".domain"), $scope, None, |p| {
+                $extract(p).map(|t| t.domain as u64)
+            }),
+            spec(concat!($prefix, ".country"), $scope, Some(29), |p| {
+                $extract(p).map(|t| t.country as u64)
+            }),
+            spec(concat!($prefix, ".category"), $scope, None, |p| {
+                $extract(p).map(|t| t.category as u64)
+            }),
+            spec(concat!($prefix, ".subcategory"), $scope, None, |p| {
+                $extract(p).map(|t| t.subcategory as u64)
+            }),
+            spec(concat!($prefix, ".specific"), $scope, None, |p| {
+                $extract(p).map(|t| t.specific as u64)
+            }),
+            spec(concat!($prefix, ".extra"), $scope, None, |p| {
+                $extract(p).map(|t| t.extra as u64)
+            }),
+            spec(concat!($prefix, ".platform_domain"), $scope, Some(8), |p| {
+                $extract(p).filter(|t| t.kind == 1).map(|t| t.domain as u64)
+            }),
+            spec(concat!($prefix, ".munition_domain"), $scope, Some(14), |p| {
+                $extract(p).filter(|t| t.kind == 2).map(|t| t.domain as u64)
+            }),
+            spec(concat!($prefix, ".land_category"), $scope, Some(9), |p| {
+                $extract(p)
+                    .filter(|t| t.kind == 1 && t.domain == 1)
+                    .map(|t| t.category as u64)
+            }),
+            spec(concat!($prefix, ".air_category"), $scope, Some(10), |p| {
+                $extract(p)
+                    .filter(|t| t.kind == 1 && t.domain == 2)
+                    .map(|t| t.category as u64)
+            }),
+            spec(concat!($prefix, ".surface_category"), $scope, Some(11), |p| {
+                $extract(p)
+                    .filter(|t| t.kind == 1 && t.domain == 3)
+                    .map(|t| t.category as u64)
+            }),
+            spec(concat!($prefix, ".subsurface_category"), $scope, Some(12), |p| {
+                $extract(p)
+                    .filter(|t| t.kind == 1 && t.domain == 4)
+                    .map(|t| t.category as u64)
+            }),
+            spec(concat!($prefix, ".space_category"), $scope, Some(13), |p| {
+                $extract(p)
+                    .filter(|t| t.kind == 1 && t.domain == 5)
+                    .map(|t| t.category as u64)
+            }),
         ]
     };
 }
 
 /// Every field a pack may name in `[[enum]]`.
-fn registry() -> Vec<FieldSpec> {
+pub(crate) fn registry() -> Vec<FieldSpec> {
+    use pdu_type::*;
     let mut v = vec![
-        FieldSpec {
-            name: "header.protocol_version",
-            scope: None,
-            get: |p| Some(p.header.protocol_version as u64),
-        },
-        FieldSpec {
-            name: "header.pdu_type",
-            scope: None,
-            get: |p| Some(p.header.pdu_type as u64),
-        },
-        FieldSpec {
-            name: "header.protocol_family",
-            scope: None,
-            get: |p| Some(p.header.protocol_family as u64),
-        },
-        FieldSpec {
-            name: "entity-state.force_id",
-            scope: Some(pdu_type::ENTITY_STATE),
-            get: |p| entity_state(p).map(|e| e.force_id as u64),
-        },
-        FieldSpec {
-            name: "entity-state.marking.character_set",
-            scope: Some(pdu_type::ENTITY_STATE),
-            get: |p| entity_state(p).map(|e| e.marking.character_set as u64),
-        },
-        FieldSpec {
-            name: "entity-state.dead_reckoning.algorithm",
-            scope: Some(pdu_type::ENTITY_STATE),
-            get: |p| entity_state(p).map(|e| e.dead_reckoning.algorithm as u64),
-        },
-        FieldSpec {
-            name: "detonation.result",
-            scope: Some(pdu_type::DETONATION),
-            get: |p| detonation(p).map(|d| d.result as u64),
-        },
-        FieldSpec {
-            name: "stop-freeze.reason",
-            scope: Some(pdu_type::STOP_FREEZE),
-            get: |p| stop_freeze(p).map(|s| s.reason as u64),
-        },
-        FieldSpec {
-            name: "stop-freeze.frozen_behavior",
-            scope: Some(pdu_type::STOP_FREEZE),
-            get: |p| stop_freeze(p).map(|s| s.frozen_behavior as u64),
-        },
+        spec("header.protocol_version", None, Some(3), |p| {
+            Some(p.header.protocol_version as u64)
+        }),
+        spec("header.pdu_type", None, Some(4), |p| Some(p.header.pdu_type as u64)),
+        spec("header.protocol_family", None, Some(5), |p| {
+            Some(p.header.protocol_family as u64)
+        }),
+        spec("entity-state.force_id", Some(ENTITY_STATE), Some(6), |p| {
+            entity_state(p).map(|e| e.force_id as u64)
+        }),
+        spec(
+            "entity-state.marking.character_set",
+            Some(ENTITY_STATE),
+            Some(45),
+            |p| entity_state(p).map(|e| e.marking.character_set as u64),
+        ),
+        spec(
+            "entity-state.dead_reckoning.algorithm",
+            Some(ENTITY_STATE),
+            Some(44),
+            |p| entity_state(p).map(|e| e.dead_reckoning.algorithm as u64),
+        ),
+        spec("fire.descriptor.warhead", Some(FIRE), Some(60), |p| {
+            fire(p).map(|f| f.descriptor.warhead as u64)
+        }),
+        spec("fire.descriptor.fuse", Some(FIRE), Some(61), |p| {
+            fire(p).map(|f| f.descriptor.fuse as u64)
+        }),
+        spec("detonation.descriptor.warhead", Some(DETONATION), Some(60), |p| {
+            detonation(p).map(|d| d.descriptor.warhead as u64)
+        }),
+        spec("detonation.descriptor.fuse", Some(DETONATION), Some(61), |p| {
+            detonation(p).map(|d| d.descriptor.fuse as u64)
+        }),
+        spec("detonation.result", Some(DETONATION), Some(62), |p| {
+            detonation(p).map(|d| d.result as u64)
+        }),
+        spec("stop-freeze.reason", Some(STOP_FREEZE), Some(67), |p| {
+            stop_freeze(p).map(|s| s.reason as u64)
+        }),
+        // A SISO bitfield (UID 68), not an enumeration: base-pack range only.
+        spec("stop-freeze.frozen_behavior", Some(STOP_FREEZE), None, |p| {
+            stop_freeze(p).map(|s| s.frozen_behavior as u64)
+        }),
     ];
     v.extend(etype_fields!(
-        Some(pdu_type::ENTITY_STATE),
+        Some(ENTITY_STATE),
         "entity-state.entity_type",
         es_entity_type
     ));
     v.extend(etype_fields!(
-        Some(pdu_type::ENTITY_STATE),
+        Some(ENTITY_STATE),
         "entity-state.alternative_entity_type",
         es_alt_type
     ));
     v.extend(etype_fields!(
-        Some(pdu_type::FIRE),
+        Some(FIRE),
         "fire.descriptor.munition_type",
         fire_munition
     ));
     v.extend(etype_fields!(
-        Some(pdu_type::DETONATION),
+        Some(DETONATION),
         "detonation.descriptor.munition_type",
         det_munition
     ));
+    v.extend(enum_fields().iter().map(|f| FieldSpec {
+        name: f.name,
+        scope: Some(f.pdu_type),
+        get: |_| None,
+        uid: Some(f.uid),
+        raw: Some(f),
+    }));
     v
 }
 
@@ -235,6 +291,8 @@ pub struct EnumCheck {
     pub severity: Severity,
     /// Id of the pack that contributed this check.
     pub pack: String,
+    /// Where the allowed set comes from (e.g. a SISO-REF-010 UID).
+    pub source: Option<String>,
 }
 
 impl EnumCheck {
@@ -243,7 +301,7 @@ impl EnumCheck {
         if self.spec.scope.is_some_and(|t| t != pdu.header.pdu_type) {
             return None;
         }
-        let v = (self.spec.get)(pdu)?;
+        let v = self.spec.value(pdu)?;
         if self.allowed.iter().any(|r| r.contains(&v)) {
             None
         } else {
@@ -285,6 +343,9 @@ pub struct EnumEntry {
     pub severity: Option<Severity>,
     /// `severity = "off"` — remove this check entirely.
     pub off: bool,
+    /// Where the allowed set comes from, for alert messages; `None` for a
+    /// pack's own `allowed`.
+    pub source: Option<String>,
 }
 
 /// One `[[capture]]` entry: how much Entity State traffic to persist for
@@ -674,6 +735,7 @@ impl RulePack {
                     allowed,
                     severity,
                     off,
+                    source: None,
                 });
             }
         }
@@ -767,7 +829,15 @@ impl Merged {
 
     /// Base pack plus pack files layered on top, in order.
     pub fn load(paths: &[impl AsRef<Path>]) -> Result<Merged, PackError> {
+        Merged::load_with(None, paths)
+    }
+
+    /// Base pack, then SISO-REF-010's enumerations if given (ADR 0010 tier
+    /// E), then pack files: a site pack can still widen or turn off a
+    /// SISO-derived check.
+    pub fn load_with(siso: Option<&crate::siso::Siso>, paths: &[impl AsRef<Path>]) -> Result<Merged, PackError> {
         let mut packs = vec![RulePack::parse(BASE_PACK, "<builtin>")?];
+        packs.extend(siso.map(|s| s.pack()));
         for p in paths {
             let p = p.as_ref();
             let origin = p.display().to_string();
@@ -853,6 +923,7 @@ impl Merged {
                         allowed: e.allowed,
                         severity,
                         pack: p.id.clone(),
+                        source: e.source,
                     },
                 );
             }
