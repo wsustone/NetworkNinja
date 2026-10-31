@@ -10,7 +10,7 @@
 use nn_capture::Datagram;
 use nn_decode::*;
 use nn_rules::{AlertEvent, AlertState, Monitor, Rule, RuleConfig};
-use nn_state::geo;
+use nn_state::{geo, secs};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -245,7 +245,9 @@ fn freeze_for_one_application_does_not_mute_the_others() {
         }),
     );
     let mut run = Run::new();
-    for step in 0..120 {
+    // Parked entities may heartbeat at HBT_STATIONARY: 1:1:1 times out
+    // 60 s x 2.4 = 144 s after its last report.
+    for step in 0..200 {
         let t = step as f64;
         if t < 20.0 {
             run.feed(t, host(1, 4000), parked(id(1, 1)));
@@ -349,4 +351,48 @@ fn wildcard_remove_entity_removes_every_entity_of_the_application() {
         run.feed(1.0 + i as f64 * 2.0, host(2, 4000), parked(id(2, 1)));
     }
     assert!(run.fired().is_empty(), "{}", run.log());
+}
+
+/// A land vehicle driving east at 10 m/s from the origin (DR algorithm 2),
+/// as reported at time `t`.
+fn moving(entity: EntityId, t: f64) -> Vec<u8> {
+    let (_, mlon) = geo::metres_per_degree(LAT);
+    entity_state(
+        entity,
+        (1, 1),
+        geo::lla_to_ecef(LAT, LON + 10.0 * t / mlon, 10.0),
+        geo::enu_to_ecef(LAT, LON + 10.0 * t / mlon, 10.0, 0.0, 0.0),
+        2,
+        EulerAngles::default(),
+    )
+}
+
+/// HBT_STATIONARY (4.2.7, Table 4): a parked entity reporting once a minute
+/// is healthy; one that stops reporting still times out, 60 s x 2.4 after
+/// its last report.
+#[test]
+fn stationary_entities_may_heartbeat_once_a_minute() {
+    let mut run = Run::new();
+    let mut t = 0.0;
+    while t <= 600.0 {
+        // 1:1:1 is parked and reports every 60 s until 240 s.
+        if t <= 240.0 && t % 60.0 == 0.0 {
+            run.feed(t, host(1, 4000), parked(id(1, 1)));
+        }
+        // 2:1:1 drives and heartbeats every 2 s, keeping time moving.
+        run.feed(t, host(2, 4000), moving(id(2, 1), t));
+        if t == 380.0 {
+            assert!(run.fired().is_empty(), "{}", run.log());
+        }
+        t += 2.0;
+    }
+    assert_eq!(run.fired(), vec![(Rule::EntityTimeout, id(1, 1))], "{}", run.log());
+    let at = run
+        .events
+        .iter()
+        .find(|e| e.alert.rule == Rule::EntityTimeout)
+        .unwrap()
+        .at
+        - secs(start());
+    assert!((384.0..=388.0).contains(&at), "fired at {at}");
 }

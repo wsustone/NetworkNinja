@@ -1736,7 +1736,6 @@ fn entity_detail_json(
 /// Detail JSON for every entity, keyed by `EntityKey` display (`ex1 1:2:3`),
 /// for [`Hub::set_details`].
 pub fn entity_details(m: &Monitor) -> BTreeMap<String, String> {
-    let timeout = m.engine.config.timeout();
     let mutes = m.engine.mutes();
     m.table
         .entities
@@ -1749,7 +1748,9 @@ pub fn entity_details(m: &Monitor) -> BTreeMap<String, String> {
                 .fold(None, |acc: Option<f64>, u| Some(acc.map_or(u, |a| a.max(u))));
             (
                 r.key.to_string(),
-                entity_detail_json(r, m.now, timeout, muted, |a| m.via(a).map(str::to_string)),
+                entity_detail_json(r, m.now, m.engine.config.timeout_of(r), muted, |a| {
+                    m.via(a).map(str::to_string)
+                }),
             )
         })
         .collect()
@@ -1757,10 +1758,12 @@ pub fn entity_details(m: &Monitor) -> BTreeMap<String, String> {
 
 /// Rebuild the delta baseline from the monitor's entity table.
 pub fn entity_baseline(m: &Monitor, prev: &mut std::collections::BTreeMap<String, String>) {
-    let timeout = m.engine.config.timeout();
     prev.clear();
     for r in m.table.entities.values() {
-        prev.insert(r.key.id.to_string(), entity_json(r, m.now, timeout));
+        prev.insert(
+            r.key.id.to_string(),
+            entity_json(r, m.now, m.engine.config.timeout_of(r)),
+        );
     }
 }
 
@@ -1775,12 +1778,11 @@ pub fn delta_json(
     replay: Option<(f64, f64)>,
 ) -> String {
     let mut s = top_json(m, uptime, clients, packs, "delta");
-    let timeout = m.engine.config.timeout();
     s.push_str(",\"ents\":[");
     let mut first = true;
     for r in m.table.entities.values() {
         let id = r.key.id.to_string();
-        let j = entity_json(r, m.now, timeout);
+        let j = entity_json(r, m.now, m.engine.config.timeout_of(r));
         if prev.get(&id) == Some(&j) {
             continue;
         }
@@ -1822,14 +1824,13 @@ pub fn state_json(
     let mut s = String::with_capacity(8192);
     s.push_str(&top_json(m, uptime, clients, packs, "state"));
     s.push_str(",\"entities\":[");
-    let timeout = m.engine.config.timeout();
     let mut first = true;
     for rec in m.table.entities.values() {
         if !first {
             s.push(',');
         }
         first = false;
-        s.push_str(&entity_json(rec, m.now, timeout));
+        s.push_str(&entity_json(rec, m.now, m.engine.config.timeout_of(rec)));
     }
     s.push_str("],\"recent\":[");
     s.push_str(&recent.iter().cloned().collect::<Vec<_>>().join(","));

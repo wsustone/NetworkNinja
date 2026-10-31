@@ -138,6 +138,12 @@ pub fn describe(p: &Pdu) -> String {
             s.originating, s.receiving, s.reason, s.request_id
         ),
         PduBody::RemoveEntity(r) => format!("{} removes {}  request {}", r.originating, r.receiving, r.request_id),
+        PduBody::EntityStateUpdate(e) => format!(
+            "{:<11} appearance 0x{:08x}  {} parameters",
+            e.entity_id.to_string(),
+            e.appearance,
+            e.variable_parameters.len()
+        ),
         PduBody::Other(raw) => format!(
             "type {} family {}  {} bytes",
             h.pdu_type,

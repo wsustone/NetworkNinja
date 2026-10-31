@@ -12,6 +12,7 @@ pub const DETONATION_LEN: usize = 104;
 pub const START_RESUME_LEN: usize = 44;
 pub const STOP_FREEZE_LEN: usize = 40;
 pub const REMOVE_ENTITY_LEN: usize = 28;
+pub const ENTITY_STATE_UPDATE_LEN: usize = 72;
 /// Size of one articulation / variable parameter record.
 pub const VARIABLE_PARAM_LEN: usize = 16;
 
@@ -27,6 +28,7 @@ pub mod pdu_type {
     pub const REMOVE_ENTITY: u8 = 12;
     pub const START_RESUME: u8 = 13;
     pub const STOP_FREEZE: u8 = 14;
+    pub const ENTITY_STATE_UPDATE: u8 = 67;
 }
 
 /// Protocol family numbers (SISO-REF-010).
@@ -214,6 +216,20 @@ pub mod appearance {
     pub const DEACTIVATED: u32 = 1 << 23;
 }
 
+/// Entity State Update (7.2.5): the changing part of an Entity State, which
+/// a simulation may send in its place (5.3.5). It carries no entity type,
+/// dead-reckoning parameters or marking; those stay as the last Entity State
+/// gave them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntityStateUpdate {
+    pub entity_id: EntityId,
+    pub linear_velocity: Vec3f,
+    pub location: WorldCoord,
+    pub orientation: EulerAngles,
+    pub appearance: u32,
+    pub variable_parameters: Vec<VariableParameter>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntityState {
     pub entity_id: EntityId,
@@ -318,6 +334,7 @@ pub enum PduBody {
     StartResume(StartResume),
     StopFreeze(StopFreeze),
     RemoveEntity(RemoveEntity),
+    EntityStateUpdate(EntityStateUpdate),
     /// Any other PDU type: header decoded, body kept raw.
     Other(Vec<u8>),
 }

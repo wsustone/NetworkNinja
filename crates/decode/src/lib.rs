@@ -1,8 +1,8 @@
 //! DIS v6/v7 PDU codec for NetworkNinja.
 //!
 //! A thin, dependency-free codec covering the PDU header for every PDU type
-//! and full decoding of the six PDUs the MVP uses in depth: Entity State,
-//! Fire, Detonation, Start/Resume, Stop/Freeze and Remove Entity. Every other
+//! and full decoding of the PDUs used in depth: Entity State, Entity State
+//! Update, Fire, Detonation, Start/Resume, Stop/Freeze and Remove Entity. Every other
 //! PDU type is returned as [`Pdu::Other`] with its header decoded and the body
 //! kept as raw bytes, so rule packs can still check enumerated header fields.
 //! [`structure`] checks every type's length against its layout (ADR 0010

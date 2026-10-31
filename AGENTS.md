@@ -139,6 +139,16 @@ the monitor drops same-sender identical bytes within `echo_window` and
 raises `duplicate-delivery` (listener-overlap vs network-duplicate);
 `Monitor::via` feeds the entity detail's sender "via".
 
+Wave 0: entity timeouts are per entity, `RuleConfig::timeout_for(kinematics)`
+/ `timeout_of(rec)`: DR algorithm Static or no speed → `stationary_heartbeat`
+(60 s, HBT_STATIONARY) × multiplier, else `heartbeat`. Never use the bare
+`config.timeout()` for a real entity. Entity State Update (67) is decoded;
+`Monitor::merge_update` turns it into a full Entity State from the entity's
+last report (header keeps type 67), so table and rules need no ESU cases.
+Generator: `parked_per_site`, `stationary_heartbeat`, `entity_state_update`,
+profile `economical`. Test entities with zero velocity are stationary now:
+give them a speed when a test needs the 12 s timeout.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock
