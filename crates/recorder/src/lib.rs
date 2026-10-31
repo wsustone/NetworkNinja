@@ -105,6 +105,7 @@ impl Reader {
             destination: None,
             payload,
             monotonic: None,
+            listener: None,
         }))
     }
 }

@@ -229,6 +229,7 @@ fn datagram(pdu: &nn_decode::Pdu, t: f64) -> nn_capture::Datagram {
         destination: None,
         payload: nn_decode::encode_pdu(pdu),
         monotonic: None,
+        listener: None,
     }
 }
 
