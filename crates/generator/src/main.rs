@@ -52,10 +52,12 @@ FAULTS (alerts must fire)          T defaults to a third of the duration
     --clone-id ID[@T]       A second sender reuses the Entity ID
     --teleport ID[@T]       Entity jumps 20 km off its dead-reckoned path
 
-STRUCTURAL FAULTS (ADR 0010 tier S; a PDU of TYPE from the first site)
+PDU DEFECTS (ADR 0010 tiers S and E; a PDU of TYPE from the first site)
     --defect KIND:TYPE[@T]  KIND is short-pdu, count-overrun, padded-pdu,
-                            wrong-family or truncated-pdu; TYPE a PDU type number
-                            (count-overrun needs a type with a count field)
+                            wrong-family, truncated-pdu or bad-enum; TYPE a PDU
+                            type number (count-overrun needs a count field,
+                            bad-enum an enumerated one; bad-enum is caught by
+                            serve --siso)
 
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
@@ -66,7 +68,7 @@ CONTROLS (alerts must stay quiet)
 PRESETS
     --all-faults            One of each fault on site 1
     --all-controls          One of each control on site 2 / the exercise
-    --all-defects           One of each structural fault on site 1
+    --all-defects           One of each PDU defect on site 1
 
 ID is site:application:entity, e.g. 1:1:3. Synthetic simulators use application 1.
 ";
@@ -192,8 +194,9 @@ fn parse_args() -> Result<Options, String> {
 
     if all_defects {
         // One type each, so no fault hides behind another's repeat window.
-        let types = [4, 25, 24, 26, 23]; // Collision, Transmitter, Designator, Signal, EE
-        for (i, (kind, t)) in EventKind::STRUCTURAL.iter().zip(types).enumerate() {
+        // Collision, Transmitter, Designator, Signal, EE, Receiver
+        let types = [4, 25, 24, 26, 23, 27];
+        for (i, (kind, t)) in EventKind::DEFECTS.iter().zip(types).enumerate() {
             defects.push(format!("{}:{t}@{}", kind.name(), d * (0.20 + 0.05 * i as f64)));
         }
     }
@@ -205,12 +208,18 @@ fn parse_args() -> Result<Options, String> {
         let (name, t) = what
             .split_once(':')
             .ok_or_else(|| format!("--defect '{spec}': expected KIND:TYPE[@T]"))?;
-        let kind = EventKind::structural(name).ok_or_else(|| format!("--defect: unknown kind '{name}'"))?;
+        let kind = EventKind::defect(name).ok_or_else(|| format!("--defect: unknown kind '{name}'"))?;
         let pdu_type: u8 = t.parse().map_err(|e| format!("--defect: bad PDU type '{t}': {e}"))?;
         let layout = nn_decode::structure::layout(pdu_type)
             .ok_or_else(|| format!("--defect: {pdu_type} is not a PDU type (1-72)"))?;
         if kind == EventKind::CountOverrun && layout.counts.is_empty() {
             return Err(format!("--defect: {} has no count field to overrun", layout.name));
+        }
+        if kind == EventKind::BadEnum && nn_decode::fields::enum_fields_of(pdu_type).next().is_none() {
+            return Err(format!(
+                "--defect: {} has no enumerated field in the table",
+                layout.name
+            ));
         }
         if !(0.0..=d).contains(&at) {
             return Err(format!("time {at} for {} is outside the run (0..{d})", kind.name()));

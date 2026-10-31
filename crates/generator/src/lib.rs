@@ -60,6 +60,10 @@ pub enum EventKind {
     /// Structural fault: the datagram ends 4 bytes before the length field
     /// says the PDU does.
     TruncatedPdu,
+    /// Enumeration fault (tier E): the type's first enumerated field set to
+    /// its largest value, which SISO-REF-010 leaves undefined. Caught with
+    /// `serve --siso`.
+    BadEnum,
 }
 
 impl EventKind {
@@ -77,19 +81,21 @@ impl EventKind {
             EventKind::PaddedPdu => "padded-pdu",
             EventKind::WrongFamily => "wrong-family",
             EventKind::TruncatedPdu => "truncated-pdu",
+            EventKind::BadEnum => "bad-enum",
         }
     }
-    /// The structural faults, in preset order.
-    pub const STRUCTURAL: [EventKind; 5] = [
+    /// The PDU defects (structural and enumeration), in preset order.
+    pub const DEFECTS: [EventKind; 6] = [
         EventKind::ShortPdu,
         EventKind::CountOverrun,
         EventKind::PaddedPdu,
         EventKind::WrongFamily,
         EventKind::TruncatedPdu,
+        EventKind::BadEnum,
     ];
-    /// The structural fault called `name`.
-    pub fn structural(name: &str) -> Option<EventKind> {
-        EventKind::STRUCTURAL.into_iter().find(|k| k.name() == name)
+    /// The PDU defect called `name`.
+    pub fn defect(name: &str) -> Option<EventKind> {
+        EventKind::DEFECTS.into_iter().find(|k| k.name() == name)
     }
     /// True for faults that an alert rule should catch.
     pub fn is_fault(self) -> bool {
@@ -103,6 +109,7 @@ impl EventKind {
                 | EventKind::PaddedPdu
                 | EventKind::WrongFamily
                 | EventKind::TruncatedPdu
+                | EventKind::BadEnum
         )
     }
 }
