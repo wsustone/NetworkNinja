@@ -39,7 +39,8 @@ patterns and frequency overlap are not checked yet.
 count zero, optional fields absent) and `--defect KIND:TYPE` can bend it into each structural
 fault; "✓" means real traffic with behaviour.
 
-Update this table in the same change that adds support.
+Update this table in the same change that adds support. What comes next for each type is in
+[deep-check-plan.md](deep-check-plan.md).
 
 | Code | PDU | Family | Usage | Layout | H | S | E | D | G |
 | ---: | --- | --- | --- | --- | :-: | :-: | :-: | :-: | :-: |

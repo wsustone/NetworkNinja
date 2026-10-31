@@ -111,7 +111,8 @@ defects, for one-process reproducible runs. Two acceptance tests hold the line:
    defects. *In progress:* Simulation Management handshakes (rule `siman-handshake`,
    `--siman-every`, faults `no-response`, `wrong-ack`, `orphan-response`); Radio (rule
    `radio`, `--radio-every`, faults `hot-mic`, `orphan-signal`, `bad-signal`,
-   `drop-transmitter`).
+   `drop-transmitter`). The remaining families, with the errors to watch for in each and the
+   order to do them in: [deep-check-plan.md](../deep-check-plan.md).
 
 ## Options considered and rejected
 
