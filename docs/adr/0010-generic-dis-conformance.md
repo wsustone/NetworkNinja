@@ -109,7 +109,9 @@ defects, for one-process reproducible runs. Two acceptance tests hold the line:
 5. Tier D family by family, most common first: Simulation Management handshakes, Radio,
    Emissions/IFF, Entity Damage Status and Collision, then the rest. Each brings its semantic
    defects. *In progress:* Simulation Management handshakes (rule `siman-handshake`,
-   `--siman-every`, faults `no-response`, `wrong-ack`, `orphan-response`).
+   `--siman-every`, faults `no-response`, `wrong-ack`, `orphan-response`); Radio (rule
+   `radio`, `--radio-every`, faults `hot-mic`, `orphan-signal`, `bad-signal`,
+   `drop-transmitter`).
 
 ## Options considered and rejected
 

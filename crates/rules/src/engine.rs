@@ -2,7 +2,8 @@
 //! per-PDU enumeration checks loaded from rule packs.
 
 use crate::pack::{EnumCheck, Merged};
-use crate::siman::{Finding, Handshakes};
+use crate::radio::{RadioConfig, Radios};
+use crate::siman::Handshakes;
 use nn_decode::structure::Report;
 use nn_decode::{EntityId, EntityType, Pdu, PduBody};
 use nn_state::{extrapolate, geo, EntityKey, EntityTable};
@@ -27,6 +28,9 @@ pub enum Rule {
     /// A Simulation Management request went unanswered, or an answer
     /// doesn't fit a request (ADR 0010 step 5, `crate::siman`).
     SimanHandshake,
+    /// Transmitter, Signal and Receiver PDUs contradict each other or stop
+    /// (ADR 0010 step 5, `crate::radio`).
+    Radio,
 }
 
 impl Rule {
@@ -40,6 +44,7 @@ impl Rule {
             Rule::PduPadding => "pdu-padding",
             Rule::PduFamily => "pdu-family",
             Rule::SimanHandshake => "siman-handshake",
+            Rule::Radio => "radio",
         }
     }
 
@@ -53,6 +58,7 @@ impl Rule {
             "pdu-padding" => Some(Rule::PduPadding),
             "pdu-family" => Some(Rule::PduFamily),
             "siman-handshake" => Some(Rule::SimanHandshake),
+            "radio" => Some(Rule::Radio),
             _ => None,
         }
     }
@@ -123,6 +129,8 @@ pub struct RuleConfig {
     /// Seconds a Simulation Management request may wait for its answer
     /// (IEEE 1278.1 TI_TIMER2_DFLT, 12 s).
     pub response_timeout: f64,
+    /// Radio heartbeats and limits (`[rules.radio]`).
+    pub radio: RadioConfig,
 }
 
 impl Default for RuleConfig {
@@ -138,6 +146,7 @@ impl Default for RuleConfig {
             jump_timing_slack: 0.5,
             tick_interval: 0.25,
             response_timeout: 12.0,
+            radio: RadioConfig::default(),
         }
     }
 }
@@ -216,8 +225,10 @@ pub struct Engine {
     structure_last: BTreeMap<(Rule, Option<u8>, SocketAddr), f64>,
     /// Simulation Management requests awaiting answers.
     handshakes: Handshakes,
-    /// Last time each kind of handshake finding fired for each entity.
-    handshake_last: BTreeMap<(&'static str, EntityKey), f64>,
+    /// Radios and their Transmitter/Receiver state.
+    radios: Radios,
+    /// Last time each (rule, kind of finding, entity) point event fired.
+    point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
     /// Operator acknowledgements, keyed by (rule_id, entity).
     acks: BTreeMap<(String, EntityKey), Ack>,
@@ -247,7 +258,8 @@ impl Engine {
             enum_last: BTreeMap::new(),
             structure_last: BTreeMap::new(),
             handshakes: Handshakes::default(),
-            handshake_last: BTreeMap::new(),
+            radios: Radios::default(),
+            point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
             mutes: Vec::new(),
@@ -480,31 +492,53 @@ impl Engine {
         let findings = self.handshakes.observe(now, source, pdu, self.config.response_timeout);
         let mut out = Vec::new();
         for f in findings {
-            self.handshake_event(now, f, None, &mut out);
+            let key = EntityKey {
+                exercise: f.exercise,
+                id: f.id,
+            };
+            self.point_event(now, Rule::SimanHandshake, f.kind, key, f.sender, f.message, &mut out);
         }
         out
     }
 
-    /// A handshake finding as a point event, at most one of each kind per
-    /// entity every `enum_repeat` seconds. `owner` is the address of the simulation that
-    /// owes a missing answer, when the table knows it.
-    fn handshake_event(&mut self, at: f64, f: Finding, owner: Option<SocketAddr>, out: &mut Vec<AlertEvent>) {
-        let rule = Rule::SimanHandshake;
-        let key = EntityKey {
-            exercise: f.exercise,
-            id: f.id,
-        };
+    /// One PDU's bytes through the radio tracker.
+    pub fn check_radio(&mut self, now: f64, source: SocketAddr, pdu: &[u8]) -> Vec<AlertEvent> {
+        let findings = self.radios.observe(now, source, pdu, &self.config.radio);
+        let mut out = Vec::new();
+        for f in findings {
+            let key = EntityKey {
+                exercise: f.exercise,
+                id: f.id,
+            };
+            self.point_event(now, Rule::Radio, f.kind, key, Some(f.sender), f.message, &mut out);
+        }
+        out
+    }
+
+    /// A finding of a stateless rule as a point event, at most one of each
+    /// kind per entity every `enum_repeat` seconds.
+    #[allow(clippy::too_many_arguments)]
+    fn point_event(
+        &mut self,
+        at: f64,
+        rule: Rule,
+        kind: &'static str,
+        key: EntityKey,
+        sender: Option<SocketAddr>,
+        message: String,
+        out: &mut Vec<AlertEvent>,
+    ) {
         if !self.enabled(rule) || self.muted(rule.name(), &key, at) {
             return;
         }
         if self
-            .handshake_last
-            .get(&(f.kind, key))
+            .point_last
+            .get(&(rule, kind, key))
             .is_some_and(|t| at - t < self.enum_repeat)
         {
             return;
         }
-        self.handshake_last.insert((f.kind, key), at);
+        self.point_last.insert((rule, kind, key), at);
         out.push(AlertEvent {
             at,
             state: AlertState::Firing,
@@ -515,10 +549,10 @@ impl Engine {
                 key,
                 severity: self.severities.get(&rule).copied().unwrap_or(Severity::Warning),
                 since: at,
-                message: f.message.clone(),
-                sender: f.sender.or(owner),
+                message: message.clone(),
+                sender,
             },
-            reason: f.message,
+            reason: message,
         });
     }
 
@@ -680,7 +714,27 @@ impl Engine {
                     .find(|(k, _)| k.exercise == f.exercise && k.id.site == site && k.id.application == app)
                     .map(|(_, r)| r.last_source)
             });
-            self.handshake_event(now, f, owner, &mut out);
+            let key = EntityKey {
+                exercise: f.exercise,
+                id: f.id,
+            };
+            self.point_event(
+                now,
+                Rule::SimanHandshake,
+                f.kind,
+                key,
+                f.sender.or(owner),
+                f.message,
+                &mut out,
+            );
+        }
+        let frozen = |exercise, id| table.state_for(&EntityKey { exercise, id }).frozen;
+        for f in self.radios.expire(now, &self.config.radio, frozen) {
+            let key = EntityKey {
+                exercise: f.exercise,
+                id: f.id,
+            };
+            self.point_event(now, Rule::Radio, f.kind, key, Some(f.sender), f.message, &mut out);
         }
 
         if self.enabled(Rule::EntityTimeout) {
@@ -737,7 +791,8 @@ impl Engine {
                 | Rule::PduStructure
                 | Rule::PduPadding
                 | Rule::PduFamily
-                | Rule::SimanHandshake => {}
+                | Rule::SimanHandshake
+                | Rule::Radio => {}
             }
         }
         out

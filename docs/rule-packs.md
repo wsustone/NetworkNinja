@@ -36,7 +36,9 @@ heartbeat = 5.0              # threshold overrides; each rule has its own set
 #        position-jump (jump_min_tolerance, assumed_dr_threshold,
 #                       jump_dr_multiplier, jump_timing_slack),
 #        pdu-structure, pdu-padding, pdu-family (no thresholds; ADR 0010 tier S),
-#        siman-handshake (response_timeout)
+#        siman-handshake (response_timeout),
+#        radio (transmitter_heartbeat, stationary_heartbeat, receiver_heartbeat,
+#               timeout_multiplier, idle_transmit, signal_slack)
 
 [[enum]]
 field = "entity-state.force_id"   # a field from the registry below
