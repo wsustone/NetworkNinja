@@ -76,6 +76,23 @@ cargo test --workspace
 
 ## Try it
 
+The quickest way: one command starts the server and a whole multi-vendor exercise in the
+background, and one stops it (macOS and Linux; on Windows use Git Bash or WSL).
+
+```sh
+scripts/nn up        # server + 4 vendor generators + a "faulty vendor"; dashboard at http://127.0.0.1:8080
+scripts/nn status    # what's running
+scripts/nn logs      # follow the server log (or: logs standard | legacy | body-axis | gateway | faulty)
+scripts/nn down      # stop everything
+```
+
+`scripts/nn up clean` starts the four vendors without the faulty one: a conforming exercise, so
+the dashboard should stay quiet. In the default `demo`, the faulty vendor (sites 9–12) runs every
+fault, PDU defect, handshake fault and radio fault, and starts over every 5 minutes. Put a copy of
+SISO-REF-010.xml (free from sisostandards.org) at `siso/SISO-REF-010.xml` to add enumeration checks.
+
+To run the pieces by hand instead:
+
 On Windows, the binaries are `target\release\nn-server.exe` and `nn-generator.exe`; the first `listen` may trigger a firewall prompt (allow it on private networks).
 
 Terminal 1, the console listener (`--alerts-only` hides the per-PDU lines):

@@ -10,3 +10,6 @@ events.jsonl
 *.crt
 *.key
 users.txt
+# scripts/nn state (logs, process IDs) and a local SISO-REF-010 copy
+/.nn
+/siso

@@ -23,6 +23,18 @@ cargo clippy --workspace --all-targets # must be warning-free
 
 ## Common run
 
+One switch for everything (server + four vendor generators, plus a faulty
+vendor in `demo`), in the background, state and logs under `.nn/`:
+
+```sh
+scripts/nn up [demo|clean]   # build, start; dashboard on 127.0.0.1:8080
+scripts/nn status | logs [NAME] | down
+```
+
+`NN_UDP`, `NN_HTTP`, `NN_DB`, `NN_SISO` (default `siso/SISO-REF-010.xml`
+if present), `NN_ARGS` override; use other ports and `NN_DB` for test runs
+so they don't write into the user's `events.db`. By hand:
+
 ```sh
 ./target/release/nn-server serve --port 3000 --db events.db --runs .
 ./target/release/nn-generator --target 127.0.0.1:3000 --duration 600 \
