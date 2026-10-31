@@ -108,7 +108,8 @@ defects, for one-process reproducible runs. Two acceptance tests hold the line:
    than the pack's are not a profile: they need the site pack's `heartbeat` to match.
 5. Tier D family by family, most common first: Simulation Management handshakes, Radio,
    Emissions/IFF, Entity Damage Status and Collision, then the rest. Each brings its semantic
-   defects.
+   defects. *In progress:* Simulation Management handshakes (rule `siman-handshake`,
+   `--siman-every`, faults `no-response`, `wrong-ack`, `orphan-response`).
 
 ## Options considered and rejected
 

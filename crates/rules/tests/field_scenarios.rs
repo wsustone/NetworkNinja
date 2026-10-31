@@ -46,6 +46,26 @@ fn encode(pdu_type: u8, body: PduBody) -> Vec<u8> {
     })
 }
 
+/// An Acknowledge from `from` to `to` answering request `request_id` with
+/// Acknowledge Flag `flag` (2 Remove Entity, 4 Stop/Freeze), "able to comply".
+fn acknowledge(from: EntityId, to: EntityId, flag: u16, request_id: u32) -> Vec<u8> {
+    let mut body = Vec::new();
+    for v in [
+        from.site,
+        from.application,
+        from.entity,
+        to.site,
+        to.application,
+        to.entity,
+        flag,
+        1,
+    ] {
+        body.extend(v.to_be_bytes());
+    }
+    body.extend(request_id.to_be_bytes());
+    encode(15, PduBody::Other(body))
+}
+
 /// A stationary land vehicle (DR algorithm 1).
 fn parked(entity: EntityId) -> Vec<u8> {
     entity_state(
@@ -231,6 +251,8 @@ fn freeze_for_one_application_does_not_mute_the_others() {
         }
         if step == 10 {
             run.feed(t, host(9, 4000), freeze_site_2.clone());
+            let ack = acknowledge(EntityId::new(2, 1, 0xffff), EntityId::new(9, 9, 0xffff), 4, 1);
+            run.feed(t, host(2, 4000), ack);
         }
         run.feed(t, host(2, 4000), parked(id(2, 1)));
     }
@@ -320,6 +342,8 @@ fn wildcard_remove_entity_removes_every_entity_of_the_application() {
         run.feed(0.0, host(1, 4000), parked(id(1, e)));
     }
     run.feed(1.0, host(9, 4000), remove_all);
+    let ack = acknowledge(EntityId::new(1, 1, 0xffff), EntityId::new(9, 9, 0xffff), 2, 1);
+    run.feed(1.0, host(1, 4000), ack);
     for i in 0..15 {
         run.feed(1.0 + i as f64 * 2.0, host(2, 4000), parked(id(2, 1)));
     }

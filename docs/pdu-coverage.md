@@ -22,6 +22,12 @@ it is not shipped). "✓" means every enumerated field at a fixed offset is chec
 (EE beams, Variable Parameters, datums) are not yet. The deep-decoded types check the fields
 the decoder exposes, including entity type kind, country, platform domain and category.
 
+**D** "handshake" means the request/answer pairing of IEEE 1278.1 5.6.5 and 5.12.4 is
+checked (`crates/rules/src/siman.rs`, rule `siman-handshake`): a request to a specific
+simulation must be answered within `response_timeout`, an Acknowledge must carry the right
+flag, and an Acknowledge or Action Response must answer a request. Their datum records are not
+decoded yet.
+
 **G** "min" means `nn-generator --all-types SECS` sends a minimal valid PDU of the type (every
 count zero, optional fields absent) and `--defect KIND:TYPE` can bend it into each structural
 fault; "✓" means real traffic with behaviour.
@@ -45,16 +51,16 @@ Update this table in the same change that adds support.
 | 8 | Resupply Cancel | Logistics (3) | 5.5.8 | 7.4.5 | ✓ | ✓ | – | – | min |
 | 9 | Repair Complete | Logistics (3) | 5.5.10 | 7.4.6 | ✓ | ✓ | ✓ | – | min |
 | 10 | Repair Response | Logistics (3) | 5.5.11 | 7.4.7 | ✓ | ✓ | ✓ | – | min |
-| 11 | Create Entity | Simulation Management (5) | 5.6.5.2 | 7.5.2 | ✓ | ✓ | – | – | min |
+| 11 | Create Entity | Simulation Management (5) | 5.6.5.2 | 7.5.2 | ✓ | ✓ | – | handshake | ✓ |
 | 12 | Remove Entity | Simulation Management (5) | 5.6.5.3 | 7.5.3 | ✓ | ✓ | partial | partial | ✓ |
 | 13 | Start/Resume | Simulation Management (5) | 5.6.5.4 | 7.5.4 | ✓ | ✓ | partial | partial | ✓ |
 | 14 | Stop/Freeze | Simulation Management (5) | 5.6.5.5 | 7.5.5 | ✓ | ✓ | partial | partial | ✓ |
-| 15 | Acknowledge | Simulation Management (5) | 5.6.5.6 | 7.5.6 | ✓ | ✓ | ✓ | – | min |
-| 16 | Action Request | Simulation Management (5) | 5.6.5.7 | 7.5.7 | ✓ | ✓ | ✓ | – | min |
-| 17 | Action Response | Simulation Management (5) | 5.6.5.8 | 7.5.8 | ✓ | ✓ | ✓ | – | min |
-| 18 | Data Query | Simulation Management (5) | 5.6.5.9 | 7.5.9 | ✓ | ✓ | – | – | min |
-| 19 | Set Data | Simulation Management (5) | 5.6.5.10 | 7.5.10 | ✓ | ✓ | – | – | min |
-| 20 | Data | Simulation Management (5) | 5.6.5.11 | 7.5.11 | ✓ | ✓ | – | – | min |
+| 15 | Acknowledge | Simulation Management (5) | 5.6.5.6 | 7.5.6 | ✓ | ✓ | ✓ | handshake | ✓ |
+| 16 | Action Request | Simulation Management (5) | 5.6.5.7 | 7.5.7 | ✓ | ✓ | ✓ | handshake | ✓ |
+| 17 | Action Response | Simulation Management (5) | 5.6.5.8 | 7.5.8 | ✓ | ✓ | ✓ | handshake | ✓ |
+| 18 | Data Query | Simulation Management (5) | 5.6.5.9 | 7.5.9 | ✓ | ✓ | – | handshake | ✓ |
+| 19 | Set Data | Simulation Management (5) | 5.6.5.10 | 7.5.10 | ✓ | ✓ | – | handshake | ✓ |
+| 20 | Data | Simulation Management (5) | 5.6.5.11 | 7.5.11 | ✓ | ✓ | – | handshake | ✓ |
 | 21 | Event Report | Simulation Management (5) | 5.6.5.12 | 7.5.12 | ✓ | ✓ | ✓ | – | min |
 | 22 | Comment | Simulation Management (5) | 5.6.5.13 | 7.5.13 | ✓ | ✓ | – | – | min |
 | 23 | Electromagnetic Emission | Distributed Emission Regeneration (6) | 5.7.3 | 7.6.2 | ✓ | ✓ | ✓ | – | min |
@@ -80,21 +86,21 @@ Update this table in the same change that adds support.
 | 43 | Point Object State | Synthetic Environment (9) | 5.11.3.2 | 7.10.4 | ✓ | ✓ v7 | ✓ | – | min |
 | 44 | Linear Object State | Synthetic Environment (9) | 5.11.3.3 | 7.10.5 | ✓ | ✓ v7 | ✓ | – | min |
 | 45 | Areal Object State | Synthetic Environment (9) | 5.11.3.4 | 7.10.6 | ✓ | ✓ v7 | ✓ | – | min |
-| 51 | Create Entity-R | Simulation Management with Reliability (10) | 5.12.4.2 | 7.11.2 | ✓ | ✓ v7 | ✓ | – | min |
-| 52 | Remove Entity-R | Simulation Management with Reliability (10) | 5.12.4.3 | 7.11.3 | ✓ | ✓ v7 | ✓ | – | min |
-| 53 | Start/Resume-R | Simulation Management with Reliability (10) | 5.12.4.4 | 7.11.4 | ✓ | ✓ v7 | ✓ | – | min |
-| 54 | Stop/Freeze-R | Simulation Management with Reliability (10) | 5.12.4.5 | 7.11.5 | ✓ | ✓ v7 | ✓ | – | min |
-| 55 | Acknowledge-R | Simulation Management with Reliability (10) | 5.12.4.6 | 7.11.6 | ✓ | ✓ v7 | ✓ | – | min |
-| 56 | Action Request-R | Simulation Management with Reliability (10) | 5.12.4.7 | 7.11.7 | ✓ | ✓ v7 | ✓ | – | min |
-| 57 | Action Response-R | Simulation Management with Reliability (10) | 5.12.4.8 | 7.11.8 | ✓ | ✓ v7 | ✓ | – | min |
-| 58 | Data Query-R | Simulation Management with Reliability (10) | 5.12.4.9 | 7.11.9 | ✓ | ✓ v7 | ✓ | – | min |
-| 59 | Set Data-R | Simulation Management with Reliability (10) | 5.12.4.10 | 7.11.10 | ✓ | ✓ v7 | ✓ | – | min |
-| 60 | Data-R | Simulation Management with Reliability (10) | 5.12.4.11 | 7.11.11 | ✓ | ✓ v7 | ✓ | – | min |
+| 51 | Create Entity-R | Simulation Management with Reliability (10) | 5.12.4.2 | 7.11.2 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 52 | Remove Entity-R | Simulation Management with Reliability (10) | 5.12.4.3 | 7.11.3 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 53 | Start/Resume-R | Simulation Management with Reliability (10) | 5.12.4.4 | 7.11.4 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 54 | Stop/Freeze-R | Simulation Management with Reliability (10) | 5.12.4.5 | 7.11.5 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 55 | Acknowledge-R | Simulation Management with Reliability (10) | 5.12.4.6 | 7.11.6 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 56 | Action Request-R | Simulation Management with Reliability (10) | 5.12.4.7 | 7.11.7 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 57 | Action Response-R | Simulation Management with Reliability (10) | 5.12.4.8 | 7.11.8 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 58 | Data Query-R | Simulation Management with Reliability (10) | 5.12.4.9 | 7.11.9 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 59 | Set Data-R | Simulation Management with Reliability (10) | 5.12.4.10 | 7.11.10 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 60 | Data-R | Simulation Management with Reliability (10) | 5.12.4.11 | 7.11.11 | ✓ | ✓ v7 | ✓ | handshake | min |
 | 61 | Event Report-R | Simulation Management with Reliability (10) | 5.12.4.12 | 7.11.12 | ✓ | ✓ v7 | ✓ | – | min |
 | 62 | Comment-R | Simulation Management with Reliability (10) | 5.12.4.13 | 7.11.13 | ✓ | ✓ v7 | – | – | min |
-| 63 | Record-R | Simulation Management with Reliability (10) | 5.12.4.16 | 7.11.16 | ✓ | ✓ v7 | ✓ | – | min |
-| 64 | Set Record-R | Simulation Management with Reliability (10) | 5.12.4.15 | 7.11.15 | ✓ | ✓ v7 | ✓ | – | min |
-| 65 | Record Query-R | Simulation Management with Reliability (10) | 5.12.4.14 | 7.11.14 | ✓ | ✓ v7 | ✓ | – | min |
+| 63 | Record-R | Simulation Management with Reliability (10) | 5.12.4.16 | 7.11.16 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 64 | Set Record-R | Simulation Management with Reliability (10) | 5.12.4.15 | 7.11.15 | ✓ | ✓ v7 | ✓ | handshake | min |
+| 65 | Record Query-R | Simulation Management with Reliability (10) | 5.12.4.14 | 7.11.14 | ✓ | ✓ v7 | ✓ | handshake | min |
 | 70 | IO Action | Information Operations (13) | 5.13.3 | 7.12.2 | ✓ | ✓ v7 | ✓ | – | min |
 | 71 | IO Report | Information Operations (13) | 5.13.4 | 7.12.3 | ✓ | ✓ v7 | ✓ | – | min |
 | 46 | TSPI | Live Entity (11) | 9.4.2 | 9.4.2.5 | ✓ | ✓ v7 | – | – | min |

@@ -43,6 +43,9 @@ EXERCISE
     --fire-every SECS       Fire + Detonation every N seconds (default off)
     --all-types SECS        Every SECS, one minimal valid PDU of each of the other
                             66 PDU types, from the first site (default off)
+    --siman-every SECS      Every SECS, the first site (as simulation manager) sends
+                            the second a Create Entity, Action Request, Data Query
+                            or Set Data in turn, and it answers (default off)
     --bundle                Pack several PDUs per datagram
     --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
@@ -59,6 +62,11 @@ PDU DEFECTS (ADR 0010 tiers S and E; a PDU of TYPE from the first site)
                             bad-enum an enumerated one; bad-enum is caught by
                             serve --siso)
 
+HANDSHAKE FAULTS (on the answering site; need --siman-every and 2+ sites)
+    --no-response SITE[@T]  Site stops answering Simulation Management requests
+    --wrong-ack SITE[@T]    Site's next Acknowledge carries the wrong flag
+    --orphan-response SITE[@T]  Site sends an Action Response nobody asked for
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -69,6 +77,8 @@ PRESETS
     --all-faults            One of each fault on site 1
     --all-controls          One of each control on site 2 / the exercise
     --all-defects           One of each PDU defect on site 1
+    --all-handshake-faults  One of each handshake fault on site 2 (turns on
+                            --siman-every 2 if it isn't set)
 
 ID is site:application:entity, e.g. 1:1:3. Synthetic simulators use application 1.
 ";
@@ -100,6 +110,7 @@ fn parse_args() -> Result<Options, String> {
     let (mut broadcast, mut pcap, mut truth) = (false, None, None);
     let mut pending: Vec<(EventKind, String)> = Vec::new();
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
+    let mut all_handshake = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -148,6 +159,11 @@ fn parse_args() -> Result<Options, String> {
             "--dr-threshold" => cfg.dr_threshold = num(val()?)?,
             "--fire-every" => cfg.fire_every = Some(num(val()?)?),
             "--all-types" => cfg.all_types = Some(num(val()?)?),
+            "--siman-every" => cfg.siman_every = Some(num(val()?)?),
+            "--no-response" => pending.push((EventKind::NoResponse, val()?)),
+            "--wrong-ack" => pending.push((EventKind::WrongAck, val()?)),
+            "--orphan-response" => pending.push((EventKind::OrphanResponse, val()?)),
+            "--all-handshake-faults" => all_handshake = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -192,6 +208,16 @@ fn parse_args() -> Result<Options, String> {
         pending.push((EventKind::Resume, format!("@{}", d * 0.70)));
     }
 
+    if all_handshake {
+        if cfg.sites < 2 {
+            return Err("--all-handshake-faults needs at least 2 sites".into());
+        }
+        cfg.siman_every.get_or_insert(2.0);
+        // Spread out so each fault's alert stands on its own.
+        pending.push((EventKind::WrongAck, format!("{second}@{}", d * 0.15)));
+        pending.push((EventKind::OrphanResponse, format!("{second}@{}", d * 0.30)));
+        pending.push((EventKind::NoResponse, format!("{second}@{}", d * 0.60)));
+    }
     if all_defects {
         // One type each, so no fault hides behind another's repeat window.
         // Collision, Transmitter, Designator, Signal, EE, Receiver
@@ -238,7 +264,16 @@ fn parse_args() -> Result<Options, String> {
         };
         let target = match kind {
             EventKind::Freeze | EventKind::Resume => Target::Exercise,
-            EventKind::RestartPort => Target::Site(what.parse().map_err(|e| format!("bad site '{what}': {e}"))?),
+            EventKind::RestartPort | EventKind::NoResponse | EventKind::WrongAck | EventKind::OrphanResponse => {
+                let site: u16 = what.parse().map_err(|e| format!("bad site '{what}': {e}"))?;
+                if !(cfg.site_base as u32..=last_site).contains(&(site as u32)) {
+                    return Err(format!(
+                        "site {site} is not generated (sites {}..={last_site})",
+                        cfg.site_base
+                    ));
+                }
+                Target::Site(site)
+            }
             _ => {
                 let id: EntityId = what.parse()?;
                 if !(cfg.site_base as u32..=last_site).contains(&(id.site as u32))

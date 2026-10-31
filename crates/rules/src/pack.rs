@@ -461,6 +461,7 @@ fn set_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (PositionJump, "assumed_dr_threshold") => |c, v| c.assumed_dr_threshold = v,
         (PositionJump, "jump_dr_multiplier") => |c, v| c.jump_dr_multiplier = v,
         (PositionJump, "jump_timing_slack") => |c, v| c.jump_timing_slack = v,
+        (SimanHandshake, "response_timeout") => |c, v| c.response_timeout = v,
         _ => return None,
     })
 }
@@ -860,6 +861,7 @@ impl Merged {
                 Rule::PduStructure,
                 Rule::PduPadding,
                 Rule::PduFamily,
+                Rule::SimanHandshake,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -871,6 +873,7 @@ impl Merged {
                 (Rule::PduStructure, Severity::Critical),
                 (Rule::PduPadding, Severity::Warning),
                 (Rule::PduFamily, Severity::Warning),
+                (Rule::SimanHandshake, Severity::Warning),
             ]
             .into_iter()
             .collect(),
