@@ -52,6 +52,9 @@ EXERCISE
     --radio-every SECS      Every SECS, the next site's first vehicle talks for 2 s
                             on its radio (Transmitter, PCM Signals); every such
                             radio heartbeats Transmitter and Receiver (default off)
+    --collision-every SECS  Two entities collide; both report it (default off)
+    --damage-every SECS     An entity is damaged, then repaired 30 s later (default off)
+    --de-every SECS         A 3 s directed-energy shot (default off)
     --bundle                Pack several PDUs per datagram
     --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
@@ -95,6 +98,16 @@ WARFARE FAULTS (on the next engagement; need --fire-every)
     --wrong-fire-type T     The next Fire's PDU Status says expendable (v7)
     --orphan-detonation T   A Detonation for an Event ID never fired, at T
     --all-warfare-faults    One of each (turns on --fire-every 10 if not set)
+
+INTERACTION FAULTS (on the next interaction)
+    --one-sided-collision T Only one party reports the next collision
+    --duplicate-collision T One party reports the next collision twice
+    --stale-appearance T    The next repair leaves the appearance damaged
+    --eds-after-remove ID[@T]  An Entity Damage Status for a removed entity
+    --de-dropout T          The next DE shot's DE Fires stop after the first
+    --de-no-fire T          The next DE shot has no Fire PDU
+    --all-interaction-faults  The above, but eds-after-remove (turns on the
+                            three interactions every 10/40/20 s if not set)
 
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
@@ -146,7 +159,7 @@ fn parse_args() -> Result<Options, String> {
     let mut pending: Vec<(EventKind, String)> = Vec::new();
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
     let (mut all_handshake, mut all_radio, mut all_lifecycle) = (false, false, false);
-    let mut all_warfare = false;
+    let (mut all_warfare, mut all_interaction) = (false, false);
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -219,6 +232,16 @@ fn parse_args() -> Result<Options, String> {
             "--wrong-fire-type" => pending.push((EventKind::WrongFireType, format!("@{}", val()?))),
             "--orphan-detonation" => pending.push((EventKind::OrphanDetonation, format!("@{}", val()?))),
             "--all-warfare-faults" => all_warfare = true,
+            "--collision-every" => cfg.collision_every = Some(num(val()?)?),
+            "--damage-every" => cfg.damage_every = Some(num(val()?)?),
+            "--de-every" => cfg.de_every = Some(num(val()?)?),
+            "--one-sided-collision" => pending.push((EventKind::OneSidedCollision, format!("@{}", val()?))),
+            "--duplicate-collision" => pending.push((EventKind::DuplicateCollision, format!("@{}", val()?))),
+            "--stale-appearance" => pending.push((EventKind::StaleAppearance, format!("@{}", val()?))),
+            "--eds-after-remove" => pending.push((EventKind::EdsAfterRemove, val()?)),
+            "--de-dropout" => pending.push((EventKind::DeDropout, format!("@{}", val()?))),
+            "--de-no-fire" => pending.push((EventKind::DeNoFire, format!("@{}", val()?))),
+            "--all-interaction-faults" => all_interaction = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -272,6 +295,23 @@ fn parse_args() -> Result<Options, String> {
         pending.push((EventKind::WrongAck, format!("{second}@{}", d * 0.15)));
         pending.push((EventKind::OrphanResponse, format!("{second}@{}", d * 0.30)));
         pending.push((EventKind::NoResponse, format!("{second}@{}", d * 0.60)));
+    }
+    if all_interaction {
+        cfg.collision_every.get_or_insert(10.0);
+        cfg.damage_every.get_or_insert(40.0);
+        cfg.de_every.get_or_insert(20.0);
+        for (i, kind) in [
+            EventKind::OneSidedCollision,
+            EventKind::DuplicateCollision,
+            EventKind::StaleAppearance,
+            EventKind::DeDropout,
+            EventKind::DeNoFire,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            pending.push((kind, format!("@{}", d * (0.15 + 0.12 * i as f64))));
+        }
     }
     if all_warfare {
         cfg.fire_every.get_or_insert(10.0);
@@ -366,7 +406,12 @@ fn parse_args() -> Result<Options, String> {
             | EventKind::NoDetonation
             | EventKind::DetonationMismatch
             | EventKind::WrongFireType
-            | EventKind::OrphanDetonation => Target::Exercise,
+            | EventKind::OrphanDetonation
+            | EventKind::OneSidedCollision
+            | EventKind::DuplicateCollision
+            | EventKind::StaleAppearance
+            | EventKind::DeDropout
+            | EventKind::DeNoFire => Target::Exercise,
             EventKind::RestartPort
             | EventKind::NoResponse
             | EventKind::WrongAck

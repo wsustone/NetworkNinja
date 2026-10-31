@@ -179,6 +179,19 @@ Status FTI/DTI must agree with the descriptor kind (2 munition, 8
 expendable). Generator faults `--no-detonation`, `--detonation-mismatch`,
 `--wrong-fire-type`, `--orphan-detonation T`, preset `--all-warfare-faults`.
 
+Interactions (`nn_rules::interactions`, raw bytes via `Engine::check_interactions`):
+rule `directed-energy` (DE Fire heartbeat `de_heartbeat` 0.5 s while Flags bit
+0 is on; one Fire after the first DE Fire, a Detonation after the last),
+`entity-damage` (no EDS after Deactivated; a repair with no records must clear
+the platform's appearance damage bits within `repair_window`), `collision`
+(both parties within `collision_window`, pinned on the silent one; one per
+event and PDU type). Munition domain runs 0-12 (12 = directed energy).
+Generator `--collision-every/--damage-every/--de-every SECS`, faults
+`--one-sided-collision`, `--duplicate-collision`, `--stale-appearance`,
+`--eds-after-remove ID`, `--de-dropout`, `--de-no-fire`, preset
+`--all-interaction-faults`. A deliberate repeat must differ in bytes, or echo
+detection (`duplicate-delivery`) drops it before the rules see it.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock
