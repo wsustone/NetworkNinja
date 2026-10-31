@@ -1,0 +1,145 @@
+name: Release
+
+# Downloadable builds of nn-server and nn-generator.
+#
+# Push a tag matching the workspace version (Cargo.toml) to publish:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Every platform builds, packages and smoke-tests, then a *draft* GitHub
+# release collects the archives and SHA256SUMS.txt; check it and press
+# Publish. A tag with a hyphen (v0.2.0-rc.1) makes a pre-release.
+# Pull requests that touch this workflow or packaging/ build the archives
+# (as workflow artifacts) without releasing anything.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packaging/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Static (musl): runs on any x86_64 Linux, old lab distributions too.
+          - name: linux-x86_64
+            os: ubuntu-latest
+            targets: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            targets: x86_64-pc-windows-msvc
+            archive: zip
+          # One universal binary for Apple Silicon and Intel Macs.
+          - name: macos-universal
+            os: macos-latest
+            targets: aarch64-apple-darwin x86_64-apple-darwin
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Add targets
+        shell: bash
+        run: |
+          for t in ${{ matrix.targets }}; do rustup target add "$t"; done
+          if [[ "${{ matrix.targets }}" == *musl* ]]; then
+            sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+          fi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match the workspace version $version (Cargo.toml)"
+            exit 1
+          fi
+      - name: Build
+        shell: bash
+        run: |
+          for t in ${{ matrix.targets }}; do
+            cargo build --release --locked --target "$t" -p nn-server -p nn-generator
+          done
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          dir="dist/$name"
+          mkdir -p "$dir"
+          targets=(${{ matrix.targets }})
+          ext=""
+          [[ "${{ matrix.os }}" == windows-* ]] && ext=".exe"
+          for bin in nn-server nn-generator; do
+            if (( ${#targets[@]} > 1 )); then
+              lipo -create -output "$dir/$bin" $(for t in "${targets[@]}"; do echo "target/$t/release/$bin"; done)
+            else
+              cp "target/${targets[0]}/release/$bin$ext" "$dir/"
+            fi
+          done
+          cp packaging/QUICKSTART.md README.md LICENSE nn.example.toml "$dir/"
+          cp -r rulepacks "$dir/"
+          # Smoke test: the packaged binaries start on this runner.
+          "$dir/nn-server$ext" --version
+          "$dir/nn-generator$ext" --help > /dev/null
+          cd dist
+          if [[ "${{ matrix.archive }}" == zip ]]; then
+            7z a -tzip -bso0 "$name.zip" "$name"
+            file="$name.zip"
+          else
+            tar czf "$name.tar.gz" "$name"
+            file="$name.tar.gz"
+          fi
+          if command -v sha256sum > /dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi > "$file.sha256"
+          cat "$file.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          cat *.sha256 > SHA256SUMS.txt
+          rm *.sha256
+          pre=""
+          [[ "$GITHUB_REF_NAME" == *-* ]] && pre="--prerelease"
+          gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" \
+            --draft $pre --generate-notes --title "NetworkNinja $GITHUB_REF_NAME"
