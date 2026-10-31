@@ -43,14 +43,14 @@ Every lifecycle and cross-PDU check also needs these, the lessons from step 5 so
 - **Thresholds and heartbeats live in `[rules.<family>]`**, at the standard's defaults, so a
   site can widen them.
 
-## Wave 0: fix false alarms in what we already check (do first)
+## Wave 0: fix false alarms in what we already check (done)
 
 These were found while writing this plan. Legitimate senders can trip both today.
 
 | # | Problem | Fix | Clause |
 | --- | --- | --- | --- |
-| 0.1 | Entity timeout uses one heartbeat (5 s × 2.4) for every entity. Stationary entities may heartbeat at HBT_STATIONARY (60 s), so a parked vehicle is wrongly timed out at 12 s. | Use the stationary heartbeat while the last report says DR algorithm Static (1), or shows zero velocity. Keep per-kind heartbeats in the pack (`HBT_ESPDU_*`, all 5 s by default). | 4.2.7, Table 4 |
-| 0.2 | Entity State Update isn't decoded, so an entity that heartbeats with ESUs between full Entity States is wrongly timed out. | Deep-decode ESU (67): location, velocity, orientation, appearance, variable parameters. It refreshes the entity like an Entity State and feeds position jump. | 5.3.5.3 c |
+| 0.1 | *Done.* Entity timeout uses one heartbeat (5 s × 2.4) for every entity. Stationary entities may heartbeat at HBT_STATIONARY (60 s), so a parked vehicle is wrongly timed out at 12 s. | Use the stationary heartbeat while the last report says DR algorithm Static (1), or shows zero velocity. Keep per-kind heartbeats in the pack (`HBT_ESPDU_*`, all 5 s by default). | 4.2.7, Table 4 |
+| 0.2 | *Done.* Entity State Update isn't decoded, so an entity that heartbeats with ESUs between full Entity States is wrongly timed out. | Deep-decode ESU (67): location, velocity, orientation, appearance, variable parameters. It refreshes the entity like an Entity State and feeds position jump. | 5.3.5.3 c |
 
 ## Wave 1: Entity information and warfare
 

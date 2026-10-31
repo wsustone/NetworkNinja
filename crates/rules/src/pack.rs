@@ -454,6 +454,7 @@ fn set_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
     use Rule::*;
     Some(match (rule, key) {
         (EntityTimeout, "heartbeat") => |c, v| c.heartbeat = v,
+        (EntityTimeout, "stationary_heartbeat") => |c, v| c.stationary_heartbeat = v,
         (EntityTimeout, "timeout_multiplier") => |c, v| c.timeout_multiplier = v,
         (IdConflict, "conflict_grace") => |c, v| c.conflict_grace = v,
         (IdConflict, "duplicate_window") => |c, v| c.duplicate_window = v,

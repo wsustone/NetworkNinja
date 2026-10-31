@@ -124,6 +124,7 @@ impl Monitor {
             events.extend(self.engine.check_structure(now, d.source, &structure));
             match result {
                 Ok(pdu) => {
+                    let pdu = self.merge_update(pdu);
                     events.extend(self.engine.check_siman(now, d.source, &d.payload[span.clone()]));
                     events.extend(self.engine.check_radio(now, d.source, &d.payload[span.clone()]));
                     events.extend(self.engine.check_enums(now, d.source, &pdu));
@@ -256,6 +257,48 @@ impl Monitor {
         out
     }
 
+    /// An Entity State Update, merged with its entity's last Entity State
+    /// into a full Entity State (type, marking and dead-reckoning settings
+    /// from that report), so the table and every rule treat it as one: a
+    /// simulation may heartbeat with updates (5.3.5.3 c). The header keeps
+    /// type 67, so metrics and the console still call it an update. An
+    /// update for an entity never seen in full passes through unchanged.
+    fn merge_update(&self, pdu: Pdu) -> Pdu {
+        let PduBody::EntityStateUpdate(u) = &pdu.body else {
+            return pdu;
+        };
+        let key = EntityKey {
+            exercise: pdu.header.exercise_id,
+            id: u.entity_id,
+        };
+        let Some(rec) = self.table.get(&key) else {
+            return pdu;
+        };
+        let k = rec.kinematics();
+        let es = nn_decode::EntityState {
+            entity_id: u.entity_id,
+            force_id: rec.force_id,
+            entity_type: rec.entity_type,
+            alternative_entity_type: rec.entity_type,
+            linear_velocity: u.linear_velocity,
+            location: u.location,
+            orientation: u.orientation,
+            appearance: u.appearance,
+            dead_reckoning: nn_decode::DeadReckoning {
+                algorithm: k.algorithm,
+                linear_acceleration: k.acceleration,
+                ..Default::default()
+            },
+            marking: nn_decode::Marking::ascii(&rec.marking),
+            capabilities: 0,
+            variable_parameters: u.variable_parameters.clone(),
+        };
+        Pdu {
+            header: pdu.header,
+            body: PduBody::EntityState(es),
+        }
+    }
+
     /// The listener a sender was last heard through (live capture only).
     pub fn via(&self, sender: &SocketAddr) -> Option<&str> {
         self.via.get(sender).map(|s| &**s)
@@ -292,7 +335,7 @@ impl Monitor {
             return;
         };
         let dt = now - track.last_seen;
-        if dt <= 0.0 || dt > self.engine.config.timeout() {
+        if dt <= 0.0 || dt > self.engine.config.timeout_for(&track.last) {
             return;
         }
         let err = geo::distance(&extrapolate(&track.last, dt), &es.location);
@@ -313,8 +356,8 @@ impl Monitor {
             return;
         }
         self.last_gauge = second;
-        let timeout = self.engine.config.timeout();
-        let active = |r: &&nn_state::EntityRecord| !r.removed && now - r.last_seen <= timeout;
+        let cfg = &self.engine.config;
+        let active = |r: &&nn_state::EntityRecord| !r.removed && now - r.last_seen <= cfg.timeout_of(r);
         let mut counts: HashMap<Tags, f64> = HashMap::new();
         for r in self.table.entities.values().filter(active) {
             let tags = Tags {
@@ -355,7 +398,7 @@ impl Monitor {
         let mut samples = Vec::new();
         for r in self.table.entities.values().filter(active) {
             for (addr, src) in &r.sources {
-                if src.intervals.count == 0 || now - src.last_seen > timeout {
+                if src.intervals.count == 0 || now - src.last_seen > cfg.timeout_for(&src.last) {
                     continue;
                 }
                 let tags = Tags {
@@ -375,11 +418,11 @@ impl Monitor {
 
     /// Entities currently reporting (not removed, heard within the timeout).
     pub fn active_entities(&self) -> usize {
-        let timeout = self.engine.config.timeout();
+        let cfg = &self.engine.config;
         self.table
             .entities
             .values()
-            .filter(|r| !r.removed && self.now - r.last_seen <= timeout)
+            .filter(|r| !r.removed && self.now - r.last_seen <= cfg.timeout_of(r))
             .count()
     }
 }

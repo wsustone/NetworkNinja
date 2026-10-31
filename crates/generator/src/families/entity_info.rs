@@ -54,6 +54,22 @@ fn entity_state(
     }
 }
 
+/// The Entity State Update carrying `es`'s changing fields (5.3.5).
+fn update_of(tick: &Tick, es: Pdu) -> Pdu {
+    let PduBody::EntityState(e) = es.body else { return es };
+    Pdu {
+        header: tick.header(pdu_type::ENTITY_STATE_UPDATE),
+        body: PduBody::EntityStateUpdate(EntityStateUpdate {
+            entity_id: e.entity_id,
+            linear_velocity: e.linear_velocity,
+            location: e.location,
+            orientation: e.orientation,
+            appearance: e.appearance,
+            variable_parameters: e.variable_parameters,
+        }),
+    }
+}
+
 impl Family for EntityInfo {
     fn on_event(&mut self, w: &mut World, _tick: &Tick, ev: &Event, _out: &mut Out) -> Option<bool> {
         let Target::Entity(id) = ev.target else {
@@ -81,10 +97,21 @@ impl Family for EntityInfo {
                 continue;
             }
             let kin @ (pos, vel, _) = e.kinematics(motion);
-            let heartbeat_due = t - e.last_sent >= cfg.heartbeat;
-            let dr_due = !frozen && e.last_sent >= 0.0 && e.dr_error(t, &pos) > cfg.dr_threshold;
+            let heartbeat = if e.parked {
+                cfg.stationary_heartbeat
+            } else {
+                cfg.heartbeat
+            };
+            let heartbeat_due = t - e.last_sent >= heartbeat;
+            let dr_due = !e.parked && !frozen && e.last_sent >= 0.0 && e.dr_error(t, &pos) > cfg.dr_threshold;
             if heartbeat_due || dr_due {
-                let pdu = entity_state(tick, frozen, e, kin, e.marking, cfg.dr_algorithm);
+                let algorithm = if e.parked { 1 } else { cfg.dr_algorithm };
+                let full = !cfg.entity_state_update || e.reports % 6 == 0;
+                let mut pdu = entity_state(tick, frozen, e, kin, e.marking, algorithm);
+                if !full {
+                    pdu = update_of(tick, pdu);
+                }
+                e.reports += 1;
                 e.last_sent = t;
                 e.last_pos = pos;
                 e.last_vel = if frozen { Vec3f::default() } else { vel };
