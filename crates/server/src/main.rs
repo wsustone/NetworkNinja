@@ -26,6 +26,7 @@ USAGE:
     nn-server listen [OPTIONS]        Receive live traffic (receive-only)
     nn-server replay FILE [OPTIONS]   Decode a pcap file
     nn-server serve [OPTIONS]         Receive traffic and serve the dashboard
+    nn-server --version               Print the version
     nn-server passwd FILE --user U --pass P   Create or update a user account
     nn-server cert OUT [--host NAME]...       Write a self-signed OUT.crt + OUT.key
                           (--host: DNS name or IP, repeatable; default
@@ -168,6 +169,10 @@ fn real_main() -> Result<(), String> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
         print!("{USAGE}");
+        return Ok(());
+    }
+    if args[0] == "--version" || args[0] == "-V" {
+        println!("nn-server {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let command = args.remove(0);
