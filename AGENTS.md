@@ -191,6 +191,16 @@ Generator `--collision-every/--damage-every/--de-every SECS`, faults
 `--eds-after-remove ID`, `--de-dropout`, `--de-no-fire`, preset
 `--all-interaction-faults`. A deliberate repeat must differ in bytes, or echo
 detection (`duplicate-delivery`) drops it before the rules see it.
+Wave 1 wrap-up: `fire-detonation` also flags a fired mine (munition category
+Fixed, 3) and an Entity Impact far from the target (`impact_tolerance`);
+`collision` flags nobody moving (`collision_speed`, COLLISION_THRSH; Collision
+velocity at 32); DE Fire / EDS records must be aimpoints / 4500. Rule
+`attribute` (`nn_rules::attribute::check`, given the PDUs either side in the
+datagram) covers 5.3.6.3 and Coupled PDU Extension. PDU Status is header byte
+**10** (8-9 is the length). Coverage's minimal Collision moves and its
+Attribute holds a record (set in `minimal()`, so defects keep them).
+Faults `--mine-fired`, `--impact-miss`, `--still-collision`,
+`--bad-de-record`, `--bad-attribute`, `--missing-extension`.
 
 ## Timing and identity semantics (October 2026 review fixes)
 

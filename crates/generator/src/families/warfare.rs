@@ -4,8 +4,12 @@
 //! Faults (on the next engagement): its Detonation never comes
 //! (`no-detonation`), names another munition type (`detonation-mismatch`),
 //! or its Fire's PDU Status calls the munition an expendable
-//! (`wrong-fire-type`, v7); or a Detonation for an Event ID never fired
+//! (`wrong-fire-type`, v7), or it fires a mine (`mine-fired`: munition
+//! category Fixed), or its Detonation claims an entity impact 2 km from the
+//! target (`impact-miss`); or a Detonation for an Event ID never fired
 //! (`orphan-detonation`), now.
+//!
+//! A Detonation lands where its target is when it detonates.
 
 use super::{Family, Out};
 use crate::world::{Tick, World};
@@ -21,6 +25,8 @@ pub(crate) struct Warfare {
     drop_next: bool,
     mismatch_next: bool,
     wrong_type_next: bool,
+    mine_next: bool,
+    miss_next: bool,
 }
 
 impl Warfare {
@@ -32,6 +38,8 @@ impl Warfare {
             drop_next: false,
             mismatch_next: false,
             wrong_type_next: false,
+            mine_next: false,
+            miss_next: false,
         }
     }
 }
@@ -42,6 +50,8 @@ impl Family for Warfare {
             EventKind::NoDetonation => self.drop_next = true,
             EventKind::DetonationMismatch => self.mismatch_next = true,
             EventKind::WrongFireType => self.wrong_type_next = true,
+            EventKind::MineFired => self.mine_next = true,
+            EventKind::ImpactMiss => self.miss_next = true,
             EventKind::OrphanDetonation => {
                 let Some(e) = w.entities.iter().find(|e| e.sending) else {
                     return Some(false);
@@ -104,7 +114,10 @@ impl Family for Warfare {
                     event_number: self.fire_count,
                 };
                 let munition_id = EntityId::new(firer.site, firer.application, 1000 + self.fire_count);
-                let descriptor = munition();
+                let mut descriptor = munition();
+                if std::mem::take(&mut self.mine_next) {
+                    descriptor.munition_type.category = 3; // Fixed: a mine
+                }
                 let range = geo::distance(&from, &to) as f32;
                 let mut header = tick.header(pdu_type::FIRE);
                 if std::mem::take(&mut self.wrong_type_next) {
@@ -146,6 +159,7 @@ impl Family for Warfare {
                                 y: 0.0,
                                 z: -250.0,
                             },
+                            // Where the target is when it detonates: below.
                             location: to,
                             descriptor: det_descriptor,
                             location_in_entity: Vec3f::default(),
@@ -157,8 +171,15 @@ impl Family for Warfare {
             }
         }
 
-        self.detonations.retain(|(at, d)| {
+        let miss = &mut self.miss_next;
+        self.detonations.retain_mut(|(at, d)| {
             if *at <= t + 1e-9 {
+                if let Some(e) = w.entities.iter().find(|e| e.id == d.target_entity) {
+                    d.location = e.kinematics(w.motion_time).0;
+                }
+                if std::mem::take(miss) {
+                    d.location.x += 2000.0;
+                }
                 let pdu = Pdu {
                     header: tick.header(pdu_type::DETONATION),
                     body: PduBody::Detonation(d.clone()),

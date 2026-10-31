@@ -48,7 +48,7 @@ Update this table in the same change that adds support. What comes next for each
 | 4 | Collision | Entity Information/Interaction (1) | 5.3.3 | 7.2.3 | ✓ | ✓ | ✓ | partial | ✓ |
 | 66 | Collision-Elastic | Entity Information/Interaction (1) | 5.3.4 | 7.2.4 | ✓ | ✓ v7 | – | partial | min |
 | 67 | Entity State Update | Entity Information/Interaction (1) | 5.3.5 | 7.2.5 | ✓ | ✓ v7 | – | partial | ✓ |
-| 72 | Attribute | Entity Information/Interaction (1) | 5.3.6 | 7.2.6 | ✓ | ✓ v7 | – | – | min |
+| 72 | Attribute | Entity Information/Interaction (1) | 5.3.6 | 7.2.6 | ✓ | ✓ v7 | – | ✓ | min |
 | 2 | Fire | Warfare (2) | 5.4.3 | 7.3.2 | ✓ | ✓ | partial | partial | ✓ |
 | 3 | Detonation | Warfare (2) | 5.4.4 | 7.3.3 | ✓ | ✓ | partial | partial | ✓ |
 | 68 | Directed Energy Fire | Warfare (2) | 5.4.5 | 7.3.4 | ✓ | ✓ v7 | ✓ | partial | ✓ |

@@ -29,6 +29,37 @@ fn id_at(b: &[u8], at: usize) -> Option<EntityId> {
     Some(EntityId::new(u16_at(b, at)?, u16_at(b, at + 2)?, u16_at(b, at + 4)?))
 }
 
+fn u32_at(b: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(b.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn f32_at(b: &[u8], at: usize) -> Option<f32> {
+    u32_at(b, at).map(f32::from_bits)
+}
+
+/// Standard variable records from `at`: (type, length) of each, stopping at
+/// a length that can't be walked (tier S reports that).
+fn records(b: &[u8], mut at: usize, n: u16) -> Vec<(u32, u16)> {
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let (Some(t), Some(len)) = (u32_at(b, at), u16_at(b, at + 4)) else {
+            break;
+        };
+        out.push((t, len));
+        if len < 6 {
+            break;
+        }
+        at += len as usize;
+    }
+    out
+}
+
+/// DE Precision Aimpoint (6.2.21.3, 704 bits), DE Area Aimpoint (6.2.21.2,
+/// variable) and Directed Energy Damage Description (320 bits) record types.
+const PRECISION_AIMPOINT: (u32, u16) = (4000, 88);
+const AREA_AIMPOINT: u32 = 4001;
+const DAMAGE_DESCRIPTION: (u32, u16) = (4500, 40);
+
 fn event_at(b: &[u8], at: usize) -> Option<EventId> {
     Some(EventId {
         site: u16_at(b, at)?,
@@ -106,6 +137,22 @@ impl DirectedEnergy {
                 s.on = on;
                 s.last_de = now;
                 s.source = source;
+                let n = u16_at(pdu, 86).unwrap_or(0);
+                let bad = records(pdu, 88, n)
+                    .into_iter()
+                    .find(|&(t, len)| !(t == AREA_AIMPOINT || (t, len) == PRECISION_AIMPOINT));
+                if let Some((t, len)) = bad {
+                    out.push(Finding {
+                        kind: "record-type",
+                        key: EntityKey { exercise, id: firer },
+                        sender: source,
+                        message: format!(
+                            "{firer} DE engagement {}: a DE record of type {t}, {len} bytes; DE Fire carries DE Precision Aimpoint (4000, 88 bytes) or DE Area Aimpoint (4001) records{}",
+                            ev(&event),
+                            cite("7.3.4, 6.2.21")
+                        ),
+                    });
+                }
             }
             2 | 3 => {
                 let Some(event) = event_at(pdu, 30) else { return out };
@@ -213,9 +260,21 @@ impl Damage {
             return Vec::new();
         };
         let key = EntityKey { exercise, id };
+        let mut out = Vec::new();
+        if let Some((t, len)) = records(pdu, 24, n).into_iter().find(|&r| r != DAMAGE_DESCRIPTION) {
+            out.push(Finding {
+                kind: "record-type",
+                key,
+                sender: source,
+                message: format!(
+                    "{id}: a damage record of type {t}, {len} bytes; Entity Damage Status carries DE Damage Description records (4500, 40 bytes){}",
+                    cite("7.3.5, 6.2.16.2")
+                ),
+            });
+        }
         let rec = table.get(&key);
         if rec.is_some_and(|r| r.deactivated()) {
-            return vec![Finding {
+            out.push(Finding {
                 kind: "after-deactivated",
                 key,
                 sender: source,
@@ -223,14 +282,15 @@ impl Damage {
                     "{id}: Entity Damage Status after the entity's Deactivated Entity State{}",
                     cite("5.4.6.3")
                 ),
-            }];
+            });
+            return out;
         }
         if n == 0 && rec.is_some_and(|r| r.entity_type.kind == 1) {
             self.repaired.insert(key, (now, source));
         } else {
             self.repaired.remove(&key);
         }
-        Vec::new()
+        out
     }
 
     /// Repairs whose entity still shows damage after `window`.
@@ -283,7 +343,16 @@ pub struct Collisions {
 }
 
 impl Collisions {
-    pub fn observe(&mut self, now: f64, source: SocketAddr, pdu: &[u8], window: f64) -> Vec<Finding> {
+    /// A Collision or Collision-Elastic. `window` is collision_window,
+    /// `threshold` COLLISION_THRSH.
+    pub fn observe(
+        &mut self,
+        now: f64,
+        source: SocketAddr,
+        pdu: &[u8],
+        table: &EntityTable,
+        (window, threshold): (f64, f64),
+    ) -> Vec<Finding> {
         let (Some(&exercise), Some(&pdu_type)) = (pdu.get(1), pdu.get(2)) else {
             return Vec::new();
         };
@@ -307,6 +376,40 @@ impl Collisions {
                         cite("5.3.3.4")
                     ),
                 });
+            }
+        }
+        // A collision needs one party moving faster than COLLISION_THRSH
+        // (5.3.3.2 c). Collision carries the issuing entity's velocity; the
+        // other's comes from its Entity State, and an object that isn't an
+        // entity (ENTITY_ID_UNKNOWN: terrain, a building) doesn't move.
+        if pdu_type == 4 {
+            let v = |at| f32_at(pdu, at).unwrap_or(0.0) as f64;
+            let own = v(32).hypot(v(36)).hypot(v(40));
+            let other = if colliding == EntityId::new(0, 0, 0) {
+                Some(0.0)
+            } else {
+                table
+                    .get(&EntityKey {
+                        exercise,
+                        id: colliding,
+                    })
+                    .map(|r| {
+                        let w = r.kinematics().velocity;
+                        (w.x as f64).hypot(w.y as f64).hypot(w.z as f64)
+                    })
+            };
+            if let Some(other) = other {
+                if own <= threshold && other <= threshold {
+                    out.push(Finding {
+                        kind: "below-threshold",
+                        key: EntityKey { exercise, id: issuing },
+                        sender: source,
+                        message: format!(
+                            "{issuing}: a Collision with {colliding}, but neither is moving faster than COLLISION_THRSH {threshold} m/s ({own:.2} and {other:.2} m/s){}",
+                            cite("5.3.3.2 c)")
+                        ),
+                    });
+                }
             }
         }
         // The other party's report answers this one, and this one answers it.
@@ -409,7 +512,14 @@ mod tests {
         b
     }
 
+    /// A Collision whose issuing entity moves at 5 m/s.
     fn collision(issuing: EntityId, colliding: EntityId, event: u16) -> Vec<u8> {
+        let mut b = still(issuing, colliding, event);
+        b[32..36].copy_from_slice(&5f32.to_be_bytes());
+        b
+    }
+
+    fn still(issuing: EntityId, colliding: EntityId, event: u16) -> Vec<u8> {
         let mut b = pdu(4, 60);
         put_id(&mut b, 12, [issuing.site, issuing.application, issuing.entity]);
         put_id(&mut b, 18, [colliding.site, colliding.application, colliding.entity]);
@@ -508,19 +618,62 @@ mod tests {
         let t = table(&[(A, 0), (B, 0)]);
         let mut c = Collisions::default();
         // Both report: silent.
-        assert!(c.observe(0.0, src(), &collision(A, B, 1), 5.0).is_empty());
-        assert!(c.observe(0.1, src(), &collision(B, A, 1), 5.0).is_empty());
+        assert!(c.observe(0.0, src(), &collision(A, B, 1), &t, (5.0, 0.1)).is_empty());
+        assert!(c.observe(0.1, src(), &collision(B, A, 1), &t, (5.0, 0.1)).is_empty());
         assert!(c.expire(10.0, 5.0, &t).is_empty());
         // A reports twice, B never.
-        assert!(c.observe(20.0, src(), &collision(A, B, 2), 5.0).is_empty());
-        assert_eq!(kinds(&c.observe(20.5, src(), &collision(A, B, 2), 5.0)), ["duplicate"]);
+        assert!(c.observe(20.0, src(), &collision(A, B, 2), &t, (5.0, 0.1)).is_empty());
+        assert_eq!(
+            kinds(&c.observe(20.5, src(), &collision(A, B, 2), &t, (5.0, 0.1))),
+            ["duplicate"]
+        );
         let found = c.expire(30.0, 5.0, &t);
         assert_eq!(kinds(&found), ["one-sided"]);
         assert_eq!(found[0].key.id, B);
         // ENTITY_ID_UNKNOWN, or something that isn't an entity here: nothing.
-        c.observe(40.0, src(), &collision(A, EntityId::new(0, 0, 0), 3), 5.0);
-        c.observe(40.0, src(), &collision(A, EntityId::new(9, 9, 9), 4), 5.0);
+        c.observe(40.0, src(), &collision(A, EntityId::new(0, 0, 0), 3), &t, (5.0, 0.1));
+        c.observe(40.0, src(), &collision(A, EntityId::new(9, 9, 9), 4), &t, (5.0, 0.1));
         assert!(c.expire(50.0, 5.0, &t).is_empty());
+        // Nobody moving: no collision. Into terrain (ENTITY_ID_UNKNOWN) too.
+        let found = c.observe(60.0, src(), &still(A, B, 5), &t, (5.0, 0.1));
+        assert_eq!(kinds(&found), ["below-threshold"]);
+        let found = c.observe(60.0, src(), &still(A, EntityId::new(0, 0, 0), 6), &t, (5.0, 0.1));
+        assert_eq!(kinds(&found), ["below-threshold"]);
+        // The issuer stopped, but an unknown other party may be moving.
+        assert!(c
+            .observe(60.0, src(), &still(A, EntityId::new(9, 9, 9), 7), &t, (5.0, 0.1))
+            .is_empty());
+    }
+
+    #[test]
+    fn de_and_damage_records_have_their_own_types() {
+        let mut fire = de_fire(true);
+        fire[86..88].copy_from_slice(&1u16.to_be_bytes());
+        let mut rec = vec![0u8; 88];
+        rec[0..4].copy_from_slice(&4000u32.to_be_bytes());
+        rec[4..6].copy_from_slice(&88u16.to_be_bytes());
+        let mut good = fire.clone();
+        good.extend(&rec);
+        let mut de = DirectedEnergy::default();
+        assert!(de.observe(0.0, src(), &good).is_empty());
+        // A Damage Description record where an aimpoint belongs.
+        let mut bad = fire;
+        rec[0..4].copy_from_slice(&4500u32.to_be_bytes());
+        bad.extend(&rec);
+        assert_eq!(kinds(&de.observe(0.5, src(), &bad)), ["record-type"]);
+
+        let t = table(&[(A, 0)]);
+        let mut d = Damage::default();
+        let mut eds1 = eds(A, 1);
+        let mut r = vec![0u8; 40];
+        r[0..4].copy_from_slice(&4500u32.to_be_bytes());
+        r[4..6].copy_from_slice(&40u16.to_be_bytes());
+        eds1.extend(&r);
+        assert!(d.observe(0.0, src(), &eds1, &t).is_empty());
+        let mut eds2 = eds(A, 1);
+        r[0..4].copy_from_slice(&4000u32.to_be_bytes());
+        eds2.extend(&r);
+        assert_eq!(kinds(&d.observe(1.0, src(), &eds2, &t)), ["record-type"]);
     }
 
     #[test]
