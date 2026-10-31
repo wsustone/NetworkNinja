@@ -1,6 +1,7 @@
 //! Receive-only UDP socket source.
 
 use crate::Datagram;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, SystemTime};
@@ -8,9 +9,15 @@ use std::time::{Duration, SystemTime};
 /// Largest UDP payload we accept.
 const MAX_DATAGRAM: usize = 65_535;
 
+/// Receive buffer asked of the kernel unless configured: room for about a
+/// second of a busy exercise, so a pause in the reader doesn't drop traffic.
+pub const DEFAULT_RECV_BUFFER: usize = 8 << 20;
+
 /// How to open the socket.
 #[derive(Debug, Clone)]
 pub struct UdpConfig {
+    /// A label for status and logs, e.g. "dis" or "radio".
+    pub name: String,
     /// Local address to bind. Use 0.0.0.0 to receive broadcast and multicast.
     pub bind: Ipv4Addr,
     pub port: u16,
@@ -21,16 +28,28 @@ pub struct UdpConfig {
     pub multicast_interface: Ipv4Addr,
     /// How long `recv` blocks before returning `Ok(None)`.
     pub read_timeout: Duration,
+    /// Share the port with other sockets on this host (SO_REUSEADDR, and
+    /// SO_REUSEPORT on Unix), e.g. a simulator already bound to it. Safe for
+    /// broadcast and multicast, which every sharing socket receives; unicast
+    /// datagrams go to only one of them, so sharing a port that carries
+    /// unicast can take traffic away from the simulator.
+    pub share: bool,
+    /// Kernel receive buffer to ask for, bytes. The kernel may grant less
+    /// (Linux `net.core.rmem_max`, macOS `kern.ipc.maxsockbuf`).
+    pub recv_buffer: usize,
 }
 
 impl Default for UdpConfig {
     fn default() -> Self {
         UdpConfig {
+            name: "udp".into(),
             bind: Ipv4Addr::UNSPECIFIED,
             port: 3000,
             multicast_groups: Vec::new(),
             multicast_interface: Ipv4Addr::UNSPECIFIED,
             read_timeout: Duration::from_millis(250),
+            share: false,
+            recv_buffer: DEFAULT_RECV_BUFFER,
         }
     }
 }
@@ -39,6 +58,9 @@ impl Default for UdpConfig {
 pub struct UdpSource {
     socket: UdpSocket,
     local: SocketAddr,
+    /// Receive buffer the kernel granted, bytes (Linux reports double what
+    /// it reserves for data).
+    pub recv_buffer: usize,
     buf: Vec<u8>,
     pub datagrams: u64,
     pub bytes: u64,
@@ -46,7 +68,17 @@ pub struct UdpSource {
 
 impl UdpSource {
     pub fn open(cfg: &UdpConfig) -> io::Result<Self> {
-        let socket = UdpSocket::bind(SocketAddrV4::new(cfg.bind, cfg.port))?;
+        let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        if cfg.share {
+            sock.set_reuse_address(true)?;
+            #[cfg(unix)]
+            sock.set_reuse_port(true)?;
+        }
+        // Best effort: the kernel caps it, and we report what we got.
+        let _ = sock.set_recv_buffer_size(cfg.recv_buffer);
+        sock.bind(&SocketAddrV4::new(cfg.bind, cfg.port).into())?;
+        let recv_buffer = sock.recv_buffer_size().unwrap_or(0);
+        let socket: UdpSocket = sock.into();
         for group in &cfg.multicast_groups {
             if !group.is_multicast() {
                 return Err(io::Error::new(
@@ -61,6 +93,7 @@ impl UdpSource {
         Ok(UdpSource {
             socket,
             local,
+            recv_buffer,
             buf: vec![0u8; MAX_DATAGRAM],
             datagrams: 0,
             bytes: 0,
@@ -89,6 +122,20 @@ impl UdpSource {
             Err(e) => Err(e),
         }
     }
+}
+
+/// A socket for *sending* DIS (the generator's): broadcast allowed when
+/// asked, and for multicast the outgoing interface (`None` = the OS's
+/// choice, often the wrong NIC on a multi-homed host) and TTL (1 keeps it
+/// on the local subnet).
+pub fn sender_socket(broadcast: bool, multicast_if: Option<Ipv4Addr>, ttl: u32) -> io::Result<UdpSocket> {
+    let s = UdpSocket::bind("0.0.0.0:0")?;
+    s.set_broadcast(broadcast)?;
+    s.set_multicast_ttl_v4(ttl)?;
+    if let Some(i) = multicast_if {
+        socket2::SockRef::from(&s).set_multicast_if_v4(&i)?;
+    }
+    Ok(s)
 }
 
 #[cfg(test)]
