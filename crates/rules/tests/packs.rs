@@ -390,3 +390,21 @@ fn the_stationary_heartbeat_is_a_pack_threshold() {
     let merged = Merged::merge(vec![base(), RulePack::parse(src, "test").unwrap()]);
     assert_eq!(merged.config.stationary_heartbeat, 30.0);
 }
+
+#[test]
+fn heartbeats_are_pack_thresholds_per_type() {
+    let m = Merged::builtin().unwrap();
+    assert!(
+        m.config.heartbeats.seconds.get(&28) == Some(&10.0),
+        "the base pack states IFF's default"
+    );
+    let src = "[pack]\nid = \"s\"\nversion = 1\n\n[rules.heartbeat]\niff = 20.0\ntimeout_multiplier = 3\n";
+    let merged = Merged::merge(vec![base(), RulePack::parse(src, "test").unwrap()]);
+    assert_eq!(merged.config.heartbeats.seconds[&28], 20.0);
+    assert_eq!(merged.config.heartbeats.timeout_multiplier, 3.0);
+    for bad in ["iffy = 1", "entity_state = 5"] {
+        let src = format!("[pack]\nid = \"s\"\nversion = 1\n\n[rules.heartbeat]\n{bad}\n");
+        let e = RulePack::parse(&src, "test").unwrap_err().to_string();
+        assert!(e.contains("unknown threshold"), "{bad}: {e}");
+    }
+}

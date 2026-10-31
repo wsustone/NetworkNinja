@@ -14,11 +14,16 @@ use crate::{Event, EventKind, Target};
 use nn_decode::fields::enum_fields_of;
 use nn_decode::structure::{layout, layouts, minimal_body, IdField};
 use nn_decode::*;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub(crate) struct Coverage {
-    /// Simulation time of the next round.
-    next: f64,
+    /// Simulation time each type is next due. Types with a heartbeat
+    /// (`nn_decode::heartbeat`) go out at least that often; the rest once a
+    /// round.
+    next: BTreeMap<u8, f64>,
+    /// Types `stop-heartbeat` has silenced.
+    stopped: BTreeSet<u8>,
 }
 
 /// Types with real behaviour in another family, never sent minimal.
@@ -64,6 +69,10 @@ impl Family for Coverage {
         if !EventKind::DEFECTS.contains(&ev.kind) {
             return None;
         }
+        if ev.kind == EventKind::StopHeartbeat {
+            self.stopped.insert(pdu_type);
+            return Some(true);
+        }
         let Some(mut pdu) = minimal(w, tick, site, pdu_type) else {
             return Some(false);
         };
@@ -99,15 +108,20 @@ impl Family for Coverage {
 
     fn emit(&mut self, w: &mut World, tick: &Tick, out: &mut Out) {
         let Some(every) = w.cfg.all_types else { return };
-        if tick.t + 1e-9 < self.next {
-            return;
-        }
-        self.next = tick.t + every;
         let site = w.manager_site();
         for l in layouts() {
-            if ELSEWHERE.contains(&l.pdu_type) {
+            if ELSEWHERE.contains(&l.pdu_type) || self.stopped.contains(&l.pdu_type) {
                 continue;
             }
+            let due = self.next.entry(l.pdu_type).or_insert(0.0);
+            if tick.t + 1e-9 < *due {
+                continue;
+            }
+            let interval = match nn_decode::heartbeat::of(l.pdu_type) {
+                Some(h) if !h.own_rule => every.min(h.seconds),
+                _ => every,
+            };
+            *due = tick.t + interval;
             if let Some(pdu) = minimal(w, tick, site, l.pdu_type) {
                 out.push((w.sender(site), pdu));
             }

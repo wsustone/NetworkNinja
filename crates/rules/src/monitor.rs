@@ -127,6 +127,7 @@ impl Monitor {
                     let pdu = self.merge_update(pdu);
                     events.extend(self.engine.check_siman(now, d.source, &d.payload[span.clone()]));
                     events.extend(self.engine.check_radio(now, d.source, &d.payload[span.clone()]));
+                    self.engine.observe_heartbeat(now, d.source, &d.payload[span.clone()]);
                     events.extend(self.engine.check_enums(now, d.source, &pdu));
                     events.extend(self.engine.before_apply(now, d.source, &pdu, &self.table));
                     self.record_dr_error(now, d.source, &pdu);
