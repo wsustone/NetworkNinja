@@ -56,6 +56,17 @@ rulepacks/    base DIS rule pack (dis-base.toml, compiled into nn-server)
 - **Viewers:** the dashboard (milestone 4) is a responsive web page, so it works in any modern browser on a desktop, tablet or phone, with nothing to install.
 - Phones and tablets are viewers, not capture hosts: capturing exercise traffic needs a machine on the exercise LAN.
 
+## Download
+
+Ready-to-run builds for Linux (x86_64, static), Windows (x86_64) and macOS (universal) are on
+the [Releases](https://github.com/wsustone/NetworkNinja/releases) page: unpack one and follow
+its `QUICKSTART.md` ([packaging/QUICKSTART.md](packaging/QUICKSTART.md)). Builds aren't signed
+yet, so the quick start explains the macOS and Windows warnings.
+
+To cut a release, set the workspace version in `Cargo.toml`, then push a matching tag
+(`git tag v0.1.0 && git push origin v0.1.0`). The Release workflow builds every platform and
+creates a draft release with the archives and `SHA256SUMS.txt`; check it, then publish it.
+
 ## Get the code
 
 ```
