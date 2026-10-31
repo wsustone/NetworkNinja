@@ -12,6 +12,7 @@ It also covers the operating-system settings that decide whether it sees every p
 | Multicast group 239.1.2.3, port 3000 | `--listen 3000:239.1.2.3@en0` |
 | Several ports or groups | one `--listen` (or `[[listen]]`) each |
 | To a simulator on this same machine | add `share = true` (`--share`), broadcast and multicast only (see below) |
+| One multicast group arriving on two NICs | `interface = ["en0", "en5"]`, or `@en0,en5` |
 
 ```sh
 nn-server interfaces                                   # which NIC is which
@@ -23,6 +24,44 @@ Start from [`nn.example.toml`](../nn.example.toml). A config file holds the list
 `[serve]` settings (dashboard address, database, SISO file, rule packs, capture, TLS).
 Command-line flags override `[serve]` keys. Listeners given on the command line replace the
 file's `[[listen]]` blocks. `scripts/nn` uses a config file when `NN_CONFIG` is set.
+
+## Changing listeners while the server runs
+
+On the dashboard, the **inputs** line under the health strip has an **edit** button. It opens
+the listener editor, where you can add, change or remove listeners without restarting. Pick the
+interfaces to join from this machine's network cards. Changes apply at once. A change that
+can't be made (a port another program holds, an address that isn't multicast, a name already
+used) is reported, and the old listener stays.
+
+When the server was started with `--config FILE`, **save to FILE** writes the listeners back
+into it. Only the `[[listen]]` blocks are rewritten; `[serve]` and comments outside listener
+blocks are kept, and the previous file is kept as `FILE.bak`. Without `--config`, changes last
+until the server restarts.
+
+The same changes can be made from scripts: `POST /api/inputs` with
+`{"cmd":"input_add","name":"radio","port":"3001","groups":"239.1.2.10","interfaces":"en0","share":"true"}`,
+or `input_update` (with `"old":"NAME"`), `input_remove` (`"name"`) and `inputs_save`. Read the
+outcome from `last_change` in `GET /api/inputs`. With `--users`, these need a signed-in session
+like every other API call.
+
+## Stitching an exercise from several sources
+
+Every listener feeds one monitor, so traffic from several ports, groups and networks becomes
+one exercise: one entity table, one map, one issues board. Exercises stay apart by exercise ID,
+and every sender keeps its own address, so alerts name the right source. The entity detail's
+sender table shows **via**: the listener each sender arrives through.
+
+**The same datagram from the same sender twice is counted once and reported**
+(`duplicate-delivery`, within `echo_window`, 0.1 s):
+
+- *reach two listeners, 'a' and 'b'*: two of your listeners receive the same traffic, for
+  example two on one port that both hear a broadcast. Change them so they don't overlap.
+- *arrive twice on listener 'a'*: the network delivers each datagram twice: a loop, a sender
+  transmitting on two paths, or a gateway echoing traffic back. That's worth fixing in the
+  exercise network.
+
+Copies from a *different* address within a second are a relay's (a gateway or a second NIC
+forwarding traffic). They're dropped quietly, because that's a legitimate setup.
 
 ## Broadcast, multicast and unicast
 

@@ -13,6 +13,20 @@ use std::sync::Arc;
 /// Entities silent this long are dropped from the table, seconds.
 pub const ENTITY_EXPIRY: f64 = 600.0;
 
+/// What [`Monitor::copy_of`] made of a PDU's bytes.
+#[derive(Debug, Clone, PartialEq)]
+enum Copy {
+    No,
+    /// Another sender's copy: a relay.
+    Relay,
+    /// The same sender's again: one send delivered twice. `first` is the
+    /// listener the first copy came through.
+    Echo {
+        first: Option<Arc<str>>,
+        gap: f64,
+    },
+}
+
 #[derive(Debug, Default)]
 pub struct Monitor {
     pub table: EntityTable,
@@ -32,8 +46,15 @@ pub struct Monitor {
     pub capture: Option<Capture>,
     /// Relayed copies dropped before the rules (see `duplicate_window`).
     pub duplicates: u64,
-    /// Hash of each recent PDU's bytes → when and from whom it first came.
-    recent_pdus: HashMap<u64, (f64, SocketAddr)>,
+    /// Hash of each recent PDU's bytes → when, from whom and through which
+    /// listener it first came.
+    recent_pdus: HashMap<u64, (f64, SocketAddr, Option<Arc<str>>)>,
+    /// Second deliveries of one send dropped (`duplicate-delivery`).
+    pub echoes: u64,
+    /// When each (sender, kind) duplicate-delivery finding last fired.
+    echo_reported: HashMap<(SocketAddr, &'static str), f64>,
+    /// The listener each sender was last heard through.
+    via: HashMap<SocketAddr, Arc<str>>,
     last_dedup_prune: f64,
 }
 
@@ -61,6 +82,11 @@ impl Monitor {
         let now = d.monotonic.unwrap_or_else(|| secs(d.received_at));
         self.now = self.now.max(now);
         self.datagrams += 1;
+        if let Some(l) = &d.listener {
+            if self.via.get(&d.source) != Some(l) {
+                self.via.insert(d.source, Arc::clone(l));
+            }
+        }
         self.metrics.record_datagram(now, d.source, d.payload.len());
         let mut pdus = Vec::new();
         let mut events = Vec::new();
@@ -68,18 +94,25 @@ impl Monitor {
             if result.is_ok() {
                 self.pdus += 1;
             }
-            // A relay's copy skips every check, malformed or not, so a
-            // gateway can't pose as a second simulator or double a finding.
-            if self.is_relayed_copy(now, d.source, &d.payload[span.clone()]) {
+            // A relay's copy, or a second delivery of one send, skips every
+            // check, malformed or not: a gateway can't pose as a second
+            // simulator, and nothing is counted twice.
+            let copy = self.copy_of(now, d, &d.payload[span.clone()]);
+            if copy != Copy::No {
                 self.duplicates += 1;
                 let pdu_type = d.payload.get(span.start + 2).copied();
+                let exercise = d.payload.get(span.start + 1).copied();
                 let tags = Tags {
-                    exercise: d.payload.get(span.start + 1).copied(),
+                    exercise,
                     pdu_type: pdu_type.map(nn_decode::pdu_type_name),
                     sender: Some(d.source),
                     ..Default::default()
                 };
                 self.metrics.record(now, Metric::PduDuplicates, tags, 1.0);
+                if let Copy::Echo { first, gap } = &copy {
+                    self.echoes += 1;
+                    events.extend(self.report_echo(now, d, first.clone(), *gap, &d.payload[span.clone()]));
+                }
                 if let Ok(pdu) = result {
                     pdus.push(pdu);
                 }
@@ -134,28 +167,98 @@ impl Monitor {
         events
     }
 
-    /// Has another sender delivered these exact bytes within the duplicate
-    /// window? Then this is a relay's copy: it skips the rules, the entity
-    /// table and capture, so it can't pose as a second simulator.
-    fn is_relayed_copy(&mut self, now: f64, source: SocketAddr, raw: &[u8]) -> bool {
+    /// Is this PDU a copy of one already seen? From another sender within
+    /// `duplicate_window`: a relay's. From the same sender within
+    /// `echo_window`: the same send delivered twice.
+    fn copy_of(&mut self, now: f64, d: &Datagram, raw: &[u8]) -> Copy {
         use std::hash::{Hash, Hasher};
-        let window = self.engine.config.duplicate_window;
-        if window <= 0.0 {
-            return false;
+        let (relay, echo) = (self.engine.config.duplicate_window, self.engine.config.echo_window);
+        let keep = relay.max(echo);
+        if keep <= 0.0 {
+            return Copy::No;
         }
-        if now - self.last_dedup_prune > window {
+        if now - self.last_dedup_prune > keep {
             self.last_dedup_prune = now;
-            self.recent_pdus.retain(|_, (t, _)| now - *t <= window);
+            self.recent_pdus.retain(|_, (t, _, _)| now - *t <= keep);
         }
         let mut h = std::collections::hash_map::DefaultHasher::new();
         raw.hash(&mut h);
-        match self.recent_pdus.get(&h.finish()) {
-            Some((t, from)) if *from != source && now - t <= window && now >= *t => true,
+        let key = h.finish();
+        match self.recent_pdus.get(&key) {
+            Some((t, from, _)) if *from != d.source && now - t <= relay && now >= *t => Copy::Relay,
+            Some((t, from, l)) if *from == d.source && now - t <= echo && now >= *t => Copy::Echo {
+                first: l.clone(),
+                gap: now - t,
+            },
             _ => {
-                self.recent_pdus.insert(h.finish(), (now, source));
-                false
+                self.recent_pdus.insert(key, (now, d.source, d.listener.clone()));
+                Copy::No
             }
         }
+    }
+
+    /// A duplicate-delivery finding, at most once per sender and kind every
+    /// `enum_repeat` seconds (the engine's per-entity limit isn't enough: a
+    /// sender's whole stream is doubled, entity by entity).
+    fn report_echo(
+        &mut self,
+        now: f64,
+        d: &Datagram,
+        first: Option<Arc<str>>,
+        gap: f64,
+        raw: &[u8],
+    ) -> Vec<AlertEvent> {
+        let overlap = match (&first, &d.listener) {
+            (Some(a), Some(b)) if a != b => Some((a.clone(), b.clone())),
+            _ => None,
+        };
+        let kind = if overlap.is_some() {
+            "listener-overlap"
+        } else {
+            "network-duplicate"
+        };
+        let repeat = self.engine.repeat_seconds();
+        if self
+            .echo_reported
+            .get(&(d.source, kind))
+            .is_some_and(|t| now - t < repeat)
+        {
+            return Vec::new();
+        }
+        self.echo_reported.insert((d.source, kind), now);
+        let message = match overlap {
+            Some((a, b)) => format!(
+                "{}'s datagrams reach two listeners, '{a}' and '{b}': each is counted once; change the listeners so they don't overlap (docs/capture.md)",
+                d.source
+            ),
+            None => format!(
+                "{}'s datagrams arrive twice{} within {:.0} ms: a network loop, a sender transmitting on two paths, or a gateway echoing them back; each is counted once",
+                d.source,
+                d.listener.as_ref().map_or(String::new(), |l| format!(" on listener '{l}'")),
+                gap * 1000.0
+            ),
+        };
+        let exercise = raw.get(1).copied().unwrap_or(0);
+        let id = raw
+            .get(2)
+            .and_then(|&t| nn_decode::structure::first_id(t, raw.get(nn_decode::HEADER_LEN..)?))
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        self.engine.point_event(
+            now,
+            crate::engine::Rule::DuplicateDelivery,
+            kind,
+            EntityKey { exercise, id },
+            Some(d.source),
+            message,
+            &mut out,
+        );
+        out
+    }
+
+    /// The listener a sender was last heard through (live capture only).
+    pub fn via(&self, sender: &SocketAddr) -> Option<&str> {
+        self.via.get(sender).map(|s| &**s)
     }
 
     /// The PDU's primary entity type: carried by Entity State, looked up in

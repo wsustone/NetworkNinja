@@ -130,6 +130,14 @@ PORT[:GROUP,...][@IFACE]`, `--share`, `--receive-buffer MB`,
 `nn-server interfaces`; `/api/inputs` and the dashboard inputs line.
 `share` is for broadcast/multicast only: unicast reaches one sharer.
 Generator `--iface`/`--ttl` pick the multicast send interface.
+Live editing: `Listeners::add/replace/remove` (replace rolls back on
+failure); commands `input_add|input_update|input_remove|inputs_save` over
+the WebSocket or `POST /api/inputs` → `Switch::Inputs` in the serve loop;
+outcome in `/api/inputs` `last_change`; `config::save_listeners` rewrites
+only `[[listen]]` blocks (+ `.bak`). `Datagram.listener` tags each datagram;
+the monitor drops same-sender identical bytes within `echo_window` and
+raises `duplicate-delivery` (listener-overlap vs network-duplicate);
+`Monitor::via` feeds the entity detail's sender "via".
 
 ## Timing and identity semantics (October 2026 review fixes)
 
