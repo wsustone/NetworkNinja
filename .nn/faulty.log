@@ -1,0 +1,219 @@
+nn-generator: DIS v7, exercise 1, 4 sites × 10 entities, 300 s
+  scheduled short-pdu      site 9 Collision at   60.0 s
+  scheduled count-overrun  site 9 Transmitter at   75.0 s
+  scheduled padded-pdu     site 9 Designator at   90.0 s
+  scheduled wrong-family   site 9 Signal at  105.0 s
+  scheduled truncated-pdu  site 9 ElectromagneticEmission at  120.0 s
+  scheduled bad-enum       site 9 Receiver at  135.0 s
+  scheduled drop-heartbeat 9:9:1        at   75.0 s
+  scheduled clone-id       9:9:2        at  105.0 s
+  scheduled teleport       9:9:3        at  135.0 s
+  scheduled remove         10:9:1       at   75.0 s
+  scheduled restart-port   site 10      at  105.0 s
+  scheduled freeze         exercise     at  165.0 s
+  scheduled resume         exercise     at  210.0 s
+  scheduled wrong-ack      site 10      at   45.0 s
+  scheduled orphan-response site 10      at   90.0 s
+  scheduled no-response    site 10      at  180.0 s
+  scheduled bad-signal     site 9       at   30.0 s
+  scheduled hot-mic        site 10      at   45.0 s
+  scheduled drop-transmitter site 11      at   60.0 s
+  scheduled orphan-signal  site 12      at  270.0 s
+  sending to 127.0.0.1:3000 in real time (Ctrl-C to stop)
+  sender site 9 → source port 56756
+  sender site 10 → source port 64850
+  sender site 11 → source port 51854
+  sender site 12 → source port 53866
+  t=   10s  datagrams sent: 289
+  t=   20s  datagrams sent: 599
+  t=   30s  datagrams sent: 902
+  t=   40s  datagrams sent: 1207
+  t=   50s  datagrams sent: 1477
+  t=   60s  datagrams sent: 1779
+  t=   70s  datagrams sent: 2045
+  t=   80s  datagrams sent: 2506
+  t=   90s  datagrams sent: 2962
+  t=  100s  datagrams sent: 3420
+  sender site 9 (rogue clone) → source port 50825
+  sender site 10 (restarted) → source port 61026
+  t=  110s  datagrams sent: 3878
+  t=  120s  datagrams sent: 4335
+  t=  130s  datagrams sent: 4796
+  t=  140s  datagrams sent: 5254
+  t=  150s  datagrams sent: 5710
+  t=  160s  datagrams sent: 6169
+  t=  170s  datagrams sent: 6609
+  t=  180s  datagrams sent: 7026
+  t=  190s  datagrams sent: 7438
+  t=  200s  datagrams sent: 7850
+  t=  210s  datagrams sent: 8262
+  t=  220s  datagrams sent: 8736
+  t=  230s  datagrams sent: 9187
+  t=  240s  datagrams sent: 9641
+  t=  250s  datagrams sent: 10094
+  t=  260s  datagrams sent: 10545
+  t=  270s  datagrams sent: 10997
+  t=  280s  datagrams sent: 11451
+  t=  290s  datagrams sent: 11905
+  t=  300s  datagrams sent: 12356
+nn-generator: DIS v7, exercise 1, 4 sites × 10 entities, 300 s
+  scheduled short-pdu      site 9 Collision at   60.0 s
+  scheduled count-overrun  site 9 Transmitter at   75.0 s
+  scheduled padded-pdu     site 9 Designator at   90.0 s
+  scheduled wrong-family   site 9 Signal at  105.0 s
+  scheduled truncated-pdu  site 9 ElectromagneticEmission at  120.0 s
+  scheduled bad-enum       site 9 Receiver at  135.0 s
+  scheduled drop-heartbeat 9:9:1        at   75.0 s
+  scheduled clone-id       9:9:2        at  105.0 s
+  scheduled teleport       9:9:3        at  135.0 s
+  scheduled remove         10:9:1       at   75.0 s
+  scheduled restart-port   site 10      at  105.0 s
+  scheduled freeze         exercise     at  165.0 s
+  scheduled resume         exercise     at  210.0 s
+  scheduled wrong-ack      site 10      at   45.0 s
+  scheduled orphan-response site 10      at   90.0 s
+  scheduled no-response    site 10      at  180.0 s
+  scheduled bad-signal     site 9       at   30.0 s
+  scheduled hot-mic        site 10      at   45.0 s
+  scheduled drop-transmitter site 11      at   60.0 s
+  scheduled orphan-signal  site 12      at  270.0 s
+  sending to 127.0.0.1:3000 in real time (Ctrl-C to stop)
+  sender site 9 → source port 64698
+  sender site 10 → source port 49602
+  sender site 11 → source port 61439
+  sender site 12 → source port 52058
+  t=   10s  datagrams sent: 289
+  t=   20s  datagrams sent: 599
+  t=   30s  datagrams sent: 902
+  t=   40s  datagrams sent: 1207
+  t=   50s  datagrams sent: 1477
+  t=   60s  datagrams sent: 1779
+  t=   70s  datagrams sent: 2045
+  t=   80s  datagrams sent: 2506
+  t=   90s  datagrams sent: 2962
+  t=  100s  datagrams sent: 3420
+  sender site 9 (rogue clone) → source port 50315
+  sender site 10 (restarted) → source port 63566
+  t=  110s  datagrams sent: 3878
+  t=  120s  datagrams sent: 4335
+  t=  130s  datagrams sent: 4796
+  t=  140s  datagrams sent: 5254
+  t=  150s  datagrams sent: 5710
+  t=  160s  datagrams sent: 6169
+  t=  170s  datagrams sent: 6609
+  t=  180s  datagrams sent: 7026
+  t=  190s  datagrams sent: 7438
+  t=  200s  datagrams sent: 7850
+  t=  210s  datagrams sent: 8262
+  t=  220s  datagrams sent: 8736
+  t=  230s  datagrams sent: 9187
+  t=  240s  datagrams sent: 9641
+  t=  250s  datagrams sent: 10094
+  t=  260s  datagrams sent: 10545
+  t=  270s  datagrams sent: 10997
+  t=  280s  datagrams sent: 11451
+  t=  290s  datagrams sent: 11905
+  t=  300s  datagrams sent: 12356
+nn-generator: DIS v7, exercise 1, 4 sites × 10 entities, 300 s
+  scheduled short-pdu      site 9 Collision at   60.0 s
+  scheduled count-overrun  site 9 Transmitter at   75.0 s
+  scheduled padded-pdu     site 9 Designator at   90.0 s
+  scheduled wrong-family   site 9 Signal at  105.0 s
+  scheduled truncated-pdu  site 9 ElectromagneticEmission at  120.0 s
+  scheduled bad-enum       site 9 Receiver at  135.0 s
+  scheduled drop-heartbeat 9:9:1        at   75.0 s
+  scheduled clone-id       9:9:2        at  105.0 s
+  scheduled teleport       9:9:3        at  135.0 s
+  scheduled remove         10:9:1       at   75.0 s
+  scheduled restart-port   site 10      at  105.0 s
+  scheduled freeze         exercise     at  165.0 s
+  scheduled resume         exercise     at  210.0 s
+  scheduled wrong-ack      site 10      at   45.0 s
+  scheduled orphan-response site 10      at   90.0 s
+  scheduled no-response    site 10      at  180.0 s
+  scheduled bad-signal     site 9       at   30.0 s
+  scheduled hot-mic        site 10      at   45.0 s
+  scheduled drop-transmitter site 11      at   60.0 s
+  scheduled orphan-signal  site 12      at  270.0 s
+  sending to 127.0.0.1:3000 in real time (Ctrl-C to stop)
+  sender site 9 → source port 56433
+  sender site 10 → source port 63254
+  sender site 11 → source port 56807
+  sender site 12 → source port 61507
+  t=   10s  datagrams sent: 289
+  t=   20s  datagrams sent: 599
+  t=   30s  datagrams sent: 902
+  t=   40s  datagrams sent: 1207
+  t=   50s  datagrams sent: 1477
+  t=   60s  datagrams sent: 1779
+  t=   70s  datagrams sent: 2045
+  t=   80s  datagrams sent: 2506
+  t=   90s  datagrams sent: 2962
+  t=  100s  datagrams sent: 3420
+  sender site 9 (rogue clone) → source port 64087
+  sender site 10 (restarted) → source port 50680
+  t=  110s  datagrams sent: 3878
+  t=  120s  datagrams sent: 4335
+  t=  130s  datagrams sent: 4796
+  t=  140s  datagrams sent: 5254
+  t=  150s  datagrams sent: 5710
+  t=  160s  datagrams sent: 6169
+  t=  170s  datagrams sent: 6609
+  t=  180s  datagrams sent: 7026
+  t=  190s  datagrams sent: 7438
+  t=  200s  datagrams sent: 7850
+  t=  210s  datagrams sent: 8262
+  t=  220s  datagrams sent: 8736
+  t=  230s  datagrams sent: 9187
+  t=  240s  datagrams sent: 9641
+  t=  250s  datagrams sent: 10094
+  t=  260s  datagrams sent: 10545
+  t=  270s  datagrams sent: 10997
+  t=  280s  datagrams sent: 11451
+  t=  290s  datagrams sent: 11905
+  t=  300s  datagrams sent: 12356
+nn-generator: DIS v7, exercise 1, 4 sites × 10 entities, 300 s
+  scheduled short-pdu      site 9 Collision at   60.0 s
+  scheduled count-overrun  site 9 Transmitter at   75.0 s
+  scheduled padded-pdu     site 9 Designator at   90.0 s
+  scheduled wrong-family   site 9 Signal at  105.0 s
+  scheduled truncated-pdu  site 9 ElectromagneticEmission at  120.0 s
+  scheduled bad-enum       site 9 Receiver at  135.0 s
+  scheduled drop-heartbeat 9:9:1        at   75.0 s
+  scheduled clone-id       9:9:2        at  105.0 s
+  scheduled teleport       9:9:3        at  135.0 s
+  scheduled remove         10:9:1       at   75.0 s
+  scheduled restart-port   site 10      at  105.0 s
+  scheduled freeze         exercise     at  165.0 s
+  scheduled resume         exercise     at  210.0 s
+  scheduled wrong-ack      site 10      at   45.0 s
+  scheduled orphan-response site 10      at   90.0 s
+  scheduled no-response    site 10      at  180.0 s
+  scheduled bad-signal     site 9       at   30.0 s
+  scheduled hot-mic        site 10      at   45.0 s
+  scheduled drop-transmitter site 11      at   60.0 s
+  scheduled orphan-signal  site 12      at  270.0 s
+  sending to 127.0.0.1:3000 in real time (Ctrl-C to stop)
+  sender site 9 → source port 64616
+  sender site 10 → source port 61377
+  sender site 11 → source port 53662
+  sender site 12 → source port 52340
+  t=   10s  datagrams sent: 289
+  t=   20s  datagrams sent: 599
+  t=   30s  datagrams sent: 902
+  t=   40s  datagrams sent: 1207
+  t=   50s  datagrams sent: 1477
+  t=   60s  datagrams sent: 1779
+  t=   70s  datagrams sent: 2045
+  t=   80s  datagrams sent: 2506
+  t=   90s  datagrams sent: 2962
+  t=  100s  datagrams sent: 3420
+  sender site 9 (rogue clone) → source port 63445
+  sender site 10 (restarted) → source port 64458
+  t=  110s  datagrams sent: 3878
+  t=  120s  datagrams sent: 4335
+  t=  130s  datagrams sent: 4796
+  t=  140s  datagrams sent: 5254
+  t=  150s  datagrams sent: 5710
+  t=  160s  datagrams sent: 6169
+  t=  170s  datagrams sent: 6609
