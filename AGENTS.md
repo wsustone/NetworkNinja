@@ -88,6 +88,15 @@ and `NN_SISO=path cargo test -p nn-rules --test siso` runs the full-file check.
 Raw enumerated fields of undecoded types: `nn_decode::fields` (offset, UID,
 a SISO-valid default the generator writes). `--defect bad-enum:TYPE`.
 
+SIMAN handshakes (ADR 0010 step 5): `nn_rules::siman::Handshakes` pairs
+requests with answers on raw bytes (`Engine::check_siman` per PDU, overdue
+ones in `Engine::tick`), rule `siman-handshake`, pack threshold
+`response_timeout` (12 s). Broadcasts and a simulation's requests about its
+own entities owe no answer. Generator: `--siman-every SECS` (first site asks
+the second), faults `--no-response/--wrong-ack/--orphan-response SITE[@T]`,
+preset `--all-handshake-faults`. Test scenarios that send a directed
+Remove Entity or Stop/Freeze must also send the Acknowledge.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

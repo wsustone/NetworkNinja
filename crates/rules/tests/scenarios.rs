@@ -662,6 +662,7 @@ fn multi_vendor(faults: &[(usize, Event)]) -> Vec<Datagram> {
             entities_per_site: 8,
             fire_every: Some(6.0),
             all_types: (p % 2 == 0).then_some(10.0),
+            siman_every: Some(3.0),
             seed: 11 + p as u64,
             events: vec![
                 Event {
@@ -748,4 +749,84 @@ fn multi_vendor_run_raises_exactly_the_injected_defects() {
     .collect();
     want.sort();
     assert_eq!(got, want, "{}", describe(&events));
+}
+
+// ------------------------------------------ SIMAN handshakes (ADR 0010)
+
+fn handshakes(version: u8, events: Vec<Event>) -> Config {
+    Config {
+        version,
+        duration: 60.0,
+        sites: 3,
+        siman_every: Some(2.0),
+        all_types: Some(10.0),
+        fire_every: Some(6.0),
+        events,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn answered_handshakes_are_silent() {
+    for version in [6, 7] {
+        let (_, events) = monitor(&generate(&handshakes(version, vec![])));
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+    }
+}
+
+#[test]
+fn each_handshake_fault_fires_once_on_the_answering_site() {
+    let site2 = |kind, at| Event {
+        kind,
+        target: Target::Site(2),
+        at,
+    };
+    let cfg = handshakes(
+        7,
+        vec![
+            site2(EventKind::WrongAck, 9.0),
+            site2(EventKind::OrphanResponse, 18.0),
+            site2(EventKind::NoResponse, 36.0),
+        ],
+    );
+    let (_, events) = monitor(&generate(&cfg));
+    let got: Vec<(String, String, String)> = firing(&events)
+        .iter()
+        .map(|e| {
+            (
+                e.alert.key.id.to_string(),
+                e.alert.sender.unwrap().to_string(),
+                // The finding, without the request header or the citation.
+                e.reason
+                    .split(": ")
+                    .nth(1)
+                    .unwrap_or("")
+                    .split(" (IEEE")
+                    .next()
+                    .unwrap()
+                    .to_string(),
+            )
+        })
+        .collect();
+    assert!(
+        firing(&events).iter().all(|e| e.alert.rule == Rule::SimanHandshake),
+        "{}",
+        describe(&events)
+    );
+    assert_eq!(
+        got,
+        [
+            (
+                "2:1:65535",
+                "10.0.2.10:40000",
+                "Acknowledge Flag 2, but it answers a CreateEntity (flag 1)"
+            ),
+            ("2:1:1", "10.0.2.10:40000", "answers no request seen from 1:1"),
+            // The first request after the site goes quiet (36 s) is a Data Query.
+            ("2:1:65535", "10.0.2.10:40000", "no Data within 12 s"),
+        ]
+        .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string())),
+        "{}",
+        describe(&events)
+    );
 }
