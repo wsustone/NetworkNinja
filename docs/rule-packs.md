@@ -42,7 +42,8 @@ heartbeat = 5.0              # threshold overrides; each rule has its own set
 #        heartbeat (timeout_multiplier and one key per PDU type: iff,
 #                   electromagnetic_emission, designator, aggregate_state, ...;
 #                   0 turns a type off; see the base pack),
-#        duplicate-delivery (echo_window)
+#        duplicate-delivery (echo_window),
+#        entity-lifecycle (final_report_window)
 
 [[enum]]
 field = "entity-state.force_id"   # a field from the registry below

@@ -158,6 +158,18 @@ entities owe nothing; frozen time pauses. `[rules.heartbeat] iff = 20`.
 The generator's `--all-types` sends heartbeat types at their heartbeat;
 `--defect stop-heartbeat:TYPE`.
 
+Entity lifecycle (`nn_rules::lifecycle`, rule `entity-lifecycle`): after a
+Remove Entity the entity owes one Entity State with appearance Deactivated
+within `final_report_window` (12 s); active again after Deactivated, or
+Deactivated reports past the window, is a zombie; DR Static with speed;
+same-sender type/force/marking change; ESU for an entity never seen in full
+(after a 144 s startup grace). The generator now sends that final report on
+Remove (golden hashes changed for it); faults `--no-final-report`,
+`--zombie`, `--static-moving`, `--type-change`, `--orphan-update`, preset
+`--all-lifecycle-faults`. Test scenarios that remove entities must send the
+final Deactivated report. Use `cargo test --no-fail-fast` when checking a
+change: plain `cargo test` stops at the first failing test binary.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock
