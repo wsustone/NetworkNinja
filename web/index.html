@@ -233,6 +233,20 @@
   #weWhere .wrow input { flex:1; min-width:0; }
   #wePrev { padding:.4em .9em .8em; }
   #wePrev svg { display:block; width:100%; height:120px; }
+  #dashEd [hidden] { display:none !important; }
+  /* Status tiles, event streams, summary tables, thresholds, click-through. */
+  .wstat { display:flex; flex-direction:column; justify-content:center; align-items:center; min-height:110px; border-radius:6px; margin:.2em 0 .3em; }
+  .wstat.ok { background:rgba(63,185,80,.12); color:var(--ok); } .wstat.warn { background:rgba(210,153,34,.14); color:var(--warn); } .wstat.crit { background:rgba(248,81,73,.16); color:var(--crit); }
+  .wstat b { font-size:30px; font-weight:600; font-variant-numeric:tabular-nums; } .wstat span { font-size:11px; opacity:.85; }
+  .wnum.warn { color:var(--warn); } .wnum.crit { color:var(--crit); }
+  .wev { list-style:none; margin:0; padding:.2em 0; font-size:11px; max-height:280px; overflow-y:auto; }
+  .wev li { padding:.25em .4em; border-left:3px solid var(--dim); margin:.15em 0; background:rgba(255,255,255,.02); cursor:pointer; line-height:1.4; }
+  .wev li.crit { border-color:var(--crit); } .wev li.warn { border-color:var(--warn); } .wev li.err { border-color:#b35cff; } .wev li.res { border-color:var(--ok); opacity:.7; }
+  .wev .t { color:var(--dim); float:right; margin-left:.6em; } .wev .r { color:var(--dim); margin-right:.4em; } .wev .albtn { margin-left:.5em; }
+  .wtab { font-size:11px; width:100%; border-collapse:collapse; margin-top:.2em; }
+  .wtab th { text-align:left; color:var(--dim); font-weight:400; padding:.15em .3em; border-bottom:1px solid var(--line); }
+  .wtab td { padding:.2em .3em; border-bottom:1px solid rgba(48,54,61,.5); } .wtab .n { text-align:right; font-variant-numeric:tabular-nums; }
+  .wtab tr.go, .wlist tr.go, .wleg span.go { cursor:pointer; } .wtab tr.go:hover td, .wlist tr.go:hover td { background:rgba(255,255,255,.05); } .wleg span.go:hover { color:var(--fg); }
   @media (max-width:700px) { #dgrid { grid-template-columns:1fr; } .wcard.wide { grid-column:span 1; } }
 </style>
 
@@ -363,13 +377,20 @@
   <h2><span id="weTitle">add a widget</span> <span><button class="albtn" id="weClose">close</button></span></h2>
   <form id="weForm" autocomplete="off">
     <label>title<input type="text" id="weName" placeholder="what this widget shows" required></label>
-    <label>kind<select id="weKind"><option value="timeseries">time series</option><option value="toplist">top list</option><option value="counter">counter</option></select></label>
-    <label>metric<select id="weMetric"></select></label>
-    <label>aggregate<select id="weAgg"></select></label>
+    <label>kind<select id="weKind"><option value="timeseries">time series</option><option value="toplist">top list</option><option value="counter">counter</option><option value="status">status tile</option><option value="events">event stream</option><option value="table">violations table</option></select></label>
+    <label class="wq">metric<select id="weMetric"></select></label>
+    <label class="wq">aggregate<select id="weAgg"></select></label>
     <label>range<select id="weSpan"><option value="600">last 10 min</option><option value="3600" selected>last 1 h</option><option value="86400">last 24 h</option><option value="run">whole run</option></select></label>
     <label id="weWinL">points every<select id="weWin"><option value="0">auto</option><option value="5">5 s</option><option value="10">10 s</option><option value="60">1 min</option><option value="300">5 min</option></select></label>
-    <label>group by<div class="ifs" id="weBy"></div></label>
-    <label>where<div id="weWhere"></div><button type="button" class="plain" id="weWhereAdd">+ filter</button></label>
+    <label class="wq">group by<div class="ifs" id="weBy"></div></label>
+    <label class="wq">where<div id="weWhere"></div><button type="button" class="plain" id="weWhereAdd">+ filter</button></label>
+    <label id="weThL"><span id="weThT">threshold (optional)</span><span class="row"><select id="weThDir"><option value="above">bad above</option><option value="below">bad below</option></select><input type="number" id="weThWarn" placeholder="warn" step="any" style="width:5.5em"><input type="number" id="weThCrit" placeholder="critical" step="any" style="width:5.5em"></span></label>
+    <label id="weTabL">rows<span class="row"><select id="weBy1"></select><select id="weBy2"></select></span></label>
+    <div class="ifs" id="weEvL">show <label><input type="checkbox" id="weEvAlert" checked> alerts</label><label><input type="checkbox" id="weEvErr" checked> decode errors</label><label><input type="checkbox" id="weEvInfo"> info</label>
+      <select id="weEvState"><option value="firing">firing only</option><option value="all">firing + resolved</option></select>
+      <select id="weEvSev"><option value="">any severity</option><option value="critical">critical only</option></select>
+      <input type="text" id="weEvText" placeholder="match words: rule, sender, entity…" style="min-width:15em">
+      <select id="weEvN"><option value="10">10 rows</option><option value="25">25 rows</option><option value="50">50 rows</option></select></div>
     <label style="flex-direction:row;align-items:center;gap:.4em;color:var(--fg)"><input type="checkbox" id="weWide"> double width</label>
     <div class="ifs"><button type="submit" id="weSubmit">add widget</button><button type="button" class="plain" id="wePrevB">preview</button><span class="msg" id="weMsg"></span></div>
   </form>
@@ -449,6 +470,7 @@ function pushEntry(e, silent) {
   note(e);
   renderFeed();
   renderBoard();
+  if (!$("dash").hidden) dashEventsRedraw();
 }
 
 function cmd(o) {
@@ -1242,7 +1264,17 @@ const AGGS = {counter: ["rate", "sum", "max"], gauge: ["avg", "sum", "max", "min
 const AGG_LABEL = {rate: "per second", sum: "total", avg: "average", max: "max", min: "min"};
 const DIM_LABEL = {exercise: "exercise", pdu_type: "PDU type", site: "site", kind: "entity kind", domain: "domain",
   sender: "sender", force: "force", entity: "entity", pack: "pack", rule: "rule", severity: "severity"};
-const W = (title, kind, name, agg, span, extra = {}) => ({title, kind, q: Object.assign({name, agg, by: [], where: {}, span, window: 0}, extra.q || {}), wide: !!extra.wide});
+const KIND_LABEL = {timeseries: "time series", toplist: "top list", counter: "counter", status: "status tile", events: "event stream", table: "violations table"};
+const SDIMS = ["sender", "rule", "site", "entity", "pack", "severity", "exercise"];
+const W = (title, kind, name, agg, span, extra = {}) => Object.assign({title, kind, q: Object.assign({name, agg, by: [], where: {}, span, window: 0}, extra.q || {}), wide: !!extra.wide},
+  extra.th ? {th: extra.th} : {}, extra.tab ? {tab: extra.tab} : {}, extra.ev ? {ev: extra.ev} : {});
+// Thresholds {dir:"above"|"below", warn, crit}: the level a value is at.
+const thSet = x => x !== undefined && x !== null && x !== "";
+function thLevel(v, th) {
+  if (!th || v === null || v === undefined || !isFinite(v)) return "";
+  const past = x => thSet(x) && (th.dir === "below" ? v < +x : v > +x);
+  return past(th.crit) ? "crit" : past(th.warn) ? "warn" : "ok";
+}
 const TEMPLATES = {
   "Exercise overview": {about: "traffic, entity population and alerts at a glance", widgets: [
     W("PDU rate", "counter", "pdu.count", "rate", 60),
@@ -1263,6 +1295,16 @@ const TEMPLATES = {
     W("Worst heartbeat jitter", "toplist", "entity.heartbeat_jitter", "max", 600, {q: {by: ["entity"]}}),
     W("Largest dead-reckoning error", "toplist", "entity.dr_error", "max", 600, {q: {by: ["entity"]}}),
     W("Heartbeat jitter (worst entity)", "timeseries", "entity.heartbeat_jitter", "max", 3600),
+  ]},
+  "Error hunt": {about: "is anything wrong right now, and who is causing it", widgets: [
+    W("Critical alerts", "status", "alerts.open", "sum", 60, {q: {where: {severity: "critical"}}, th: {dir: "above", warn: "", crit: 0}}),
+    W("Open alerts", "status", "alerts.open", "sum", 60, {th: {dir: "above", warn: 0, crit: 5}}),
+    W("Decode errors, 10 min", "status", "decode.errors", "sum", 600, {th: {dir: "above", warn: 0, crit: 10}}),
+    W("Traffic flowing", "status", "pdu.count", "rate", 60, {th: {dir: "below", warn: 1, crit: 0.01}}),
+    W("Firing alerts", "events", "", "", 3600, {wide: true, ev: {alert: true, err: true, info: false, state: "firing", sev: "", text: "", n: 25}}),
+    W("Violations: sender × rule", "table", "", "", 3600, {wide: true, tab: {by: ["sender", "rule"]}}),
+    W("Open alerts by rule", "toplist", "alerts.open", "sum", 60, {q: {by: ["rule"]}}),
+    W("Open alerts by severity", "timeseries", "alerts.open", "sum", 3600, {q: {by: ["severity"]}}),
   ]},
 };
 const dash = {list: null, name: null, tpl: null, def: null, dirty: false, edit: false, data: [], editing: null};
@@ -1308,9 +1350,43 @@ function widgetParams(w) {
   for (const [k, v] of Object.entries(q.where)) if (v !== "") p.set("where." + k, v);
   return p;
 }
+const jsonOrError = r => r.ok ? r.json() : r.json().catch(() => ({})).then(e => ({error: e.error || "HTTP " + r.status}));
 function widgetFetch(w) {
-  return fetch("/api/query?" + widgetParams(w), auth())
-    .then(r => r.ok ? r.json() : r.json().catch(() => ({})).then(e => ({error: e.error || "HTTP " + r.status})));
+  if (w.kind === "events") return Promise.resolve(eventsData(w));
+  if (w.kind === "table") {
+    const p = new URLSearchParams({by: tableBy(w).join(","), since: widgetRange(w.q).from});
+    if (w.q.where && w.q.where.exercise) p.set("exercise", w.q.where.exercise);
+    return fetch("/api/events/summary?" + p, auth()).then(jsonOrError);
+  }
+  return fetch("/api/query?" + widgetParams(w), auth()).then(jsonOrError);
+}
+const tableBy = w => ((w.tab && w.tab.by) || ["sender"]).filter(Boolean);
+// Event-stream widgets read the page's live feed (the entries the Live tab
+// shows), so they work without --db and update as entries arrive.
+function eventsData(w) {
+  const ev = w.ev || {}, {from} = widgetRange(w.q);
+  const terms = (ev.text || "").toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = e => [e.entity, e.rule, e.message, e.pack, e.state, e.sender, e.severity, e.kind === "error" ? "decode-error" : ""].join(" ").toLowerCase();
+  const items = [], max = +ev.n || 25;
+  for (let i = feed.length - 1; i >= 0 && items.length < max; i--) {
+    const e = feed[i];
+    if ((e.at || 0) < from) continue;
+    if (e.kind === "alert" ? ev.alert === false : e.kind === "error" ? ev.err === false : !ev.info) continue;
+    if (e.kind === "alert" && ev.state !== "all" && e.state !== "firing") continue;
+    if (e.kind === "alert" && ev.sev && e.severity !== ev.sev) continue;
+    if (terms.length && !terms.every(t => hay(e).includes(t))) continue;
+    items.push(e);
+  }
+  return {events: items};
+}
+function dashEventsRedraw() {
+  if (!dash.def) return;
+  dash.def.widgets.forEach((w, i) => {
+    if (w.kind !== "events") return;
+    dash.data[i] = eventsData(w);
+    const b = $("dgrid").querySelector(`.wcard[data-i="${i}"] .wbody`);
+    if (b) drawWidget(b, w, dash.data[i]);
+  });
 }
 function dashRefresh() {
   if ($("dash").hidden || !dash.def) return;
@@ -1340,12 +1416,8 @@ function renderDash() {
   if (!dash.def) { grid.innerHTML = ""; return; }
   const ws = dash.def.widgets, n = ws.length;
   grid.innerHTML = ws.map((w, i) => {
-    const m = METRICS[w.q.name] || {label: w.q.name};
-    const by = w.q.by.length ? " by " + w.q.by.map(b => DIM_LABEL[b] || b).join(", ") : "";
-    const where = Object.entries(w.q.where).filter(([, v]) => v !== "").map(([k, v]) => `${DIM_LABEL[k] || k}=${v}`).join(", ");
-    const span = w.q.span === "run" ? "whole run" : fmtSpan(+w.q.span);
     return `<div class="wcard${w.wide ? " wide" : ""}" data-i="${i}">
-      <div class="whead"><b>${esc(w.title)}</b><span class="u" title="${esc(w.q.name)}">${esc(AGG_LABEL[w.q.agg] || w.q.agg)} ${esc(m.label)}${esc(by)}${where ? " · " + esc(where) : ""} · ${span}</span>
+      <div class="whead"><b>${esc(w.title)}</b><span class="u" title="${esc(KIND_LABEL[w.kind] || w.kind)}">${esc(widgetDesc(w))}</span>
         <span class="ctl">${i > 0 ? '<button class="albtn" data-act="left" title="move earlier">◀</button>' : ""}${i < n - 1 ? '<button class="albtn" data-act="right" title="move later">▶</button>' : ""}<button class="albtn" data-act="edit">edit</button><button class="albtn" data-act="dup">copy</button><button class="albtn" data-act="del">remove</button></span></div>
       <div class="wbody"></div></div>`;
   }).join("") + (dash.edit || !n ? '<button class="wadd" id="wAdd" title="add a widget">+</button>' : "");
@@ -1356,6 +1428,28 @@ function renderDash() {
   ws.forEach((w, i) => { const b = grid.querySelector(`.wcard[data-i="${i}"] .wbody`); drawWidget(b, w, dash.data[i]); });
 }
 const fmtSpan = s => s < 120 ? `last ${s} s` : s < 7200 ? `last ${Math.round(s / 60)} min` : `last ${Math.round(s / 3600)} h`;
+// The one-line summary under a widget's title.
+function widgetDesc(w) {
+  const span = w.q.span === "run" ? "whole run" : fmtSpan(+w.q.span);
+  if (w.kind === "events") {
+    const ev = w.ev || {};
+    const what = [ev.alert !== false && (ev.state === "all" ? "alerts" : "firing alerts"), ev.err !== false && "decode errors", ev.info && "info"].filter(Boolean).join(", ") || "nothing selected";
+    return `${what}${ev.sev ? " · " + ev.sev : ""}${ev.text ? " · “" + ev.text + "”" : ""} · ${span}`;
+  }
+  if (w.kind === "table") return `violations by ${tableBy(w).map(b => DIM_LABEL[b] || b).join(" × ")} · ${span}`;
+  const m = METRICS[w.q.name] || {label: w.q.name};
+  const by = w.q.by.length ? " by " + w.q.by.map(b => DIM_LABEL[b] || b).join(", ") : "";
+  const where = Object.entries(w.q.where).filter(([, v]) => v !== "").map(([k, v]) => `${DIM_LABEL[k] || k}=${v}`).join(", ");
+  const th = w.th && (thSet(w.th.warn) || thSet(w.th.crit)) ? ` · bad ${w.th.dir || "above"} ${[w.th.warn, w.th.crit].filter(thSet).join(" / ")}` : "";
+  return `${AGG_LABEL[w.q.agg] || w.q.agg} ${m.label}${by}${where ? " · " + where : ""} · ${span}${th}`;
+}
+// Click-through attributes for a group: its entity, or log search terms.
+function goAttrs(tags, by) {
+  if (!by.length) return "";
+  const ent = by.includes("entity") ? tags.entity : null;
+  const terms = by.filter(b => b !== "exercise").map(b => tags[b]).filter(x => x != null && x !== "" && x !== "-").join(" ");
+  return `class="go" ${ent && ent !== "-" ? `data-ent="${esc(ent)}"` : ""} data-log="${esc(terms)}"`;
+}
 function fmtVal(v, unit) {
   if (v === null || v === undefined || !isFinite(v)) return "–";
   const a = Math.abs(v);
@@ -1372,32 +1466,68 @@ const groupLabel = (tags, by) => by.length ? by.map(b => tags[b] ?? "–").join(
 function drawWidget(box, w, d) {
   if (!d) { box.innerHTML = '<div class="empty">loading…</div>'; return; }
   if (d.error) { box.innerHTML = `<div class="empty" style="color:var(--crit);padding:0 1em;text-align:center">${esc(String(d.error))}</div>`; return; }
+  if (w.kind === "events") {
+    const E = d.events || [];
+    box.innerHTML = E.length ? `<ul class="wev">${E.map(e => {
+      const t = new Date((e.at || 0) * 1000).toLocaleTimeString();
+      if (e.kind === "alert") {
+        const cls = e.state === "resolved" ? "res" : e.severity === "critical" ? "crit" : "warn";
+        const open = e.state === "firing" && state && state.alerts.find(a => a.rule === e.rule && a.entity === e.entity);
+        const ack = open && !open.ack ? `<button class="albtn" data-cmd="ack" data-rule="${esc(e.rule)}" data-ent="${esc(e.entity)}" data-ex="${e.exercise}">ack</button>` : open && open.ack ? ' <span class="acked">· acked</span>' : "";
+        return `<li class="${cls}" data-ent="${esc(e.entity)}"><span class="t">${t}</span><span class="r">${esc(e.rule)}</span><b>${esc(e.entity)}</b> ${esc(stripLead(e.message || "", e.entity))}${ack}</li>`;
+      }
+      if (e.kind === "error") return `<li class="err" data-log="${esc(e.sender || "decode-error")}"><span class="t">${t}</span><span class="r">decode error</span>${esc(e.message)}</li>`;
+      return `<li><span class="t">${t}</span><span class="r">info</span>${esc(e.message)}</li>`;
+    }).join("")}</ul>` : '<div class="empty">no matching events in this range</div>';
+    return;
+  }
+  if (w.kind === "table") {
+    const by = tableBy(w), all = d.groups || [], G = all.slice(0, 15);
+    box.innerHTML = G.length ? `<table class="wtab"><thead><tr>${by.map(b => `<th>${esc(DIM_LABEL[b] || b)}</th>`).join("")}<th class="n">total</th><th class="n">critical</th><th class="n">warning</th><th class="n">decode</th><th class="n">open</th><th>last</th></tr></thead><tbody>`
+      + G.map(g => `<tr ${goAttrs(g.tags, by)}>${by.map(b => `<td>${esc(g.tags[b] ?? "–")}</td>`).join("")}<td class="n">${g.total}</td><td class="n">${g.critical}</td><td class="n">${g.warning}</td><td class="n">${g.errors}</td><td class="n">${g.open ? `<span class="open">${g.open}</span>` : "·"}</td><td>${fmtAgo(g.last)}</td></tr>`).join("")
+      + `</tbody></table>${all.length > 15 ? `<div style="color:var(--dim);font-size:10px">+${all.length - 15} more</div>` : ""}`
+      : '<div class="empty">no violations in this range</div>';
+    return;
+  }
   const by = w.q.by, unit = unitOf(d);
+  const total = () => { const g = d.groups || []; return g.length ? g.reduce((a, x) => a + (x.value || 0), 0) : (METRICS[w.q.name] || {}).gauge ? null : 0; };
+  if (w.kind === "status") {
+    // Nothing observed means nothing counted when "bad above", and a missing
+    // signal when "bad below".
+    const th = w.th || {dir: "above"};
+    let v = total();
+    const none = v === null;
+    if (none && th.dir !== "below") v = 0;
+    const lvl = none && th.dir === "below" ? "crit" : thLevel(v, th) || "ok";
+    const rule = thSet(th.warn) || thSet(th.crit) ? ` · bad ${th.dir || "above"} ${[th.warn, th.crit].filter(thSet).map(x => fmtVal(+x, d.unit)).join(" / ")}` : "";
+    box.innerHTML = `<div class="wstat ${lvl}"><b>${none && th.dir === "below" ? "no data" : fmtVal(v, d.unit)}</b><span>${esc(unit)}${esc(rule)}</span></div>`;
+    return;
+  }
   if (w.kind === "counter") {
-    const g = d.groups || [];
-    const v = g.length ? g.reduce((a, x) => a + (x.value || 0), 0) : (METRICS[w.q.name] || {}).gauge ? null : 0;
-    box.innerHTML = `<div class="wnum">${fmtVal(v, d.unit)}<small>${esc(unit)}</small></div>`;
+    const v = total();
+    box.innerHTML = `<div class="wnum ${thLevel(v, w.th)}">${fmtVal(v, d.unit)}<small>${esc(unit)}</small></div>`;
     return;
   }
   if (w.kind === "toplist") {
     const all = (d.groups || []).filter(x => x.value !== null), g = all.slice(0, 10);
     const max = Math.max(1e-9, ...g.map(x => x.value));
     box.innerHTML = g.length
-      ? `<table class="wlist">${g.map(x => `<tr><td>${esc(groupLabel(x.tags, by))}</td><td class="n">${fmtVal(x.value, d.unit)}</td><td style="width:40%"><span class="bar" style="width:${Math.max(0, x.value / max * 100).toFixed(1)}%"></span></td></tr>`).join("")}</table>`
+      ? `<table class="wlist">${g.map(x => `<tr ${goAttrs(x.tags, by)}><td>${esc(groupLabel(x.tags, by))}</td><td class="n">${fmtVal(x.value, d.unit)}</td><td style="width:40%"><span class="bar" style="width:${Math.max(0, x.value / max * 100).toFixed(1)}%"></span></td></tr>`).join("")}</table>`
         + (all.length > 10 ? `<div style="color:var(--dim);font-size:10px">+${all.length - 10} more</div>` : "")
       : '<div class="empty">no data in this range</div>';
     return;
   }
   // Time series: biggest groups get their own line, the rest are left off
   // (gauges can't honestly be summed into an "other" line).
-  let S = (d.series || []).map(x => ({label: groupLabel(x.tags, by), points: x.points,
+  let S = (d.series || []).map(x => ({label: groupLabel(x.tags, by), tags: x.tags, points: x.points,
     total: x.points.reduce((a, p) => a + (p[1] || 0), 0)})).sort((a, b) => b.total - a.total);
   const hidden = Math.max(0, S.length - SERIES.length);
   S = S.slice(0, SERIES.length);
   const vals = S.flatMap(s => s.points.map(p => p[1]).filter(v => v !== null));
   if (!vals.length) { box.innerHTML = '<div class="empty">no data in this range</div>'; return; }
   const Wd = box.clientWidth - 4 || 400, H = 150, L = 40, R = 6, T = 6, B = 18;
-  const ymax = niceMax(Math.max(...vals) * 1.05);
+  const ths = w.th ? [[w.th.warn, "#d29922"], [w.th.crit, "#f85149"]].filter(([v]) => thSet(v)) : [];
+  const ymax = niceMax(Math.max(...vals, ...ths.map(([v]) => +v)) * 1.05);
   const x = t => L + (t - d.from) / (d.to - d.from) * (Wd - L - R);
   const y = v => T + (1 - v / ymax) * (H - T - B);
   let g = "<g>";
@@ -1410,6 +1540,7 @@ function drawWidget(box, w, d) {
     const t = d.from + (d.to - d.from) * i / 3;
     g += `<text fill="#8b949e" font-size="10" x="${x(t)}" y="${H - 4}" text-anchor="${i === 0 ? "start" : i === 3 ? "end" : "middle"}">${clock(t)}</text>`;
   }
+  for (const [v, c] of ths) g += `<line x1="${L}" x2="${Wd - R}" y1="${y(+v)}" y2="${y(+v)}" stroke="${c}" stroke-dasharray="4 3"/>`;
   g += "</g>";
   // Gauges leave gaps (null) where nothing was sampled: break the line there.
   const path = s => {
@@ -1423,7 +1554,7 @@ function drawWidget(box, w, d) {
   const lines = S.map((s, i) => ({s, c: SERIES[i]})).reverse().map(({s, c}) => `<path fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round" d="${path(s)}"><title>${esc(s.label)}</title></path>`).join("");
   const last = s => { for (let i = s.points.length - 1; i >= 0; i--) if (s.points[i][1] !== null) return s.points[i][1]; return null; };
   box.innerHTML = `<svg viewBox="0 0 ${Wd} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(w.title)}">${g}${lines}</svg>`
-    + `<div class="wleg">${S.map((s, i) => `<span><i style="background:${SERIES[i]}"></i>${esc(s.label)} <b style="color:var(--fg);font-weight:500">${fmtVal(last(s), d.unit)}</b></span>`).join("")}${hidden ? `<span>+${hidden} more</span>` : ""}<span style="margin-left:auto">${esc(unit)}</span></div>`;
+    + `<div class="wleg">${S.map((s, i) => `<span ${goAttrs(s.tags, by)}><i style="background:${SERIES[i]}"></i>${esc(s.label)} <b style="color:var(--fg);font-weight:500">${fmtVal(last(s), d.unit)}</b></span>`).join("")}${hidden ? `<span>+${hidden} more</span>` : ""}<span style="margin-left:auto">${esc(unit)}</span></div>`;
 }
 
 // --- dashboard toolbar ---
@@ -1474,7 +1605,7 @@ $("dFile").onchange = () => {
   if (!f) return;
   f.text().then(t => {
     const d = JSON.parse(t);
-    if (!d || !Array.isArray(d.widgets) || !d.widgets.every(w => w && w.q && METRICS[w.q.name] && ["timeseries", "toplist", "counter"].includes(w.kind)))
+    if (!d || !Array.isArray(d.widgets) || !d.widgets.every(w => w && w.q && KIND_LABEL[w.kind] && (METRICS[w.q.name] || w.kind === "events" || w.kind === "table")))
       throw new Error("not a NetworkNinja dashboard file");
     for (const w of d.widgets) { w.q.by = Array.isArray(w.q.by) ? w.q.by : []; w.q.where = w.q.where || {}; w.title = String(w.title || w.q.name); }
     if (dash.dirty && !confirm("Discard unsaved changes?")) return;
@@ -1487,8 +1618,18 @@ $("dgrid").onclick = ev => {
   const tpl = ev.target.closest("[data-tpl]");
   if (tpl) { dashOpenTemplate(tpl.dataset.tpl); return; }
   if (ev.target.id === "wAdd") { openWidgetEditor(null); return; }
+  const cb = ev.target.closest("button[data-cmd]");
+  if (cb) { ev.stopPropagation(); cmdButton(cb); return; }
   const btn = ev.target.closest("[data-act]");
-  if (!btn) return;
+  if (!btn) {
+    // Click-through: a group, row or event opens its entity or the log filtered to it.
+    const go = ev.target.closest("[data-ent],[data-log]");
+    if (!go || dash.edit) return;
+    showView("live");
+    if (go.dataset.ent && go.dataset.ent !== "-") { if (selected !== go.dataset.ent) selectEntity(go.dataset.ent); }
+    else { $("filter").value = go.dataset.log || ""; showBoard("log"); }
+    return;
+  }
   const i = +btn.closest(".wcard").dataset.i, ws = dash.def.widgets, act = btn.dataset.act;
   const swap = j => { [ws[i], ws[j]] = [ws[j], ws[i]]; [dash.data[i], dash.data[j]] = [dash.data[j], dash.data[i]]; };
   if (act === "edit") { openWidgetEditor(i); return; }
@@ -1506,7 +1647,13 @@ function openWidgetEditor(i) {
   $("weTitle").textContent = i === null ? "add a widget" : "edit widget";
   $("weSubmit").textContent = i === null ? "add widget" : "save widget";
   $("weMetric").innerHTML = Object.entries(METRICS).map(([k, m]) => `<option value="${k}">${esc(m.label)} (${k})</option>`).join("");
-  $("weName").value = w.title; $("weKind").value = w.kind; $("weMetric").value = w.q.name;
+  $("weName").value = w.title; $("weKind").value = w.kind; $("weMetric").value = METRICS[w.q.name] ? w.q.name : "pdu.count";
+  const th = w.th || {}; $("weThDir").value = th.dir || "above"; $("weThWarn").value = thSet(th.warn) ? th.warn : ""; $("weThCrit").value = thSet(th.crit) ? th.crit : "";
+  $("weBy1").innerHTML = SDIMS.map(d => `<option value="${d}">${DIM_LABEL[d]}</option>`).join("");
+  $("weBy2").innerHTML = '<option value="">(one dimension)</option>' + SDIMS.map(d => `<option value="${d}">× ${DIM_LABEL[d]}</option>`).join("");
+  const tb = tableBy(w); $("weBy1").value = tb[0] || "sender"; $("weBy2").value = tb[1] || "";
+  const ev = w.ev || {}; $("weEvAlert").checked = ev.alert !== false; $("weEvErr").checked = ev.err !== false; $("weEvInfo").checked = !!ev.info;
+  $("weEvState").value = ev.state === "all" ? "all" : "firing"; $("weEvSev").value = ev.sev || ""; $("weEvText").value = ev.text || ""; $("weEvN").value = String(ev.n || 25);
   $("weSpan").value = String(w.q.span); if (!$("weSpan").value) $("weSpan").value = "3600";
   $("weWin").value = String(w.q.window || 0); if (!$("weWin").value) $("weWin").value = "0";
   $("weWide").checked = w.wide;
@@ -1530,14 +1677,30 @@ function weAddWhere(k, v = "") {
   const m = METRICS[$("weMetric").value];
   $("weWhere").insertAdjacentHTML("beforeend", `<div class="wrow"><select>${m.dims.map(d => `<option value="${d}" ${d === k ? "selected" : ""}>${DIM_LABEL[d]}</option>`).join("")}</select><input type="text" placeholder="value" value="${esc(v)}"><button type="button" class="albtn">✕</button></div>`);
 }
-function weKindChanged() { $("weWinL").hidden = $("weKind").value !== "timeseries"; }
+const TH_KINDS = ["timeseries", "counter", "status"];
+function weKindChanged() {
+  const k = $("weKind").value, q = k !== "events" && k !== "table";
+  for (const el of document.querySelectorAll("#weForm .wq")) el.hidden = !q;
+  $("weWinL").hidden = k !== "timeseries";
+  $("weThL").hidden = !TH_KINDS.includes(k);
+  $("weThT").textContent = k === "status" ? "status is bad when" : "threshold (optional)";
+  $("weTabL").hidden = k !== "table";
+  $("weEvL").hidden = k !== "events";
+  $("weName").placeholder = k === "events" ? "e.g. firing alerts" : k === "table" ? "e.g. who breaks which rule" : "what this widget shows";
+}
 function weRead() {
+  const kind = $("weKind").value, metric = $("weMetric").value;
   const by = [...$("weBy").querySelectorAll("input:checked")].map(c => c.value);
   const where = {};
   for (const row of $("weWhere").querySelectorAll(".wrow")) { const v = row.querySelector("input").value.trim(); if (v) where[row.querySelector("select").value] = v; }
   const span = $("weSpan").value;
-  return {title: $("weName").value.trim() || METRICS[$("weMetric").value].label, kind: $("weKind").value, wide: $("weWide").checked,
-    q: {name: $("weMetric").value, agg: $("weAgg").value, by, where, span: span === "run" ? "run" : +span, window: +$("weWin").value}};
+  const w = {title: $("weName").value.trim() || (kind === "events" ? "Events" : kind === "table" ? "Violations" : METRICS[metric].label), kind, wide: $("weWide").checked,
+    q: {name: metric, agg: $("weAgg").value, by, where, span: span === "run" ? "run" : +span, window: +$("weWin").value}};
+  const th = {dir: $("weThDir").value, warn: $("weThWarn").value, crit: $("weThCrit").value};
+  if (TH_KINDS.includes(kind) && (th.warn !== "" || th.crit !== "")) w.th = th;
+  if (kind === "table") w.tab = {by: [$("weBy1").value, $("weBy2").value].filter(Boolean)};
+  if (kind === "events") w.ev = {alert: $("weEvAlert").checked, err: $("weEvErr").checked, info: $("weEvInfo").checked, state: $("weEvState").value, sev: $("weEvSev").value, text: $("weEvText").value.trim(), n: +$("weEvN").value};
+  return w;
 }
 let wePrevSeq = 0;
 function wePreview() {
