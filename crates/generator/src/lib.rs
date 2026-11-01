@@ -19,6 +19,7 @@
 pub use nn_state::geo;
 
 mod families;
+pub mod presets;
 mod wire;
 mod world;
 

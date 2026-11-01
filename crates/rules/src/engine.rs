@@ -140,7 +140,16 @@ pub struct Alert {
     /// the PDU's source for enum checks and jumps, the silent sender for a
     /// timeout, the later arrival for an ID conflict.
     pub sender: Option<SocketAddr>,
+    /// The finding within the rule (`timeout`, `one-sided`, `undefined`...):
+    /// with the rule, the key into the explanation catalog
+    /// (`crate::explain`).
+    pub kind: &'static str,
+    /// Evidence as data: what was observed and what was expected, named.
+    pub facts: Facts,
 }
+
+/// Named evidence values of an alert, in display order.
+pub type Facts = Vec<(&'static str, String)>;
 
 /// A change in an alert's state, at time `at`.
 #[derive(Debug, Clone, PartialEq)]
@@ -477,13 +486,15 @@ impl Engine {
         &self.mutes
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn fire(
         &mut self,
         at: f64,
-        rule: Rule,
+        (rule, kind): (Rule, &'static str),
         key: EntityKey,
         sender: Option<SocketAddr>,
         message: String,
+        facts: Facts,
         out: &mut Vec<AlertEvent>,
     ) {
         if self.active.contains_key(&(rule, key)) || !self.enabled(rule) || self.muted(rule.name(), &key, at) {
@@ -498,6 +509,8 @@ impl Engine {
             since: at,
             message: message.clone(),
             sender,
+            kind,
+            facts,
         };
         self.active.insert((rule, key), alert.clone());
         out.push(AlertEvent {
@@ -537,6 +550,11 @@ impl Engine {
                 check.allowed_str()
             ),
         };
+        let mut facts: Facts = vec![("field", check.spec.name.to_string()), ("value", value.to_string())];
+        match &check.source {
+            Some(source) => facts.push(("defined in", source.clone())),
+            None => facts.push(("allowed", check.allowed_str())),
+        }
         out.push(AlertEvent {
             at,
             state: AlertState::Firing,
@@ -549,6 +567,12 @@ impl Engine {
                 since: at,
                 message: message.clone(),
                 sender: Some(sender),
+                kind: if check.source.is_some() {
+                    "undefined"
+                } else {
+                    "not-allowed"
+                },
+                facts,
             },
             reason: message,
         });
@@ -612,6 +636,11 @@ impl Engine {
                     since: now,
                     message: message.clone(),
                     sender: Some(source),
+                    kind: f.kind(),
+                    facts: std::iter::once(("PDU type", name.to_string()))
+                        .chain(f.facts())
+                        .chain(clause.map(|c| ("layout", c.to_string())))
+                        .collect(),
                 },
                 reason: message,
             });
@@ -814,6 +843,7 @@ impl Engine {
     /// A finding of a stateless rule as a point event, at most one of each
     /// kind per entity every `enum_repeat` seconds.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn point_event(
         &mut self,
         at: f64,
@@ -822,6 +852,21 @@ impl Engine {
         key: EntityKey,
         sender: Option<SocketAddr>,
         message: String,
+        out: &mut Vec<AlertEvent>,
+    ) {
+        self.point_event_with(at, (rule, kind), key, sender, message, Vec::new(), out);
+    }
+
+    /// A point event with its evidence as named facts.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn point_event_with(
+        &mut self,
+        at: f64,
+        (rule, kind): (Rule, &'static str),
+        key: EntityKey,
+        sender: Option<SocketAddr>,
+        message: String,
+        facts: Facts,
         out: &mut Vec<AlertEvent>,
     ) {
         if !self.enabled(rule) || self.muted(rule.name(), &key, at) {
@@ -847,6 +892,8 @@ impl Engine {
                 since: at,
                 message: message.clone(),
                 sender,
+                kind,
+                facts,
             },
             reason: message,
         });
@@ -904,7 +951,21 @@ impl Engine {
                         "{} jumped {:.0} m from its dead-reckoned position after {:.1} s (tolerance {:.0} m)",
                         key.id, error, dt, tolerance
                     );
-                    self.fire(now, Rule::PositionJump, key, Some(source), msg, &mut out);
+                    let facts = vec![
+                        ("off by", format!("{error:.0} m")),
+                        ("tolerance", format!("{tolerance:.0} m")),
+                        ("since last report", format!("{dt:.1} s")),
+                        ("speed", format!("{v:.1} m/s")),
+                    ];
+                    self.fire(
+                        now,
+                        (Rule::PositionJump, "jump"),
+                        key,
+                        Some(source),
+                        msg,
+                        facts,
+                        &mut out,
+                    );
                 } else {
                     self.resolve(
                         now,
@@ -938,8 +999,22 @@ impl Engine {
                 };
                 let msg = format!("{} is claimed by {} and {} {}", key.id, other, source, why);
                 // Blame the later arrival: it took an ID already in use.
-                let blamed = if track.first_seen > my_first { *other } else { source };
-                self.fire(now, Rule::IdConflict, key, Some(blamed), msg, &mut out);
+                let (blamed, first) = if track.first_seen > my_first {
+                    (*other, source)
+                } else {
+                    (source, *other)
+                };
+                let mut facts = vec![
+                    ("first sender", first.to_string()),
+                    ("later sender", blamed.to_string()),
+                ];
+                let kind = if type_clash {
+                    facts.push(("entity types", format!("{} vs {}", track.entity_type, es.entity_type)));
+                    "type-clash"
+                } else {
+                    "two-senders"
+                };
+                self.fire(now, (Rule::IdConflict, kind), key, Some(blamed), msg, facts, &mut out);
                 break;
             }
         }
@@ -1116,7 +1191,14 @@ impl Engine {
                         key.id, rec.marking, silent, timeout
                     );
                     let silent_sender = Some(rec.last_source);
-                    self.fire(now, Rule::EntityTimeout, *key, silent_sender, msg, &mut out);
+                    let facts = vec![
+                        ("silent for", format!("{silent:.1} s")),
+                        ("timeout", format!("{timeout:.1} s")),
+                        ("marking", rec.marking.clone()),
+                        ("last report", format!("{:.0} s ago", now - rec.last_seen)),
+                    ];
+                    let fired = (Rule::EntityTimeout, "silent");
+                    self.fire(now, fired, *key, silent_sender, msg, facts, &mut out);
                 }
             }
         }
