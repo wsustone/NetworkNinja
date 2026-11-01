@@ -1068,7 +1068,7 @@ fn a_parked_entity_that_goes_silent_still_times_out() {
 
 #[test]
 fn a_type_that_stops_its_heartbeat_is_reported_once() {
-    // EE (5 s), IFF (10 s) and Aggregate State (30 s) stop at 60 s; every
+    // IsGroupOf (5 s), IFF (10 s) and Aggregate State (30 s) stop at 60 s; every
     // other type keeps its heartbeat, so nothing else fires.
     let stop = |pdu_type, at| Event {
         kind: EventKind::StopHeartbeat,
@@ -1080,7 +1080,7 @@ fn a_type_that_stops_its_heartbeat_is_reported_once() {
         sites: 2,
         entities_per_site: 3,
         all_types: Some(20.0),
-        events: vec![stop(23, 60.0), stop(28, 60.0), stop(33, 60.0)],
+        events: vec![stop(34, 60.0), stop(28, 60.0), stop(33, 60.0)],
         ..Default::default()
     };
     let (_, events) = monitor(&generate(&cfg));
@@ -1098,7 +1098,7 @@ fn a_type_that_stops_its_heartbeat_is_reported_once() {
     assert_eq!(
         names,
         [
-            "1:1:0 stopped sending ElectromagneticEmission",
+            "1:1:0 stopped sending IsGroupOf",
             "1:1:0 stopped sending IFF",
             "1:1:0 stopped sending AggregateState"
         ],
@@ -1414,4 +1414,55 @@ fn wave1_wrapup_faults_fire_on_their_own() {
     got.sort();
     got.dedup();
     assert_eq!(got, phrases, "{}", describe(&events));
+}
+
+#[test]
+fn emitters_told_right_are_silent_and_each_fault_fires_on_its_own() {
+    let base = Config {
+        duration: 600.0,
+        sites: 2,
+        entities_per_site: 4,
+        emission_every: Some(40.0),
+        all_types: Some(10.0),
+        ..Default::default()
+    };
+    for version in [6, 7] {
+        let (_, events) = monitor(&generate(&Config {
+            version,
+            ..base.clone()
+        }));
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+    }
+    let at = |kind, at| Event {
+        kind,
+        target: Target::Exercise,
+        at,
+    };
+    let faults = [
+        (EventKind::EmitterDropout, "no EE PDU for"),
+        (EventKind::EmitterRename, "stay fixed for the exercise"),
+        (EventKind::ReservedBeam, "NO_BEAM (0)"),
+        (EventKind::DenseTargets, "High Density Track/Jam is Selected"),
+        (EventKind::HalfPulsed, "continuous wave is both 0.0"),
+        (EventKind::NoSiteTarget, "uses NO_SITE"),
+        (EventKind::RepeatDeactivated, "reported Deactivated again"),
+        (EventKind::DestroyedEmitting, "the entity is Destroyed"),
+    ];
+    for (kind, phrase) in faults {
+        let cfg = Config {
+            events: vec![at(kind, 30.0)],
+            ..base.clone()
+        };
+        let (_, events) = monitor(&generate(&cfg));
+        let fired = firing(&events);
+        assert!(
+            !fired.is_empty()
+                && fired
+                    .iter()
+                    .all(|e| e.alert.rule == Rule::Emission && e.reason.contains(phrase)),
+            "{}: {}",
+            kind.name(),
+            describe(&events)
+        );
+    }
 }

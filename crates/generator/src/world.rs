@@ -63,6 +63,9 @@ pub(crate) struct SimEntity {
     pub orphan_updates: bool,
     /// Damaged: its appearance shows moderate damage (bits 3-4).
     pub damaged: bool,
+    /// Destroyed: its appearance says so (Damage = 3), and it keeps
+    /// reporting.
+    pub destroyed: bool,
     pub last_sent: f64,
     pub last_pos: WorldCoord,
     pub last_vel: Vec3f,
@@ -198,6 +201,7 @@ impl<'a> World<'a> {
                     static_moving: false,
                     orphan_updates: false,
                     damaged: false,
+                    destroyed: false,
                     // Stagger first reports across one heartbeat.
                     last_sent: -rng.range(0.0, cfg.heartbeat),
                     last_pos: WorldCoord::default(),
@@ -238,6 +242,7 @@ impl<'a> World<'a> {
                     static_moving: false,
                     orphan_updates: false,
                     damaged: false,
+                    destroyed: false,
                     last_sent: -rng.range(0.0, cfg.stationary_heartbeat),
                     last_pos: WorldCoord::default(),
                     last_vel: Vec3f::default(),

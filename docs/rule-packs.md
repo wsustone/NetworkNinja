@@ -40,14 +40,15 @@ heartbeat = 5.0              # threshold overrides; each rule has its own set
 #        radio (transmitter_heartbeat, stationary_heartbeat, receiver_heartbeat,
 #               timeout_multiplier, idle_transmit, signal_slack),
 #        heartbeat (timeout_multiplier and one key per PDU type: iff,
-#                   electromagnetic_emission, designator, aggregate_state, ...;
+#                   designator, aggregate_state, ...;
 #                   0 turns a type off; see the base pack),
 #        duplicate-delivery (echo_window),
 #        entity-lifecycle (final_report_window),
 #        fire-detonation (max_flight, impact_tolerance),
 #        directed-energy (de_heartbeat), entity-damage (repair_window),
 #        collision (collision_window, collision_speed),
-#        attribute (no thresholds)
+#        attribute (no thresholds),
+#        emission (ee_heartbeat, high_density_threshold)
 
 [[enum]]
 field = "entity-state.force_id"   # a field from the registry below
