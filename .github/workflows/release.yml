@@ -18,6 +18,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - .cargo/**
       - packaging/**
   workflow_dispatch:
 
@@ -110,6 +111,19 @@ jobs:
           fi
           if command -v sha256sum > /dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi > "$file.sha256"
           cat "$file.sha256"
+      # Nothing to install: each binary needs only what its OS ships (no
+      # Visual C++ Redistributable, no Homebrew libraries, no shared libs on
+      # Linux). Fails the build otherwise.
+      - name: Check runtime dependencies
+        shell: bash
+        run: |
+          dir="dist/networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          py=$(command -v python3 || command -v python)
+          "$py" packaging/check-deps.py "$dir"
+          # The Intel half of the macOS build, under Rosetta where the runner has it.
+          if [[ "${{ matrix.os }}" == macos-* ]] && arch -x86_64 /usr/bin/true 2> /dev/null; then
+            arch -x86_64 "$dir/nn-server" --version
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
