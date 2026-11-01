@@ -685,7 +685,12 @@ impl Engine {
                 self.warfare.fire(now, source, h.exercise_id, status, f, table, grace)
             }
             PduBody::Detonation(d) => {
-                let limits = (self.config.max_flight, self.config.impact_tolerance);
+                let limits = (
+                    self.config.max_flight,
+                    self.config.impact_tolerance,
+                    // A source reports within this or it's not live.
+                    self.config.stationary_heartbeat.max(self.config.heartbeat) * self.config.timeout_multiplier,
+                );
                 self.warfare
                     .detonation(now, source, h.exercise_id, status, d, table, limits)
             }

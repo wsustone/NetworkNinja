@@ -159,7 +159,10 @@ impl Warfare {
     }
 
     /// A Detonation PDU. `tolerance` is how far an entity impact may land
-    /// from its target, plus the target's speed x 1 s.
+    /// from its target, plus the target's speed x 1 s. `live_window` is how
+    /// recently a source must have reported to count as live; two live
+    /// senders make the target's position ambiguous (an ID conflict), so no
+    /// impact is blamed.
     #[allow(clippy::too_many_arguments)]
     pub fn detonation(
         &mut self,
@@ -169,7 +172,7 @@ impl Warfare {
         (version, status): (u8, u8),
         d: &Detonation,
         table: &EntityTable,
-        (max_flight, tolerance): (f64, f64),
+        (max_flight, tolerance, live_window): (f64, f64, f64),
     ) -> Vec<Finding> {
         let started = *self.started.get_or_insert(now);
         let key = EntityKey {
@@ -212,16 +215,24 @@ impl Warfare {
                 id: d.target_entity,
             };
             if let Some(rec) = table.get(&target).filter(|r| !r.removed && !r.deactivated()) {
-                let track = &rec.sources[&rec.last_source];
-                let k = &track.last;
-                let at = extrapolate(k, (now - track.last_seen).max(0.0));
-                let speed = (k.velocity.x as f64)
-                    .hypot(k.velocity.y as f64)
-                    .hypot(k.velocity.z as f64);
-                let off = geo::distance(&at, &d.location);
-                let allowed = tolerance + speed;
-                if off > allowed {
-                    out.push(finding(
+                // An ID conflict: either sender's position could be the
+                // target's, so no distance is trustworthy.
+                let live = rec
+                    .sources
+                    .values()
+                    .filter(|t| now - t.last_seen <= live_window)
+                    .count();
+                if live <= 1 {
+                    let track = &rec.sources[&rec.last_source];
+                    let k = &track.last;
+                    let at = extrapolate(k, (now - track.last_seen).max(0.0));
+                    let speed = (k.velocity.x as f64)
+                        .hypot(k.velocity.y as f64)
+                        .hypot(k.velocity.z as f64);
+                    let off = geo::distance(&at, &d.location);
+                    let allowed = tolerance + speed;
+                    if off > allowed {
+                        out.push(finding(
                         "impact-distance",
                         format!(
                             "result Entity Impact on {}, but it detonated {off:.0} m from the target's dead-reckoned position (allowed {allowed:.0} m){}",
@@ -229,6 +240,7 @@ impl Warfare {
                             cite("5.4.4")
                         ),
                     ));
+                    }
                 }
             }
         }
@@ -390,7 +402,7 @@ mod tests {
                 (7, 2 << 4),
                 &det(2, other),
                 &EntityTable::default(),
-                (180.0, 100.0)
+                (180.0, 100.0, 144.0)
             )
             .is_empty());
         // A munition detonation with no Fire, before the monitor has
@@ -404,7 +416,7 @@ mod tests {
                 (7, 0),
                 &det(2, other),
                 &EntityTable::default(),
-                (180.0, 100.0)
+                (180.0, 100.0, 144.0)
             )
             .is_empty());
         assert_eq!(
@@ -415,7 +427,7 @@ mod tests {
                 (7, 0),
                 &det(2, other),
                 &EntityTable::default(),
-                (180.0, 100.0)
+                (180.0, 100.0, 144.0)
             )),
             ["no-fire"]
         );
@@ -443,35 +455,32 @@ mod tests {
             y: 0.0,
             z: 0.0,
         };
-        table.apply(
-            0.0,
-            src(),
-            &Pdu {
-                header: PduHeader::new(7, 1, 1, DisTimestamp(0)),
-                body: PduBody::EntityState(EntityState {
-                    entity_id: target,
-                    force_id: 2,
-                    entity_type: EntityType::default(),
-                    alternative_entity_type: EntityType::default(),
-                    // 20 m/s along y: 40 m on by the time of the detonation.
-                    linear_velocity: Vec3f {
-                        x: 0.0,
-                        y: 20.0,
-                        z: 0.0,
-                    },
-                    location: at,
-                    orientation: EulerAngles::default(),
-                    appearance: 0,
-                    dead_reckoning: DeadReckoning {
-                        algorithm: 2,
-                        ..Default::default()
-                    },
-                    marking: Marking::ascii("T"),
-                    capabilities: 0,
-                    variable_parameters: Vec::new(),
-                }),
-            },
-        );
+        let report = Pdu {
+            header: PduHeader::new(7, 1, 1, DisTimestamp(0)),
+            body: PduBody::EntityState(EntityState {
+                entity_id: target,
+                force_id: 2,
+                entity_type: EntityType::default(),
+                alternative_entity_type: EntityType::default(),
+                // 20 m/s along y: 40 m on by the time of the detonation.
+                linear_velocity: Vec3f {
+                    x: 0.0,
+                    y: 20.0,
+                    z: 0.0,
+                },
+                location: at,
+                orientation: EulerAngles::default(),
+                appearance: 0,
+                dead_reckoning: DeadReckoning {
+                    algorithm: 2,
+                    ..Default::default()
+                },
+                marking: Marking::ascii("T"),
+                capabilities: 0,
+                variable_parameters: Vec::new(),
+            }),
+        };
+        table.apply(0.0, src(), &report);
         let hit = |y: f64| Detonation {
             target_entity: target,
             location: WorldCoord { y, ..at },
@@ -481,17 +490,24 @@ mod tests {
         let mut w = Warfare::default();
         // On the target's dead-reckoned position: fine.
         assert!(w
-            .detonation(2.0, src(), 1, (7, 0), &hit(40.0), &table, (180.0, 100.0))
+            .detonation(2.0, src(), 1, (7, 0), &hit(40.0), &table, (180.0, 100.0, 144.0))
             .is_empty());
         // Where it was when last reported, 40 m back: within tolerance.
         assert!(w
-            .detonation(2.0, src(), 1, (7, 0), &hit(0.0), &table, (180.0, 100.0))
+            .detonation(2.0, src(), 1, (7, 0), &hit(0.0), &table, (180.0, 100.0, 144.0))
             .is_empty());
         // A kilometre off.
         assert_eq!(
-            kinds(&w.detonation(2.0, src(), 1, (7, 0), &hit(1040.0), &table, (180.0, 100.0))),
+            kinds(&w.detonation(2.0, src(), 1, (7, 0), &hit(1040.0), &table, (180.0, 100.0, 144.0))),
             ["impact-distance"]
         );
+        // A second sender also reports the target (an ID conflict): whose
+        // position is right is ambiguous, so nothing is blamed.
+        let clone: SocketAddr = "10.0.0.2:3000".parse().unwrap();
+        table.apply(1.9, clone, &report);
+        assert!(w
+            .detonation(2.0, src(), 1, (7, 0), &hit(1040.0), &table, (180.0, 100.0, 144.0))
+            .is_empty());
     }
 
     #[test]
