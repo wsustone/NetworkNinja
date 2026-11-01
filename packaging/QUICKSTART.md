@@ -9,6 +9,11 @@ This archive holds two programs:
 There's nothing to install: run them from this folder. (On Windows they are `nn-server.exe`
 and `nn-generator.exe`; type `.\nn-server.exe` where these steps say `./nn-server`.)
 
+**Runs on:** Windows 10 or 11 (x86_64); macOS 11 or later (Apple Silicon or Intel); any
+x86_64 Linux. Neither program needs any extra libraries, runtimes or drivers: no Visual C++
+Redistributable, and no Npcap, WinPcap or libpcap (DIS is read from ordinary UDP sockets, and
+pcap files are read directly).
+
 ## 1. Watch an exercise
 
 On a machine that can see the exercise's DIS traffic (DIS usually uses UDP port 3000):
