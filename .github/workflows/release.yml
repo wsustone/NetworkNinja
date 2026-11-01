@@ -95,7 +95,7 @@ jobs:
               cp "target/${targets[0]}/release/$bin$ext" "$dir/"
             fi
           done
-          cp packaging/QUICKSTART.md README.md LICENSE nn.example.toml "$dir/"
+          cp packaging/QUICKSTART.md README.md LICENSE NOTICE nn.example.toml "$dir/"
           cp -r rulepacks "$dir/"
           # Smoke test: the packaged binaries start on this runner.
           "$dir/nn-server$ext" --version
