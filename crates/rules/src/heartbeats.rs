@@ -164,20 +164,19 @@ mod tests {
     fn a_silent_emitter_is_reported_once_after_its_timeout() {
         let cfg = HeartbeatConfig::default();
         let mut h = Heartbeats::default();
-        h.observe(0.0, src(), &pdu(23), &cfg);
+        h.observe(0.0, src(), &pdu(34), &cfg);
         let never = |_, _| false;
         assert!(h.expire(11.9, &cfg, never, never).is_empty());
         let f = h.expire(12.1, &cfg, never, never);
         assert_eq!(f.len(), 1);
         assert!(
-            f[0].message
-                .starts_with("1:1:7 stopped sending ElectromagneticEmission"),
+            f[0].message.starts_with("1:1:7 stopped sending IsGroupOf"),
             "{}",
             f[0].message
         );
         assert!(h.expire(20.0, &cfg, never, never).is_empty(), "once per silence");
         // It comes back and goes quiet again: reported again.
-        h.observe(30.0, src(), &pdu(23), &cfg);
+        h.observe(30.0, src(), &pdu(34), &cfg);
         assert_eq!(h.expire(43.0, &cfg, never, never).len(), 1);
     }
 
@@ -204,9 +203,9 @@ mod tests {
         h.observe(0.0, src(), &pdu(28), &cfg);
         assert!(h.expire(100.0, &cfg, never, never).is_empty());
         assert_eq!(h.expire(145.0, &cfg, never, never).len(), 1);
-        cfg.seconds.insert(23, 0.0);
+        cfg.seconds.insert(34, 0.0);
         let mut h = Heartbeats::default();
-        h.observe(0.0, src(), &pdu(23), &cfg);
+        h.observe(0.0, src(), &pdu(34), &cfg);
         assert!(h.expire(1000.0, &cfg, never, never).is_empty());
     }
 }
