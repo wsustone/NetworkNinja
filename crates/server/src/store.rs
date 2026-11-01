@@ -112,7 +112,11 @@ impl EventStore {
                 at INTEGER NOT NULL,
                 n INTEGER, sum REAL, min REAL, max REAL);
             CREATE INDEX IF NOT EXISTS sm_series_at ON samples(series, at);
-            CREATE INDEX IF NOT EXISTS sm_at ON samples(at);",
+            CREATE INDEX IF NOT EXISTS sm_at ON samples(at);
+            CREATE TABLE IF NOT EXISTS dashboards(
+                name TEXT PRIMARY KEY,
+                updated INTEGER NOT NULL,
+                json TEXT NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
         // Files from before slice 2 gain the tag columns in place.
@@ -335,6 +339,37 @@ impl EventStore {
 
     /// Drop samples older than `before` and series left without any.
     /// Returns the samples removed.
+    /// All saved dashboards `(name, updated unix, JSON)`, in name order.
+    pub fn dashboards(&self) -> Vec<(String, i64, String)> {
+        self.conn
+            .prepare("SELECT name, updated, json FROM dashboards ORDER BY name")
+            .and_then(|mut st| {
+                st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                    .map(|rows| rows.flatten().collect())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Save a dashboard definition under `name`, replacing any old one.
+    pub fn dashboard_put(&self, name: &str, json: &str, at: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO dashboards(name, updated, json) VALUES(?1, ?2, ?3)
+                 ON CONFLICT(name) DO UPDATE SET updated = ?2, json = ?3",
+                params![name, at, json],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Remove the dashboard called `name`; false when none existed.
+    pub fn dashboard_delete(&self, name: &str) -> bool {
+        self.conn
+            .execute("DELETE FROM dashboards WHERE name = ?1", params![name])
+            .unwrap_or(0)
+            > 0
+    }
+
     pub fn sweep_samples(&self, before: i64) -> Result<usize, String> {
         let n = self
             .conn

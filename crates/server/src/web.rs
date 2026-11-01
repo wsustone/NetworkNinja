@@ -77,6 +77,9 @@ pub struct Hub {
     config_file: Mutex<Option<String>>,
     /// The outcome of the latest listener change: (number, ok, message).
     input_result: Mutex<(u64, bool, String)>,
+    /// Saved dashboards when there is no `--db` store: name →
+    /// (updated unix second, JSON definition).
+    dashboards: Mutex<BTreeMap<String, (i64, String)>>,
 }
 
 /// A query for the serve loop and where to send the memory cells back.
@@ -126,6 +129,7 @@ impl Hub {
             config_file: Mutex::new(None),
             input_result: Mutex::new((0, true, String::new())),
             conformance: Mutex::new((Vec::new(), BTreeMap::new())),
+            dashboards: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -253,6 +257,60 @@ impl Hub {
         let f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
         *self.log_file.lock().unwrap() = Some(f);
         Ok(loaded)
+    }
+
+    /// All dashboards `(name, updated unix, JSON)` — the store when there
+    /// is one, memory otherwise.
+    fn dashboard_list(&self) -> Vec<(String, i64, String)> {
+        if let Some((store, _)) = self.store.lock().unwrap().as_ref() {
+            store.dashboards()
+        } else {
+            self.dashboards
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(n, (u, j))| (n.clone(), *u, j.clone()))
+                .collect()
+        }
+    }
+
+    /// `/api/dashboards` body: each definition embedded raw.
+    pub fn dashboards_json(&self) -> String {
+        let mut body = String::from("{\"dashboards\":[");
+        for (i, (name, updated, json)) in self.dashboard_list().iter().enumerate() {
+            if i > 0 {
+                body.push(',');
+            }
+            body.push_str(&format!(
+                "{{\"name\":\"{}\",\"updated\":{updated},\"def\":{json}}}",
+                esc(name)
+            ));
+        }
+        body.push_str("]}");
+        body
+    }
+
+    /// Save a dashboard; `check_dashboard` vetted the name and definition.
+    pub fn dashboard_put(&self, name: &str, json: &str, at: i64) -> Result<(), String> {
+        check_dashboard(name, json)?;
+        if let Some((store, _)) = self.store.lock().unwrap().as_ref() {
+            store.dashboard_put(name, json, at)
+        } else {
+            self.dashboards
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), (at, json.to_string()));
+            Ok(())
+        }
+    }
+
+    /// Remove a dashboard; false when none existed.
+    pub fn dashboard_delete(&self, name: &str) -> bool {
+        if let Some((store, _)) = self.store.lock().unwrap().as_ref() {
+            store.dashboard_delete(name)
+        } else {
+            self.dashboards.lock().unwrap().remove(name).is_some()
+        }
     }
 
     /// Open the SQLite event store and register a new run in it.
@@ -809,6 +867,47 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
         ("GET", "/ne/lakes") => {
             let _ = respond(s, "200 OK", "application/geo+json", NE_LAKES);
         }
+        ("GET", "/api/dashboards") => {
+            let _ = respond(s, "200 OK", "application/json", &hub.dashboards_json());
+        }
+        ("PUT", "/api/dashboards") => {
+            let name = qparam("name").unwrap_or_default();
+            let body = String::from_utf8_lossy(&req.body);
+            match hub.dashboard_put(&name, body.trim(), now_secs() as i64) {
+                Ok(()) => {
+                    hub.log(
+                        "info",
+                        &info_json(now_secs(), &format!("dashboard '{name}' saved{}", by_user(&user))),
+                    );
+                    let _ = respond(s, "200 OK", "application/json", "{\"ok\":true}");
+                }
+                Err(e) => {
+                    let _ = respond(
+                        s,
+                        "400 Bad Request",
+                        "application/json",
+                        &format!("{{\"error\":\"{}\"}}", esc(&e)),
+                    );
+                }
+            }
+        }
+        ("DELETE", "/api/dashboards") => {
+            let name = qparam("name").unwrap_or_default();
+            if hub.dashboard_delete(&name) {
+                hub.log(
+                    "info",
+                    &info_json(now_secs(), &format!("dashboard '{name}' deleted{}", by_user(&user))),
+                );
+                let _ = respond(s, "200 OK", "application/json", "{\"ok\":true}");
+            } else {
+                let _ = respond(
+                    s,
+                    "404 Not Found",
+                    "application/json",
+                    "{\"error\":\"no such dashboard\"}",
+                );
+            }
+        }
         ("GET", "/api/state") => {
             let body = hub.snapshot.lock().unwrap().clone().unwrap_or_else(|| "{}".into());
             let _ = respond(s, "200 OK", "application/json", &body);
@@ -1165,6 +1264,151 @@ fn base64(data: &[u8]) -> String {
 }
 
 // --- JSON feed --------------------------------------------------------------
+
+/// ` by <user>` for event-log lines, or nothing when sessions are off.
+fn by_user(user: &Option<String>) -> String {
+    user.as_deref().map(|u| format!(" by {u}")).unwrap_or_default()
+}
+
+/// `/api/dashboards` write-side checks: a usable name and a body that is a
+/// JSON object holding a `widgets` array (the request body cap bounds its
+/// size). The browser is the writer, so the definition isn't fully parsed —
+/// a bad shape 400s here rather than corrupting the dashboard list.
+fn check_dashboard(name: &str, json: &str) -> Result<(), String> {
+    if name.is_empty() || name.len() > 64 || !name.chars().all(|c| c.is_alphanumeric() || " ._-".contains(c)) {
+        return Err("name must be 1-64 letters, digits, spaces or ._-".into());
+    }
+    let t = json.trim();
+    if !(t.starts_with('{') && well_formed_json(t) && t.contains("\"widgets\"")) {
+        return Err("definition must be a JSON object with a \"widgets\" array".into());
+    }
+    Ok(())
+}
+
+/// Whether `s` is exactly one well-formed JSON value (nesting capped at 32),
+/// so it can be embedded raw in another JSON document.
+fn well_formed_json(s: &str) -> bool {
+    fn ws(b: &[u8], i: &mut usize) {
+        while *i < b.len() && b" \t\r\n".contains(&b[*i]) {
+            *i += 1;
+        }
+    }
+    fn string(b: &[u8], i: &mut usize) -> bool {
+        *i += 1;
+        while *i < b.len() {
+            match b[*i] {
+                b'"' => {
+                    *i += 1;
+                    return true;
+                }
+                b'\\' => match b.get(*i + 1) {
+                    Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => *i += 2,
+                    Some(b'u')
+                        if b.get(*i + 2..*i + 6)
+                            .is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit)) =>
+                    {
+                        *i += 6
+                    }
+                    _ => return false,
+                },
+                c if c < 0x20 => return false,
+                _ => *i += 1,
+            }
+        }
+        false
+    }
+    /// RFC 8259 number: -?(0|[1-9]d*)(.d+)?([eE][+-]?d+)?
+    fn number(t: &[u8]) -> bool {
+        let mut i = usize::from(t.first() == Some(&b'-'));
+        let digits = |i: &mut usize| {
+            let s = *i;
+            while *i < t.len() && t[*i].is_ascii_digit() {
+                *i += 1;
+            }
+            *i > s
+        };
+        match t.get(i) {
+            Some(b'0') => i += 1,
+            Some(c) if c.is_ascii_digit() => {
+                digits(&mut i);
+            }
+            _ => return false,
+        }
+        if t.get(i) == Some(&b'.') {
+            i += 1;
+            if !digits(&mut i) {
+                return false;
+            }
+        }
+        if matches!(t.get(i), Some(b'e' | b'E')) {
+            i += 1;
+            if matches!(t.get(i), Some(b'+' | b'-')) {
+                i += 1;
+            }
+            if !digits(&mut i) {
+                return false;
+            }
+        }
+        i == t.len()
+    }
+    fn value(b: &[u8], i: &mut usize, depth: u32) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        ws(b, i);
+        let Some(&c) = b.get(*i) else { return false };
+        match c {
+            b'"' => string(b, i),
+            b'{' | b'[' => {
+                let close = if c == b'{' { b'}' } else { b']' };
+                *i += 1;
+                ws(b, i);
+                if b.get(*i) == Some(&close) {
+                    *i += 1;
+                    return true;
+                }
+                loop {
+                    if c == b'{' {
+                        ws(b, i);
+                        if b.get(*i) != Some(&b'"') || !string(b, i) {
+                            return false;
+                        }
+                        ws(b, i);
+                        if b.get(*i) != Some(&b':') {
+                            return false;
+                        }
+                        *i += 1;
+                    }
+                    if !value(b, i, depth + 1) {
+                        return false;
+                    }
+                    ws(b, i);
+                    match b.get(*i) {
+                        Some(&b',') => *i += 1,
+                        Some(&x) if x == close => {
+                            *i += 1;
+                            return true;
+                        }
+                        _ => return false,
+                    }
+                }
+            }
+            _ => {
+                let start = *i;
+                while *i < b.len() && (b[*i].is_ascii_alphanumeric() || b"+-.".contains(&b[*i])) {
+                    *i += 1;
+                }
+                let tok = &b[start..*i];
+                matches!(tok, b"true" | b"false" | b"null") || number(tok)
+            }
+        }
+    }
+    let b = s.as_bytes();
+    let mut i = 0;
+    let ok = value(b, &mut i, 0);
+    ws(b, &mut i);
+    ok && i == b.len()
+}
 
 fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);

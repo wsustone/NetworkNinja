@@ -181,11 +181,64 @@
   .open { display:inline-block; margin-left:.35em; padding:0 .4em; border-radius:8px; font-size:10px; border:1px solid var(--crit); color:var(--crit); }
   #conf .hint { padding:.5em .9em; color:var(--dim); font-size:11px; }
   #detail .viol span { color:var(--dim); }
+  /* User dashboards (ADR 0008 slice 5): a grid of /api/query widgets. */
+  #dash { margin:1em; }
+  #dash h2 { display:flex; gap:.55em; align-items:center; flex-wrap:wrap; }
+  #dash h2 .msg { font-size:12px; font-weight:400; }
+  #dTpl { color:var(--warn); font-size:11px; font-weight:400; }
+  #dgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:1em; margin-top:.6em; }
+  .wcard { background:var(--panel); border:1px solid var(--line); border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
+  .wcard.wide { grid-column:span 2; }
+  .whead { display:flex; gap:.5em; align-items:baseline; padding:.45em .8em .1em; }
+  .whead b { font-size:12px; font-weight:600; }
+  .whead .u { color:var(--dim); font-size:10px; }
+  .whead .ctl { margin-left:auto; display:none; gap:.3em; }
+  .wctl { display:none; margin:0 0 0 .8em; }
+  #dgrid.edit .whead .ctl, #dgrid.edit .wctl { display:flex; }
+  .wbody { flex:1; padding:.1em .6em .5em; min-height:110px; position:relative; }
+  .wbody svg { display:block; width:100%; height:150px; }
+  .wbody .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:11px; }
+  .wnum { font-size:34px; font-weight:600; font-variant-numeric:tabular-nums; padding:.3em .3em 0; }
+  .wnum small { font-size:12px; color:var(--dim); font-weight:400; margin-left:.4em; }
+  .wlist { font-size:12px; padding:.3em 0; width:100%; }
+  .wlist td { padding:.18em .2em; }
+  .wlist td.n { text-align:right; font-variant-numeric:tabular-nums; width:4.6em; }
+  .wlist .bar { display:inline-block; height:8px; border-radius:2px; background:#3987e5; min-width:1px; margin-left:.5em; vertical-align:middle; }
+  .wleg { display:flex; flex-wrap:wrap; gap:.15em 1em; font-size:10px; color:var(--dim); padding:0 .6em .4em; }
+  .wleg i { display:inline-block; width:8px; height:2px; margin-right:4px; vertical-align:middle; }
+  .wadd { border:1px dashed var(--line); background:none; color:var(--dim); font-size:28px; cursor:pointer; min-height:110px; border-radius:8px; }
+  .wempty { grid-column:1/-1; color:var(--dim); text-align:center; padding:2.5em 1em; }
+  .wempty .tpls { display:flex; gap:1em; justify-content:center; flex-wrap:wrap; margin-top:1em; }
+  .wempty .tpl { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:1.2em 2em; cursor:pointer; }
+  .wempty .tpl:hover { border-color:var(--dim); }
+  .wempty .tpl b { display:block; margin-bottom:.3em; }
+  .wempty .tpl span { font-size:11px; color:var(--dim); }
+  /* Widget editor, same overlay as the inputs editor. */
+  #dashEd { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center; z-index:8; overflow-y:auto; padding:4vh 1em; }
+  #dashEd.on { display:flex; }
+  #dashEd>div { background:var(--panel); border:1px solid var(--line); border-radius:8px; width:min(860px,100%); }
+  #dashEd form { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:.6em 1em; padding:.8em .9em; border-top:1px solid var(--line); }
+  #dashEd label { display:flex; flex-direction:column; gap:.2em; font-size:11px; color:var(--dim); }
+  #dashEd input[type=text], #dashEd input[type=number], #dashEd select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.4em .6em; font:inherit; font-size:13px; }
+  #dashEd .ifs { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:.3em 1em; font-size:12px; color:var(--fg); align-items:center; }
+  #dashEd .ifs label { flex-direction:row; align-items:center; gap:.35em; }
+  #dashEd h2 { display:flex; justify-content:space-between; align-items:center; padding:.6em .9em; font-size:14px; }
+  #dashEd .ifs > button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.45em 1em; font:inherit; font-weight:600; cursor:pointer; }
+  #dashEd button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
+  #dashEd .msg { font-size:12px; } #dashEd .msg.bad { color:var(--crit); }
+  #dashEd .row { display:flex; gap:.6em; align-items:center; }
+  #weWhere { display:flex; flex-direction:column; gap:.3em; }
+  #weWhere .wrow { display:flex; gap:.3em; align-items:center; }
+  #weWhere .wrow select { width:8em; }
+  #weWhere .wrow input { flex:1; min-width:0; }
+  #wePrev { padding:.4em .9em .8em; }
+  #wePrev svg { display:block; width:100%; height:120px; }
+  @media (max-width:700px) { #dgrid { grid-template-columns:1fr; } .wcard.wide { grid-column:span 1; } }
 </style>
 
 <header>
   <b>NetworkNinja</b>
-  <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button></span>
+  <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button><button id="tabDash">Dashboards</button></span>
   <span id="conn" class="down">connecting…</span>
   <span class="stat">exercise <b id="hEx">–</b></span>
   <span class="stat" id="hFrozen"></span>
@@ -224,6 +277,22 @@
   </div>
   <div class="tablewrap"><table id="ctable"></table></div>
   <div class="hint">Counts are alert firings and decode errors attributed to each sender. Click a count to see those events in the live log.</div>
+</section>
+<section id="dash" hidden>
+  <h2>Dashboard
+    <select id="dsel"></select>
+    <button class="albtn" id="dEdit">edit</button>
+    <button class="albtn" id="dSave" hidden>save</button>
+    <button class="albtn" id="dSaveAs">save as…</button>
+    <button class="albtn" id="dNew">new…</button>
+    <button class="albtn" id="dDel" hidden>delete</button>
+    <button class="albtn" id="dExport">export</button>
+    <button class="albtn" id="dImport">import</button>
+    <input type="file" id="dFile" hidden accept=".json,application/json">
+    <span id="dTpl"></span>
+    <span class="msg" id="dMsg"></span>
+  </h2>
+  <div id="dgrid"></div>
 </section>
 <main>
   <section id="issues">
@@ -288,6 +357,23 @@
   <input id="lpass" type="password" placeholder="password" autocomplete="current-password">
   <span id="lerr"></span>
   <button id="lgo">sign in</button>
+</div></div>
+
+<div id="dashEd"><div>
+  <h2><span id="weTitle">add a widget</span> <span><button class="albtn" id="weClose">close</button></span></h2>
+  <form id="weForm" autocomplete="off">
+    <label>title<input type="text" id="weName" placeholder="what this widget shows" required></label>
+    <label>kind<select id="weKind"><option value="timeseries">time series</option><option value="toplist">top list</option><option value="counter">counter</option></select></label>
+    <label>metric<select id="weMetric"></select></label>
+    <label>aggregate<select id="weAgg"></select></label>
+    <label>range<select id="weSpan"><option value="600">last 10 min</option><option value="3600" selected>last 1 h</option><option value="86400">last 24 h</option><option value="run">whole run</option></select></label>
+    <label id="weWinL">points every<select id="weWin"><option value="0">auto</option><option value="5">5 s</option><option value="10">10 s</option><option value="60">1 min</option><option value="300">5 min</option></select></label>
+    <label>group by<div class="ifs" id="weBy"></div></label>
+    <label>where<div id="weWhere"></div><button type="button" class="plain" id="weWhereAdd">+ filter</button></label>
+    <label style="flex-direction:row;align-items:center;gap:.4em;color:var(--fg)"><input type="checkbox" id="weWide"> double width</label>
+    <div class="ifs"><button type="submit" id="weSubmit">add widget</button><button type="button" class="plain" id="wePrevB">preview</button><span class="msg" id="weMsg"></span></div>
+  </form>
+  <div id="wePrev"></div>
 </div></div>
 <script>
 "use strict";
@@ -840,12 +926,16 @@ function loadRuns() {
 // --- conformance view: /api/events/summary pivots (ADR 0008 slice 2) ---
 let conf = null;
 function showView(v) {
-  const isConf = v === "conf";
+  const isConf = v === "conf", isDash = v === "dash";
   $("conf").hidden = !isConf;
-  document.querySelector("main").hidden = isConf;
+  $("dash").hidden = !isDash;
+  document.querySelector("main").hidden = isConf || isDash;
   $("tabConf").classList.toggle("on", isConf);
-  $("tabLive").classList.toggle("on", !isConf);
-  if (isConf) confQuery(); else { renderTraffic(); if (map) map.resize(); }
+  $("tabDash").classList.toggle("on", isDash);
+  $("tabLive").classList.toggle("on", !isConf && !isDash);
+  if (isConf) confQuery();
+  else if (isDash) { if (!dash.list) dashFetch(); else renderDash(); }
+  else { renderTraffic(); if (map) map.resize(); }
 }
 function confSince() {
   const v = $("csince").value, now = state ? state.at : Date.now() / 1000;
@@ -920,6 +1010,7 @@ $("ctable").onclick = ev => {
 };
 $("tabLive").onclick = () => showView("live");
 $("tabConf").onclick = () => showView("conf");
+$("tabDash").onclick = () => showView("dash");
 $("cpivot").onchange = $("csince").onchange = confQuery;
 setInterval(confQuery, 5000);
 
@@ -1131,6 +1222,352 @@ $("twin").onchange = $("tview").onchange = () => { renderTraffic(); trafficQuery
 window.addEventListener("resize", renderTraffic);
 setInterval(trafficQuery, 5000);
 setTimeout(trafficQuery, 800);
+
+// --- dashboards: user-built grids of /api/query widgets (ADR 0008 slice 5) ---
+// Mirrors nn_state::Metric: which dimensions each metric carries, and gauges
+// (sampled levels) vs counters (events per second).
+const METRICS = {
+  "pdu.count":               {label: "PDUs",                 unit: "PDUs",      dims: ["exercise", "pdu_type", "site", "kind", "domain", "sender"]},
+  "pdu.duplicates":          {label: "duplicate PDUs",       unit: "PDUs",      dims: ["exercise", "pdu_type", "sender"]},
+  "bytes.count":             {label: "bytes received",       unit: "bytes",     dims: ["sender"]},
+  "datagram.count":          {label: "datagrams",            unit: "datagrams", dims: ["sender"]},
+  "decode.errors":           {label: "decode errors",        unit: "errors",    dims: ["sender"]},
+  "entity.active":           {label: "active entities",      unit: "entities",  dims: ["exercise", "site", "kind", "force"], gauge: true},
+  "entity.heartbeat_mean":   {label: "heartbeat interval",   unit: "s",         dims: ["exercise", "entity", "sender"], gauge: true},
+  "entity.heartbeat_jitter": {label: "heartbeat jitter",     unit: "s",         dims: ["exercise", "entity", "sender"], gauge: true},
+  "entity.dr_error":         {label: "dead-reckoning error", unit: "m",         dims: ["exercise", "entity"], gauge: true},
+  "alerts.open":             {label: "open alerts",          unit: "alerts",    dims: ["exercise", "pack", "rule", "severity"], gauge: true},
+};
+const AGGS = {counter: ["rate", "sum", "max"], gauge: ["avg", "sum", "max", "min"]};
+const AGG_LABEL = {rate: "per second", sum: "total", avg: "average", max: "max", min: "min"};
+const DIM_LABEL = {exercise: "exercise", pdu_type: "PDU type", site: "site", kind: "entity kind", domain: "domain",
+  sender: "sender", force: "force", entity: "entity", pack: "pack", rule: "rule", severity: "severity"};
+const W = (title, kind, name, agg, span, extra = {}) => ({title, kind, q: Object.assign({name, agg, by: [], where: {}, span, window: 0}, extra.q || {}), wide: !!extra.wide});
+const TEMPLATES = {
+  "Exercise overview": {about: "traffic, entity population and alerts at a glance", widgets: [
+    W("PDU rate", "counter", "pdu.count", "rate", 60),
+    W("Active entities", "counter", "entity.active", "sum", 60),
+    W("Open alerts", "counter", "alerts.open", "sum", 60),
+    W("Decode errors, last hour", "counter", "decode.errors", "sum", 3600),
+    W("PDU rate by type", "timeseries", "pdu.count", "rate", 3600, {wide: true, q: {by: ["pdu_type"]}}),
+    W("Active entities by force", "timeseries", "entity.active", "sum", 3600, {q: {by: ["force"]}}),
+    W("Open alerts by severity", "timeseries", "alerts.open", "sum", 3600, {q: {by: ["severity"]}}),
+    W("Busiest senders", "toplist", "pdu.count", "rate", 600, {q: {by: ["sender"]}}),
+    W("Entities by site", "toplist", "entity.active", "sum", 60, {q: {by: ["site"]}}),
+  ]},
+  "Conformance & health": {about: "which rules fire, who sends bad data, timing quality", widgets: [
+    W("Open alerts by rule", "toplist", "alerts.open", "sum", 60, {q: {by: ["rule"]}}),
+    W("Open alerts by rule over time", "timeseries", "alerts.open", "sum", 3600, {wide: true, q: {by: ["rule"]}}),
+    W("Decode errors by sender", "toplist", "decode.errors", "sum", 3600, {q: {by: ["sender"]}}),
+    W("Duplicate PDUs by sender", "toplist", "pdu.duplicates", "sum", 3600, {q: {by: ["sender"]}}),
+    W("Worst heartbeat jitter", "toplist", "entity.heartbeat_jitter", "max", 600, {q: {by: ["entity"]}}),
+    W("Largest dead-reckoning error", "toplist", "entity.dr_error", "max", 600, {q: {by: ["entity"]}}),
+    W("Heartbeat jitter (worst entity)", "timeseries", "entity.heartbeat_jitter", "max", 3600),
+  ]},
+};
+const dash = {list: null, name: null, tpl: null, def: null, dirty: false, edit: false, data: [], editing: null};
+const clone = o => JSON.parse(JSON.stringify(o));
+const dashNameOk = n => /^[\p{L}\p{N} ._-]{1,64}$/u.test(n);
+function dashMsg(t, bad) { $("dMsg").textContent = t || ""; $("dMsg").style.color = bad ? "var(--crit)" : "var(--dim)"; }
+
+function dashFetch(select) {
+  return fetch("/api/dashboards", auth()).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(d => {
+    dash.list = d.dashboards;
+    const want = select || dash.name || localStorage.nn_dash;
+    if (want && dash.list.some(x => x.name === want)) dashOpen(want);
+    else if (!dash.def) { if (dash.list.length) dashOpen(dash.list[0].name); else dashOpenTemplate("Exercise overview"); }
+    else renderDash();
+  }).catch(e => dashMsg("could not load dashboards (" + e + ")", true));
+}
+function dashOpen(name) {
+  const d = dash.list.find(x => x.name === name);
+  if (!d) return;
+  dash.name = name; dash.tpl = null; dash.def = clone(d.def); dash.dirty = false;
+  localStorage.nn_dash = name;
+  dashLoaded();
+}
+function dashOpenTemplate(tpl) {
+  dash.name = null; dash.tpl = tpl; dash.dirty = false;
+  dash.def = {version: 1, widgets: tpl ? clone(TEMPLATES[tpl].widgets) : []};
+  dashLoaded();
+}
+function dashLoaded() { dash.data = dash.def.widgets.map(() => null); renderDash(); dashRefresh(); }
+
+// The time range a widget covers, ending at the feed's clock (a replay's
+// position when replaying, like the traffic chart).
+function widgetRange(q) {
+  const to = Math.ceil(state && state.at ? state.at : Date.now() / 1000);
+  const span = q.span === "run" ? Math.max(60, state ? (state.replay ? state.replay.pos : state.uptime) : 3600) : +q.span;
+  return {from: Math.floor(to - span), to, span};
+}
+function widgetParams(w) {
+  const q = w.q, {from, to, span} = widgetRange(q);
+  const window = w.kind === "timeseries" ? (+q.window || Math.max(5, Math.ceil(span / 240 / 5) * 5)) : to - from;
+  const p = new URLSearchParams({name: q.name, agg: q.agg, window, from, to});
+  if (q.by.length) p.set("by", q.by.join(","));
+  for (const [k, v] of Object.entries(q.where)) if (v !== "") p.set("where." + k, v);
+  return p;
+}
+function widgetFetch(w) {
+  return fetch("/api/query?" + widgetParams(w), auth())
+    .then(r => r.ok ? r.json() : r.json().catch(() => ({})).then(e => ({error: e.error || "HTTP " + r.status})));
+}
+function dashRefresh() {
+  if ($("dash").hidden || !dash.def) return;
+  const def = dash.def;
+  def.widgets.forEach((w, i) => widgetFetch(w).then(d => {
+    if (dash.def !== def || def.widgets[i] !== w) return;
+    dash.data[i] = d;
+    const card = $("dgrid").querySelector(`.wcard[data-i="${i}"] .wbody`);
+    if (card) drawWidget(card, w, d);
+  }).catch(() => {}));
+}
+setInterval(dashRefresh, 5000);
+
+function renderDash() {
+  const sel = $("dsel");
+  sel.innerHTML = (dash.list || []).map(d => `<option value="d:${esc(d.name)}">${esc(d.name)}</option>`).join("")
+    + Object.keys(TEMPLATES).map(t => `<option value="t:${esc(t)}">template: ${esc(t)}</option>`).join("")
+    + (!dash.name && !dash.tpl ? '<option value="new">(new dashboard)</option>' : "");
+  sel.value = dash.name ? "d:" + dash.name : dash.tpl ? "t:" + dash.tpl : "new";
+  $("dSave").hidden = !dash.name || !dash.dirty;
+  $("dDel").hidden = !dash.name;
+  $("dEdit").textContent = dash.edit ? "done" : "edit";
+  $("dTpl").textContent = dash.name ? (dash.dirty ? "unsaved changes" : "")
+    : dash.tpl ? "template — “save as” to keep your own copy" : dash.def && dash.def.widgets.length ? "not saved yet" : "";
+  const grid = $("dgrid");
+  grid.classList.toggle("edit", dash.edit);
+  if (!dash.def) { grid.innerHTML = ""; return; }
+  const ws = dash.def.widgets, n = ws.length;
+  grid.innerHTML = ws.map((w, i) => {
+    const m = METRICS[w.q.name] || {label: w.q.name};
+    const by = w.q.by.length ? " by " + w.q.by.map(b => DIM_LABEL[b] || b).join(", ") : "";
+    const where = Object.entries(w.q.where).filter(([, v]) => v !== "").map(([k, v]) => `${DIM_LABEL[k] || k}=${v}`).join(", ");
+    const span = w.q.span === "run" ? "whole run" : fmtSpan(+w.q.span);
+    return `<div class="wcard${w.wide ? " wide" : ""}" data-i="${i}">
+      <div class="whead"><b>${esc(w.title)}</b><span class="u" title="${esc(w.q.name)}">${esc(AGG_LABEL[w.q.agg] || w.q.agg)} ${esc(m.label)}${esc(by)}${where ? " · " + esc(where) : ""} · ${span}</span>
+        <span class="ctl">${i > 0 ? '<button class="albtn" data-act="left" title="move earlier">◀</button>' : ""}${i < n - 1 ? '<button class="albtn" data-act="right" title="move later">▶</button>' : ""}<button class="albtn" data-act="edit">edit</button><button class="albtn" data-act="dup">copy</button><button class="albtn" data-act="del">remove</button></span></div>
+      <div class="wbody"></div></div>`;
+  }).join("") + (dash.edit || !n ? '<button class="wadd" id="wAdd" title="add a widget">+</button>' : "");
+  if (!n) {
+    grid.insertAdjacentHTML("afterbegin", `<div class="wempty">This dashboard has no widgets. Click + to add one, or start from a template:
+      <div class="tpls">${Object.entries(TEMPLATES).map(([t, v]) => `<div class="tpl" data-tpl="${esc(t)}"><b>${esc(t)}</b><span>${esc(v.about)}</span></div>`).join("")}</div></div>`);
+  }
+  ws.forEach((w, i) => { const b = grid.querySelector(`.wcard[data-i="${i}"] .wbody`); drawWidget(b, w, dash.data[i]); });
+}
+const fmtSpan = s => s < 120 ? `last ${s} s` : s < 7200 ? `last ${Math.round(s / 60)} min` : `last ${Math.round(s / 3600)} h`;
+function fmtVal(v, unit) {
+  if (v === null || v === undefined || !isFinite(v)) return "–";
+  const a = Math.abs(v);
+  if (unit === "bytes") return a >= 1e9 ? (v / 1e9).toFixed(1) + " GB" : a >= 1e6 ? (v / 1e6).toFixed(1) + " MB" : a >= 1e3 ? (v / 1e3).toFixed(1) + " KB" : v.toFixed(0) + " B";
+  if (a >= 1e6) return (v / 1e6).toFixed(1) + "M";
+  if (a >= 1e4) return (v / 1e3).toFixed(1) + "k";
+  if (a >= 100 || Number.isInteger(v)) return v.toFixed(0);
+  return a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toFixed(3);
+}
+const unitOf = d => d.unit === "bytes" ? (d.agg === "rate" ? "per second" : "") : d.agg === "rate" ? d.unit + "/s" : d.unit;
+const groupLabel = (tags, by) => by.length ? by.map(b => tags[b] ?? "–").join(" · ") : "total";
+
+// Draw one widget's answer into `box` (also used by the editor preview).
+function drawWidget(box, w, d) {
+  if (!d) { box.innerHTML = '<div class="empty">loading…</div>'; return; }
+  if (d.error) { box.innerHTML = `<div class="empty" style="color:var(--crit);padding:0 1em;text-align:center">${esc(String(d.error))}</div>`; return; }
+  const by = w.q.by, unit = unitOf(d);
+  if (w.kind === "counter") {
+    const g = d.groups || [];
+    const v = g.length ? g.reduce((a, x) => a + (x.value || 0), 0) : (METRICS[w.q.name] || {}).gauge ? null : 0;
+    box.innerHTML = `<div class="wnum">${fmtVal(v, d.unit)}<small>${esc(unit)}</small></div>`;
+    return;
+  }
+  if (w.kind === "toplist") {
+    const all = (d.groups || []).filter(x => x.value !== null), g = all.slice(0, 10);
+    const max = Math.max(1e-9, ...g.map(x => x.value));
+    box.innerHTML = g.length
+      ? `<table class="wlist">${g.map(x => `<tr><td>${esc(groupLabel(x.tags, by))}</td><td class="n">${fmtVal(x.value, d.unit)}</td><td style="width:40%"><span class="bar" style="width:${Math.max(0, x.value / max * 100).toFixed(1)}%"></span></td></tr>`).join("")}</table>`
+        + (all.length > 10 ? `<div style="color:var(--dim);font-size:10px">+${all.length - 10} more</div>` : "")
+      : '<div class="empty">no data in this range</div>';
+    return;
+  }
+  // Time series: biggest groups get their own line, the rest are left off
+  // (gauges can't honestly be summed into an "other" line).
+  let S = (d.series || []).map(x => ({label: groupLabel(x.tags, by), points: x.points,
+    total: x.points.reduce((a, p) => a + (p[1] || 0), 0)})).sort((a, b) => b.total - a.total);
+  const hidden = Math.max(0, S.length - SERIES.length);
+  S = S.slice(0, SERIES.length);
+  const vals = S.flatMap(s => s.points.map(p => p[1]).filter(v => v !== null));
+  if (!vals.length) { box.innerHTML = '<div class="empty">no data in this range</div>'; return; }
+  const Wd = box.clientWidth - 4 || 400, H = 150, L = 40, R = 6, T = 6, B = 18;
+  const ymax = niceMax(Math.max(...vals) * 1.05);
+  const x = t => L + (t - d.from) / (d.to - d.from) * (Wd - L - R);
+  const y = v => T + (1 - v / ymax) * (H - T - B);
+  let g = "<g>";
+  for (let i = 0; i <= 3; i++) {
+    const v = ymax * i / 3;
+    g += `<line x1="${L}" x2="${Wd - R}" y1="${y(v)}" y2="${y(v)}" stroke="#21262d"/><text fill="#8b949e" font-size="10" x="${L - 5}" y="${y(v) + 3}" text-anchor="end">${fmtVal(v, d.unit)}</text>`;
+  }
+  const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  for (let i = 0; i <= 3; i++) {
+    const t = d.from + (d.to - d.from) * i / 3;
+    g += `<text fill="#8b949e" font-size="10" x="${x(t)}" y="${H - 4}" text-anchor="${i === 0 ? "start" : i === 3 ? "end" : "middle"}">${clock(t)}</text>`;
+  }
+  g += "</g>";
+  // Gauges leave gaps (null) where nothing was sampled: break the line there.
+  const path = s => {
+    let p = "", pen = false;
+    for (const [t, v] of s.points) {
+      if (v === null) { pen = false; continue; }
+      p += `${pen ? "L" : "M"}${x(t + d.window / 2).toFixed(1)},${y(v).toFixed(1)}`; pen = true;
+    }
+    return p;
+  };
+  const lines = S.map((s, i) => ({s, c: SERIES[i]})).reverse().map(({s, c}) => `<path fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round" d="${path(s)}"><title>${esc(s.label)}</title></path>`).join("");
+  const last = s => { for (let i = s.points.length - 1; i >= 0; i--) if (s.points[i][1] !== null) return s.points[i][1]; return null; };
+  box.innerHTML = `<svg viewBox="0 0 ${Wd} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(w.title)}">${g}${lines}</svg>`
+    + `<div class="wleg">${S.map((s, i) => `<span><i style="background:${SERIES[i]}"></i>${esc(s.label)} <b style="color:var(--fg);font-weight:500">${fmtVal(last(s), d.unit)}</b></span>`).join("")}${hidden ? `<span>+${hidden} more</span>` : ""}<span style="margin-left:auto">${esc(unit)}</span></div>`;
+}
+
+// --- dashboard toolbar ---
+$("dsel").onchange = () => {
+  const v = $("dsel").value;
+  if (dash.dirty && !confirm("Discard unsaved changes?")) { renderDash(); return; }
+  dash.edit = false;
+  if (v.startsWith("d:")) dashOpen(v.slice(2)); else if (v.startsWith("t:")) dashOpenTemplate(v.slice(2));
+};
+$("dEdit").onclick = () => { dash.edit = !dash.edit; renderDash(); };
+function dashPut(name, def) {
+  return fetch("/api/dashboards?" + new URLSearchParams({name}), auth({method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify(def)}))
+    .then(r => r.ok ? null : r.json().catch(() => ({})).then(e => Promise.reject(e.error || "HTTP " + r.status)));
+}
+$("dSave").onclick = () => {
+  if (!dash.name) return;
+  dashPut(dash.name, dash.def).then(() => { dash.dirty = false; dashMsg("saved"); return dashFetch(dash.name); }).catch(e => dashMsg(String(e), true));
+};
+$("dSaveAs").onclick = () => {
+  const name = (prompt("Save dashboard as:", dash.name || dash.tpl || "") || "").trim();
+  if (!name) return;
+  if (!dashNameOk(name)) { dashMsg("name: 1-64 letters, digits, spaces or . _ -", true); return; }
+  if ((dash.list || []).some(d => d.name === name) && name !== dash.name && !confirm(`Replace the saved dashboard "${name}"?`)) return;
+  dashPut(name, dash.def).then(() => { dash.dirty = false; dash.name = name; dash.tpl = null; localStorage.nn_dash = name; dashMsg("saved"); return dashFetch(name); })
+    .catch(e => dashMsg(String(e), true));
+};
+$("dNew").onclick = () => {
+  if (dash.dirty && !confirm("Discard unsaved changes?")) return;
+  dashOpenTemplate(null); dash.edit = true; renderDash();
+};
+$("dDel").onclick = () => {
+  if (!dash.name || !confirm(`Delete the dashboard "${dash.name}" for everyone?`)) return;
+  fetch("/api/dashboards?" + new URLSearchParams({name: dash.name}), auth({method: "DELETE"}))
+    .then(r => { if (!r.ok) return Promise.reject(r.status); delete localStorage.nn_dash; dash.name = null; dash.def = null; dash.edit = false; dashMsg("deleted"); return dashFetch(); })
+    .catch(e => dashMsg("delete failed (" + e + ")", true));
+};
+$("dExport").onclick = () => {
+  if (!dash.def) return;
+  const name = dash.name || dash.tpl || "dashboard";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(Object.assign({name}, dash.def), null, 2)], {type: "application/json"}));
+  a.download = name.replace(/[^\w.-]+/g, "_") + ".json";
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$("dImport").onclick = () => $("dFile").click();
+$("dFile").onchange = () => {
+  const f = $("dFile").files[0]; $("dFile").value = "";
+  if (!f) return;
+  f.text().then(t => {
+    const d = JSON.parse(t);
+    if (!d || !Array.isArray(d.widgets) || !d.widgets.every(w => w && w.q && METRICS[w.q.name] && ["timeseries", "toplist", "counter"].includes(w.kind)))
+      throw new Error("not a NetworkNinja dashboard file");
+    for (const w of d.widgets) { w.q.by = Array.isArray(w.q.by) ? w.q.by : []; w.q.where = w.q.where || {}; w.title = String(w.title || w.q.name); }
+    if (dash.dirty && !confirm("Discard unsaved changes?")) return;
+    dash.name = null; dash.tpl = null; dash.def = {version: 1, widgets: d.widgets};
+    dashLoaded(); dash.dirty = true; renderDash();
+    dashMsg(`imported "${d.name || f.name}" — “save as” to keep it`);
+  }).catch(e => dashMsg("import failed: " + e.message, true));
+};
+$("dgrid").onclick = ev => {
+  const tpl = ev.target.closest("[data-tpl]");
+  if (tpl) { dashOpenTemplate(tpl.dataset.tpl); return; }
+  if (ev.target.id === "wAdd") { openWidgetEditor(null); return; }
+  const btn = ev.target.closest("[data-act]");
+  if (!btn) return;
+  const i = +btn.closest(".wcard").dataset.i, ws = dash.def.widgets, act = btn.dataset.act;
+  const swap = j => { [ws[i], ws[j]] = [ws[j], ws[i]]; [dash.data[i], dash.data[j]] = [dash.data[j], dash.data[i]]; };
+  if (act === "edit") { openWidgetEditor(i); return; }
+  if (act === "left") swap(i - 1);
+  else if (act === "right") swap(i + 1);
+  else if (act === "dup") { ws.splice(i + 1, 0, clone(ws[i])); dash.data.splice(i + 1, 0, dash.data[i]); }
+  else if (act === "del") { ws.splice(i, 1); dash.data.splice(i, 1); }
+  dash.dirty = true; renderDash();
+};
+
+// --- widget editor: pickers only, previewed against live data ---
+function openWidgetEditor(i) {
+  dash.editing = i;
+  const w = i === null ? W("", "timeseries", "pdu.count", "rate", 3600) : clone(dash.def.widgets[i]);
+  $("weTitle").textContent = i === null ? "add a widget" : "edit widget";
+  $("weSubmit").textContent = i === null ? "add widget" : "save widget";
+  $("weMetric").innerHTML = Object.entries(METRICS).map(([k, m]) => `<option value="${k}">${esc(m.label)} (${k})</option>`).join("");
+  $("weName").value = w.title; $("weKind").value = w.kind; $("weMetric").value = w.q.name;
+  $("weSpan").value = String(w.q.span); if (!$("weSpan").value) $("weSpan").value = "3600";
+  $("weWin").value = String(w.q.window || 0); if (!$("weWin").value) $("weWin").value = "0";
+  $("weWide").checked = w.wide;
+  weMetricChanged(w);
+  $("weMsg").textContent = ""; $("wePrev").innerHTML = "";
+  $("dashEd").classList.add("on");
+  $("weName").focus();
+  wePreview();
+}
+function weMetricChanged(w) {
+  const m = METRICS[$("weMetric").value], aggs = m.gauge ? AGGS.gauge : AGGS.counter;
+  $("weAgg").innerHTML = aggs.map(a => `<option value="${a}">${AGG_LABEL[a]}</option>`).join("");
+  $("weAgg").value = w && aggs.includes(w.q.agg) ? w.q.agg : aggs[0];
+  const by = w ? w.q.by : [];
+  $("weBy").innerHTML = m.dims.map(d => `<label><input type="checkbox" value="${d}" ${by.includes(d) ? "checked" : ""}>${DIM_LABEL[d]}</label>`).join("");
+  $("weWhere").innerHTML = "";
+  for (const [k, v] of Object.entries(w ? w.q.where : {})) if (m.dims.includes(k)) weAddWhere(k, v);
+  weKindChanged();
+}
+function weAddWhere(k, v = "") {
+  const m = METRICS[$("weMetric").value];
+  $("weWhere").insertAdjacentHTML("beforeend", `<div class="wrow"><select>${m.dims.map(d => `<option value="${d}" ${d === k ? "selected" : ""}>${DIM_LABEL[d]}</option>`).join("")}</select><input type="text" placeholder="value" value="${esc(v)}"><button type="button" class="albtn">✕</button></div>`);
+}
+function weKindChanged() { $("weWinL").hidden = $("weKind").value !== "timeseries"; }
+function weRead() {
+  const by = [...$("weBy").querySelectorAll("input:checked")].map(c => c.value);
+  const where = {};
+  for (const row of $("weWhere").querySelectorAll(".wrow")) { const v = row.querySelector("input").value.trim(); if (v) where[row.querySelector("select").value] = v; }
+  const span = $("weSpan").value;
+  return {title: $("weName").value.trim() || METRICS[$("weMetric").value].label, kind: $("weKind").value, wide: $("weWide").checked,
+    q: {name: $("weMetric").value, agg: $("weAgg").value, by, where, span: span === "run" ? "run" : +span, window: +$("weWin").value}};
+}
+let wePrevSeq = 0;
+function wePreview() {
+  const w = weRead(), seq = ++wePrevSeq;
+  $("wePrev").innerHTML = `<div class="wcard"><div class="whead"><b>${esc(w.title)}</b><span class="u">preview</span></div><div class="wbody"></div></div>`;
+  widgetFetch(w).then(d => {
+    if (seq !== wePrevSeq) return;
+    drawWidget($("wePrev").querySelector(".wbody"), w, d);
+    $("weMsg").className = d.error ? "msg bad" : "msg"; $("weMsg").textContent = d.error ? String(d.error) : "";
+  }).catch(() => {});
+}
+$("weMetric").onchange = () => { weMetricChanged(null); wePreview(); };
+$("weKind").onchange = () => { weKindChanged(); wePreview(); };
+$("weWhereAdd").onclick = () => weAddWhere(METRICS[$("weMetric").value].dims[0]);
+$("weWhere").onclick = ev => { if (ev.target.tagName === "BUTTON") { ev.target.parentElement.remove(); wePreview(); } };
+$("weForm").onchange = ev => { if (ev.target.id !== "weMetric" && ev.target.id !== "weKind") wePreview(); };
+$("wePrevB").onclick = wePreview;
+$("weForm").onsubmit = ev => {
+  ev.preventDefault();
+  const w = weRead();
+  if (dash.editing === null) { dash.def.widgets.push(w); dash.data.push(null); }
+  else { dash.def.widgets[dash.editing] = w; dash.data[dash.editing] = null; }
+  dash.dirty = true;
+  $("dashEd").classList.remove("on");
+  renderDash(); dashRefresh();
+};
+$("weClose").onclick = () => $("dashEd").classList.remove("on");
+document.addEventListener("keydown", ev => { if (ev.key === "Escape") $("dashEd").classList.remove("on"); });
+window.addEventListener("resize", () => { if (!$("dash").hidden) renderDash(); });
+window.addEventListener("beforeunload", ev => { if (dash.dirty) { ev.preventDefault(); ev.returnValue = ""; } });
 
 loadRuns();
 initMap();
