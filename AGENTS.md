@@ -212,6 +212,18 @@ target (PRF @16, PW @20, targets @45, high density @46, status @47).
 Generator `--emission-every SECS` (an AN/APG-63 for 30 s), eight faults, preset
 `--all-emission-faults`; `SimEntity.destroyed` sets appearance Damage 3.
 
+Explanations (alerts work): every `Alert` carries `kind` (the finding type)
+and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and
+`facts` (`[[name, value], ...]`). **Not `kind`** in JSON: log entries already
+use `kind` for alert/error/info. `nn_rules::explain` is the catalog (title,
+impact, causes, fix) per (rule name, finding), `*` for a rule-wide entry
+(heartbeat's findings are PDU type names), served at `/api/explain`.
+`tests/explain.rs` runs every preset on all four vendor profiles and fails on
+any unexplained finding: add a catalog entry with every new finding type.
+Fault presets live in `nn_generator::presets` (`Presets::all()`, `schedule`)
+so tests build the same runs as the CLI. Engine-level rules and tier S fill
+`facts`; tracker findings don't yet (their message is the detail).
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock
