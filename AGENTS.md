@@ -202,6 +202,16 @@ Attribute holds a record (set in `minimal()`, so defects keep them).
 Faults `--mine-fired`, `--impact-miss`, `--still-collision`,
 `--bad-de-record`, `--bad-attribute`, `--missing-extension`.
 
+Electromagnetic Emission (`nn_rules::emission`, rule `emission`, Wave 2): emitter
+systems keyed by (exercise, entity, Emitter Number), heartbeat `ee_heartbeat`
+per *system* (EE is `own_rule` in the heartbeat table now, so `[rules.heartbeat]`
+has no EE key); identity, reserved/duplicate numbers, high density, CW/pulsed,
+Track/Jam targets, Deactivated-twice, Destroyed-but-emitting. EE bytes: systems
+from 28 (20-byte header: name @4, function @6, number @7), beams 52 + 8 per
+target (PRF @16, PW @20, targets @45, high density @46, status @47).
+Generator `--emission-every SECS` (an AN/APG-63 for 30 s), eight faults, preset
+`--all-emission-faults`; `SimEntity.destroyed` sets appearance Damage 3.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

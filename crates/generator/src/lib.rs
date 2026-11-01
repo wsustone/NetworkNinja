@@ -98,6 +98,24 @@ pub enum EventKind {
     /// Attribute fault: a PDU says it is coupled (PDU Status CEI) and no
     /// Attribute PDU follows it.
     MissingExtension,
+    /// Emission fault: the next emitter's EE PDUs stop with its beam on.
+    EmitterDropout,
+    /// Emission fault: the next emitter's Emitter Name changes.
+    EmitterRename,
+    /// Emission fault: the next emitter's beam is numbered NO_BEAM.
+    ReservedBeam,
+    /// Emission fault: the next emitter selects High Density Track/Jam and
+    /// still lists its target.
+    DenseTargets,
+    /// Emission fault: the next emitter gives a PRF with no pulse width.
+    HalfPulsed,
+    /// Emission fault: the next emitter's Track/Jam target has site 0.
+    NoSiteTarget,
+    /// Emission fault: the next emitter reports its beam Deactivated twice.
+    RepeatDeactivated,
+    /// Emission fault: the next emitter's entity is destroyed and keeps
+    /// emitting.
+    DestroyedEmitting,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -168,6 +186,14 @@ impl EventKind {
             EventKind::BadDeRecord => "bad-de-record",
             EventKind::BadAttribute => "bad-attribute",
             EventKind::MissingExtension => "missing-extension",
+            EventKind::EmitterDropout => "emitter-dropout",
+            EventKind::EmitterRename => "emitter-rename",
+            EventKind::ReservedBeam => "reserved-beam",
+            EventKind::DenseTargets => "dense-targets",
+            EventKind::HalfPulsed => "half-pulsed",
+            EventKind::NoSiteTarget => "no-site-target",
+            EventKind::RepeatDeactivated => "repeat-deactivated",
+            EventKind::DestroyedEmitting => "destroyed-emitting",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -226,6 +252,14 @@ impl EventKind {
                 | EventKind::BadDeRecord
                 | EventKind::BadAttribute
                 | EventKind::MissingExtension
+                | EventKind::EmitterDropout
+                | EventKind::EmitterRename
+                | EventKind::ReservedBeam
+                | EventKind::DenseTargets
+                | EventKind::HalfPulsed
+                | EventKind::NoSiteTarget
+                | EventKind::RepeatDeactivated
+                | EventKind::DestroyedEmitting
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
                 | EventKind::StaleAppearance
@@ -305,6 +339,8 @@ pub struct Config {
     pub collision_every: Option<f64>,
     pub damage_every: Option<f64>,
     pub de_every: Option<f64>,
+    /// Seconds between 30 s radar emissions (`families::emission`).
+    pub emission_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -352,6 +388,7 @@ impl Default for Config {
             collision_every: None,
             damage_every: None,
             de_every: None,
+            emission_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,

@@ -47,7 +47,8 @@ static TABLE: [Heartbeat; 18] = [
     own(hb(67, "HBT_ESPDU_*", 5.0, "5.3.5.3", "entity_state_update")),
     own(hb(25, "HBT_PDU_TRANSMITTER", 2.0, "5.8.3.3", "transmitter")),
     own(hb(27, "HBT_PDU_RECEIVER", 5.0, "5.8.5.3", "receiver")),
-    hb(23, "HBT_PDU_EE", 5.0, "5.7.3.3.2", "electromagnetic_emission"),
+    // Per emitter system, not per entity: rule `emission`.
+    own(hb(23, "HBT_PDU_EE", 5.0, "5.7.3.3.2", "electromagnetic_emission")),
     hb(24, "HBT_PDU_DESIGNATOR", 5.0, "5.7.4.3", "designator"),
     hb(28, "HBT_PDU_IFF", 10.0, "5.7.6.3", "iff"),
     hb(29, "HBT_PDU_UA", 180.0, "5.7.5.3", "underwater_acoustic"),
