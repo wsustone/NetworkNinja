@@ -109,13 +109,24 @@ fn alert_and_state_json() {
             since: 123.5,
             message: "claimed by \"two\" senders".into(),
             sender: Some("10.0.0.7:4000".parse().unwrap()),
+            kind: "two-senders",
+            facts: vec![("first sender", "10.0.0.1:4000 \"a\"".into())],
         },
         reason: String::new(),
     };
     let j = alert_json(&e);
+    // The event log adds "kind":"alert"; the alert mustn't bring its own.
+    let logged = Hub::new().log("alert", &j);
+    assert_eq!(logged.matches("\"kind\":").count(), 1, "{logged}");
     assert!(j.contains("\"rule\":\"id-conflict\""), "{j}");
     assert!(j.contains("\"pack\":\"dis-base\""), "{j}");
     assert!(j.contains("\\\"two\\\""), "{j}");
+    assert!(
+        j.contains(
+            r#""rule_name":"id-conflict","finding":"two-senders","facts":[["first sender","10.0.0.1:4000 \"a\""]]"#
+        ),
+        "{j}"
+    );
 
     m.now = secs(SystemTime::now());
     let mut recent = VecDeque::new();
@@ -596,6 +607,8 @@ fn events_summary_groups_violations_by_sender_and_migrates_old_stores() {
             since: at,
             message: "m".into(),
             sender: Some(sender.parse().unwrap()),
+            kind: "jump",
+            facts: Vec::new(),
         },
         reason: String::new(),
     };
@@ -703,10 +716,26 @@ fn events_summary_groups_violations_by_sender_and_migrates_old_stores() {
     );
     // /api/log filters on the new sender column too.
     let r = http_get(addr, &format!("/api/log?sender={b}"));
-    assert!(r.contains("force_id") && !r.contains("position-jump"), "{r}");
+    assert!(
+        r.contains("force_id") && !r.contains("\"rule\":\"position-jump\""),
+        "{r}"
+    );
 
     drop(hub);
     for ext in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
     }
+}
+
+#[test]
+fn explain_catalog_is_valid_json_with_every_entry() {
+    let j = web::explain_json();
+    let v: Vec<&str> = j.matches("{\"rule\":").collect();
+    assert_eq!(v.len(), nn_rules::explain::catalog().len());
+    assert!(
+        j.contains(r#""rule":"emission","kind":"dropout","title":"Emitter went silent while still on""#),
+        "{j}"
+    );
+    // Quotes in the text (a "fired" mine) arrive escaped.
+    assert!(j.contains(r#"A mine or demolition was \"fired\""#), "{j}");
 }

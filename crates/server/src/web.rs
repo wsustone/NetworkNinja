@@ -887,6 +887,9 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
         ("GET", "/api/interfaces") => {
             let _ = respond(s, "200 OK", "application/json", &interfaces_json());
         }
+        ("GET", "/api/explain") => {
+            let _ = respond(s, "200 OK", "application/json", &explain_json());
+        }
         ("GET", "/api/capture") => {
             let body = match hub.capture.lock().unwrap().as_ref() {
                 Some((path, stats)) => stats.json(path),
@@ -1204,13 +1207,33 @@ pub fn alert_json(e: &AlertEvent) -> String {
         .map(|s| format!("\"sender\":\"{s}\","))
         .unwrap_or_default();
     format!(
-        "{{\"at\":{},\"state\":\"{state}\",\"severity\":\"{sev}\",\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"exercise\":{},{sender}\"message\":\"{}\"}}",
+        "{{\"at\":{},\"state\":\"{state}\",\"severity\":\"{sev}\",\"pack\":\"{}\",\"rule\":\"{}\",\"entity\":\"{}\",\"exercise\":{},{sender}\"message\":\"{}\",{}}}",
         fnum(e.at),
         esc(&e.alert.pack),
         esc(&e.alert.rule_id),
         esc(&e.alert.key.id.to_string()),
         e.alert.key.exercise,
         esc(&e.alert.message),
+        finding_json(&e.alert),
+    )
+}
+
+/// An alert's finding: the rule it belongs to (`rule` is the check's id,
+/// which for an enum check is its field), the finding type and the evidence
+/// as `[name, value]` pairs, in order. With `rule_name`, `finding` is the key
+/// into `/api/explain`. (Not `kind`: log entries use that for alert / error
+/// / info.)
+fn finding_json(a: &nn_rules::Alert) -> String {
+    let facts: Vec<String> = a
+        .facts
+        .iter()
+        .map(|(k, v)| format!("[\"{}\",\"{}\"]", esc(k), esc(v)))
+        .collect();
+    format!(
+        "\"rule_name\":\"{}\",\"finding\":\"{}\",\"facts\":[{}]",
+        a.rule.name(),
+        esc(a.kind),
+        facts.join(",")
     )
 }
 
@@ -1412,6 +1435,26 @@ pub fn inputs_json(
 }
 
 /// `/api/interfaces`: the host's IPv4 interfaces, for the inputs editor.
+/// The explanation catalog (`nn_rules::explain`): one entry per rule and
+/// finding type, for the dashboard to show beside an alert's message.
+pub fn explain_json() -> String {
+    let items: Vec<String> = nn_rules::explain::catalog()
+        .iter()
+        .map(|e| {
+            format!(
+                "{{\"rule\":\"{}\",\"kind\":\"{}\",\"title\":\"{}\",\"impact\":\"{}\",\"causes\":\"{}\",\"fix\":\"{}\"}}",
+                esc(e.rule),
+                esc(e.kind),
+                esc(e.title),
+                esc(e.impact),
+                esc(e.causes),
+                esc(e.fix)
+            )
+        })
+        .collect();
+    format!("{{\"explanations\":[{}]}}", items.join(","))
+}
+
 pub fn interfaces_json() -> String {
     let list = nn_capture::iface::list().unwrap_or_default();
     let items: Vec<String> = list
@@ -1905,6 +1948,8 @@ fn top_json(m: &Monitor, uptime: f64, clients: usize, packs: &[String], kind: &s
             fnum(a.since),
             esc(&a.message),
         ));
+        s.push(',');
+        s.push_str(&finding_json(a));
         if let Some(ack) = m.engine.ack_of(&a.rule_id, &a.key) {
             s.push_str(&format!(
                 ",\"ack\":{{\"by\":\"{}\",\"note\":\"{}\",\"at\":{}}}",

@@ -117,6 +117,53 @@ impl Finding {
             }
         }
     }
+
+    /// The finding's name within its rule, for the explanation catalog.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Finding::HeaderTruncated { .. } => "header-truncated",
+            Finding::BadLength { .. } => "bad-length",
+            Finding::Truncated { .. } => "truncated",
+            Finding::Short { .. } => "short",
+            Finding::Padded { .. } => "padded",
+            Finding::Unpadded { .. } => "unpadded",
+            Finding::Inconsistent { .. } => "inconsistent",
+            Finding::Family { .. } => "family",
+        }
+    }
+
+    /// The finding's numbers, named: what the PDU says against what its
+    /// layout needs.
+    pub fn facts(&self) -> Vec<(&'static str, String)> {
+        let bytes = |n: &usize| format!("{n} bytes");
+        match self {
+            Finding::HeaderTruncated { available } => vec![("bytes left", bytes(available))],
+            Finding::BadLength { length } => vec![("length field", length.to_string()), ("minimum", "12".into())],
+            Finding::Truncated { length, available } => {
+                vec![("length field", bytes(length)), ("datagram holds", bytes(available))]
+            }
+            Finding::Short { needed, length }
+            | Finding::Padded { needed, length }
+            | Finding::Unpadded { needed, length } => {
+                vec![("length field", bytes(length)), ("layout needs", bytes(needed))]
+            }
+            Finding::Inconsistent {
+                field,
+                declared,
+                expected,
+            } => vec![
+                ("field", field.to_string()),
+                ("says", declared.to_string()),
+                ("data needs", expected.to_string()),
+            ],
+            Finding::Family { family, expected } => {
+                vec![
+                    ("protocol family", family.to_string()),
+                    ("expected", expected.to_string()),
+                ]
+            }
+        }
+    }
 }
 
 /// What [`check`] found in the PDU at the start of a buffer.
