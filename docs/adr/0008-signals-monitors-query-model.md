@@ -286,6 +286,13 @@ broken down.
 4. Standard rules by PDU family, starting with SISO-REF-010 generation
    and the behavioural rules listed in §3.
 5. Dashboard builder, saved dashboards, templates; alert routes.
+   Done so far: `GET/PUT/DELETE /api/dashboards` (a `dashboards` table in
+   the `--db` store, in-memory without it) and a "Dashboards" tab whose
+   widgets (timeseries, toplist, counter) bind to §2 query objects and
+   are built picker-only with a live preview. Shipped templates:
+   "Exercise overview" and "Conformance & health". Still open: alert
+   routes, and the map/event-stream/table widget kinds and drag-resize
+   from §5 Phase B.
 
 ## Consequences
 

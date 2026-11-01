@@ -739,3 +739,45 @@ fn explain_catalog_is_valid_json_with_every_entry() {
     // Quotes in the text (a "fired" mine) arrive escaped.
     assert!(j.contains(r#"A mine or demolition was \"fired\""#), "{j}");
 }
+
+#[test]
+fn dashboards_saved_listed_and_deleted() {
+    let (addr, _hub) = Hub::listen("127.0.0.1:0").unwrap();
+    let def = r#"{"version":1,"widgets":[{"title":"PDU rate","kind":"timeseries","q":{"name":"pdu.count","agg":"rate","by":["pdu_type"],"where":{},"span":3600,"window":0}}]}"#;
+    let put = |name: &str, body: &str| {
+        http(
+            addr,
+            &format!(
+                "PUT /api/dashboards?name={name} HTTP/1.1\r\nhost: x\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            ),
+        )
+    };
+    let del = |name: &str| {
+        http(
+            addr,
+            &format!("DELETE /api/dashboards?name={name} HTTP/1.1\r\nhost: x\r\n\r\n"),
+        )
+    };
+    // Empty until one is saved.
+    assert!(http_get(addr, "/api/dashboards").contains("\"dashboards\":[]"));
+    // Bad names and bodies are rejected.
+    assert!(put("", def).starts_with("HTTP/1.1 400"));
+    assert!(put("bad%20name!", def).starts_with("HTTP/1.1 400"));
+    assert!(put("ok", "not json").starts_with("HTTP/1.1 400"));
+    assert!(put("ok", "{\"widgets\":").starts_with("HTTP/1.1 400"));
+    assert!(put("ok", "{\"no_widgets\":1}").starts_with("HTTP/1.1 400"));
+    assert!(put("ok", "{\"widgets\":[],\"x\":\"bad\x01\"}").starts_with("HTTP/1.1 400"));
+    // Save, list, overwrite, delete — in memory when there is no --db.
+    assert!(put("ops-view", def).starts_with("HTTP/1.1 200"));
+    let list = http_get(addr, "/api/dashboards");
+    assert!(
+        list.contains("\"name\":\"ops-view\"") && list.contains("\"kind\":\"timeseries\""),
+        "{list}"
+    );
+    assert!(put("ops-view", "{\"widgets\":[]}").starts_with("HTTP/1.1 200"));
+    assert!(http_get(addr, "/api/dashboards").contains("\"widgets\":[]"));
+    assert!(del("ops-view").starts_with("HTTP/1.1 200"));
+    assert!(del("ops-view").starts_with("HTTP/1.1 404"));
+    assert!(http_get(addr, "/api/dashboards").contains("\"dashboards\":[]"));
+}
