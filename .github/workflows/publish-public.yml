@@ -1,0 +1,72 @@
+name: Publish public release
+
+# Copies a published release's archives and SHA256SUMS.txt to the public
+# downloads repo (PUBLIC_REPO below), which wsustone.com links to. This repo
+# is private, so its own release assets can't be downloaded by visitors.
+#
+# Runs when you press Publish on the draft the Release workflow makes. To
+# copy a release that's already published (or re-copy one), run this
+# workflow by hand with its tag.
+#
+# Needs a RELEASE_TOKEN secret: a fine-grained token scoped to PUBLIC_REPO
+# with Contents read and write. The public repo needs at least one commit
+# (a README is enough) so tags have a branch to point at.
+#
+# Release notes aren't copied: generated notes link to this repo's private
+# pull requests and commits.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of a published release, e.g. v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  PUBLIC_REPO: wsustone/networkninja-releases
+
+jobs:
+  publish:
+    name: Copy to public repo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the release assets
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          prerelease=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist
+          ls -l dist
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+      - name: Publish to the public repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAG: ${{ steps.source.outputs.tag }}
+          PRERELEASE: ${{ steps.source.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::RELEASE_TOKEN secret isn't set (see the comment at the top of this workflow)"
+            exit 1
+          fi
+          # Re-running replaces the assets of a release that's already there.
+          if gh release view "$TAG" --repo "$PUBLIC_REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$PUBLIC_REPO" --clobber
+          else
+            pre=""
+            [[ "$PRERELEASE" == true ]] && pre="--prerelease"
+            gh release create "$TAG" dist/* --repo "$PUBLIC_REPO" $pre \
+              --title "NetworkNinja $TAG" \
+              --notes "Ready-to-run NetworkNinja $TAG builds for macOS (universal), Linux (x86_64, static) and Windows (x86_64). Unpack one and follow its QUICKSTART.md. Check downloads against SHA256SUMS.txt."
+          fi

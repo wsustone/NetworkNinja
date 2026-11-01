@@ -61,4 +61,4 @@ The dashboard fills with entities, and with the faults the generator injects. Ru
 - **"Address already in use".** Another program (often a simulator on the same machine) holds
   the port. Add `--share` to share it, or choose another port.
 
-NetworkNinja is proprietary software. See LICENSE.
+Copyright 2026 Juston Morgan. NetworkNinja is licensed under the Apache License, Version 2.0; see LICENSE and NOTICE.
