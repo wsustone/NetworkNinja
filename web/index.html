@@ -67,6 +67,22 @@
   #inputsEd .row button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.45em 1em; font:inherit; font-weight:600; cursor:pointer; }
   #inputsEd .row button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
   #inputsEd .msg { font-size:12px; } #inputsEd .msg.bad { color:var(--crit); } #inputsEd .msg.good { color:var(--ok); }
+  /* Fix report: one simulation's problems as Markdown / CSV. */
+  #reportEd { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center; z-index:8; overflow-y:auto; padding:4vh 1em; }
+  #reportEd.on { display:flex; }
+  #reportEd>div { background:var(--panel); border:1px solid var(--line); border-radius:8px; width:min(900px,100%); display:flex; flex-direction:column; }
+  #reportEd h2 { margin:0; padding:.7em .9em; font-size:14px; display:flex; gap:.6em; align-items:center; flex-wrap:wrap; }
+  #reportEd h2 span { margin-left:auto; }
+  #reportEd .bar { display:flex; gap:.6em; align-items:center; flex-wrap:wrap; padding:0 .9em .6em; font-size:12px; color:var(--dim); }
+  #reportEd textarea { margin:0 .9em; min-height:52vh; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.7em; font:12px/1.45 ui-monospace,monospace; resize:vertical; }
+  #reportEd .foot { padding:.6em .9em .8em; display:flex; gap:.6em; align-items:center; flex-wrap:wrap; font-size:12px; }
+  #reportEd .foot button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.45em 1em; font:inherit; font-weight:600; cursor:pointer; }
+  #reportEd .foot button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
+  #toast { position:fixed; bottom:1.2em; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:.55em 1em; font-size:12px; z-index:10; display:none; max-width:min(640px,90vw); }
+  #toast.on { display:block; } #toast.bad { border-color:var(--crit); }
+  .nm { color:var(--fg); font-weight:500; }
+  .nmbtn { background:none; border:0; color:var(--dim); cursor:pointer; font-size:11px; padding:0 .2em; }
+  .nmbtn:hover { color:var(--fg); }
   #inputsEd .foot { padding:.6em .9em .8em; border-top:1px solid var(--line); font-size:12px; color:var(--dim); display:flex; gap:1em; align-items:center; flex-wrap:wrap; }
   #inputsEd .hint { grid-column:1/-1; font-size:11px; color:var(--dim); }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
@@ -375,6 +391,14 @@
 </main>
 <script src="/vendor/maplibre-gl.js"></script>
 
+<div id="reportEd"><div>
+  <h2>Fix report <b id="rpWho"></b><span><button class="albtn" id="rpClose">close</button></span></h2>
+  <div class="bar">Every problem this simulation had, with what happened, why it matters and how to fix it, to send to its vendor.
+    <label>period <select id="rpSince"><option value="3600">last hour</option><option value="86400" selected>last 24 hours</option><option value="604800">last 7 days</option><option value="0">everything stored</option></select></label></div>
+  <textarea id="rpText" readonly></textarea>
+  <div class="foot"><button id="rpCopy">copy Markdown</button><button class="plain" id="rpMd">download .md</button><button class="plain" id="rpCsv">download .csv</button><span id="rpMsg" class="chk"></span></div>
+</div></div>
+<div id="toast"></div>
 <div id="inputsEd"><div>
   <h2>Inputs: where the server listens <span><button class="albtn" id="ieClose">close</button></span></h2>
   <div class="tablewrap"><table><thead><tr><th>name</th><th>port</th><th>multicast groups</th><th>interfaces</th><th>shared</th><th>buffer</th><th>status</th><th></th></tr></thead>
@@ -499,6 +523,76 @@ function titleOf(i) {
 const CITE = /\s*\(IEEE 1278\.1 ([^]*?),? draft D16r18\)|;\s*IEEE 1278\.1 ([^]*?),? draft D16r18/;
 const clauseOf = m => { const x = CITE.exec(m || ""); return x ? (x[1] || x[2]).replace(/,$/, "") : ""; };
 const uncited = m => (m || "").replace(CITE, "");
+// --- sender names (GET/POST /api/senders) ---
+let NAMES = {list: [], file: null};
+function loadNames() {
+  fetch("/api/senders", auth()).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    NAMES = {list: d.names || [], file: d.config_file};
+    renderBoard(); renderDetail();
+  }).catch(() => {});
+}
+setInterval(loadNames, 20000);
+// A simulation's name, else its site's; a sender's by address:port, else address.
+function simName(sim) {
+  if (!sim) return "";
+  const f = t => (NAMES.list.find(n => n.simulation === t) || {}).name;
+  return f(sim) || f(sim.split(":")[0]) || "";
+}
+const ipOf = addr => (addr || "").replace(/:\d+$/, "").replace(/^\[(.*)\]$/, "$1");
+function senderName(addr) {
+  if (!addr) return "";
+  const f = t => (NAMES.list.find(n => n.address === t) || {}).name;
+  return f(addr) || f(ipOf(addr)) || "";
+}
+const named = (text, name) => esc(text) + (name ? ` <span class="nm">(${esc(name)})</span>` : "");
+const nameBtn = (kind, value) => `<button class="nmbtn" data-name="${kind}" data-val="${esc(value)}" title="Name this ${kind === "simulation" ? "simulation" : "sender address"}">✎</button>`;
+function nameIt(kind, value) {
+  const cur = kind === "simulation" ? simName(value) : senderName(value);
+  const name = prompt(`Name for ${kind === "simulation" ? "simulation" : "address"} ${value} (empty to remove):`, cur);
+  if (name === null) return;
+  fetch("/api/senders", auth({method: "POST", headers: {"content-type": "application/json"},
+      body: JSON.stringify({cmd: "sender_set", [kind]: value, name})}))
+    .then(r => r.json()).then(d => { toast(d.ok ? d.message : d.error, !d.ok); loadNames(); })
+    .catch(() => toast("couldn't reach the server", true));
+}
+let toastTimer = 0;
+function toast(msg, bad) {
+  const t = $("toast");
+  t.textContent = msg; t.className = "on" + (bad ? " bad" : "");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "", 6000);
+}
+
+// --- fix report (GET /api/report): one simulation's problems for its vendor ---
+let rpSim = null, rpEx = null;
+function openReport(sim, ex) {
+  rpSim = sim; rpEx = ex;
+  $("rpWho").textContent = `simulation ${sim}` + (simName(sim) ? ` (${simName(sim)})` : "");
+  $("rpMsg").textContent = "";
+  $("reportEd").classList.add("on");
+  loadReport();
+}
+// The period counts back from the monitor's clock, so replays report too.
+function reportUrl(format) {
+  const span = +$("rpSince").value, now = state ? state.at : Date.now() / 1000;
+  const q = new URLSearchParams({sim: rpSim, format, since: span ? Math.floor(now - span) : 0});
+  if (rpEx !== null && rpEx !== undefined && rpEx !== "") q.set("exercise", rpEx);
+  return "/api/report?" + q;
+}
+function loadReport() {
+  $("rpText").value = "loading…";
+  fetch(reportUrl("md"), auth()).then(r => r.text().then(t => ({ok: r.ok, t})))
+    .then(({ok, t}) => { $("rpText").value = ok ? t : "error: " + t; })
+    .catch(() => { $("rpText").value = "couldn't reach the server"; });
+}
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type}));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+const rpFile = ext => `networkninja-report-${rpSim.replace(":", "-")}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+
 // A DIS simulation is its entity IDs' site:application.
 const simOf = id => { const p = (id || "").split(":"); return p.length === 3 && !noEntity(id) ? p[0] + ":" + p[1] : ""; };
 
@@ -636,7 +730,7 @@ function renderBoard() {
 }
 
 function renderProblems(probs, terms, now) {
-  const hay = g => [titleOf(g), g.rule, g.ruleName, g.finding, g.sim, [...g.senders].join(" "), g.latest.message,
+  const hay = g => [titleOf(g), g.rule, g.ruleName, g.finding, g.sim, simName(g.sim), [...g.senders].map(a => a + " " + senderName(a)).join(" "), g.latest.message,
     ...g.members.map(m => m.entity + " " + (byId[m.entity] ? byId[m.entity].marking : ""))].join(" ").toLowerCase();
   const list = probs.filter(g => !terms.length || terms.every(t => hay(g).includes(t)));
   $("board").innerHTML = list.map(g => problemHtml(g, now)).join("")
@@ -656,10 +750,11 @@ function problemHtml(g, now) {
     : `${fmtAge(Math.max(0, now - g.last))} ago`;
   const check = g.ruleName === "enum-violation" ? g.rule : g.ruleName + (g.finding && g.finding !== "*" ? " · " + g.finding : "");
   const senders = [...g.senders];
+  const sendersHtml = senders.map(a => named(a, senderName(a)) + nameBtn("address", ipOf(a))).join(", ");
   const who = g.kind === "error"
-    ? `<span>from <b>${esc(senders[0] || "?")}</b></span>`
-    : (g.sim ? `<span>Simulation <b>${esc(g.sim)}</b></span>` : "")
-      + (senders.length ? `<span>${senders.map(esc).join(", ")}</span>` : "")
+    ? `<span>from <b>${senders.length ? sendersHtml : "?"}</b></span>`
+    : (g.sim ? `<span>Simulation <b>${esc(g.sim)}</b>${simName(g.sim) ? ` <span class="nm">${esc(simName(g.sim))}</span>` : ""}${nameBtn("simulation", g.sim)}</span>` : "")
+      + (senders.length ? `<span>${sendersHtml}</span>` : "")
       + (one ? `<span class="ent">${esc(one.entity)}${mark(one.entity)}</span>` : ents.length ? `<span><b>${ents.length}</b> entities</span>` : "");
   let h = `<li class="prob ${cls}${g.quiet ? " quiet" : ""}" data-key="${esc(g.key)}"${one ? ` data-ent="${esc(one.entity)}"` : ""}>`
     + `<div class="l1"><span class="caret">${isOpen ? "▼" : "▶"}</span><span class="title" title="${esc(titleOf(g))}">${esc(titleOf(g))}</span>`
@@ -694,6 +789,7 @@ function expHtml(g, ents, unacked, mark) {
   if (unacked.length) h += `<button class="albtn" data-grp="ack">ack${unacked.length > 1 ? " all " + unacked.length : ""}</button>`;
   if (g.kind === "alert") h += `<button class="albtn" data-cmd="mute_rule" data-rule="${esc(g.rule)}" data-secs="300" title="Silence this check for every entity for 5 minutes">mute this check 5m</button>`;
   h += `<button class="albtn" data-log="${esc(g.kind === "error" ? [...g.senders][0] || "" : g.rule + " " + (g.sim || ""))}">show in log</button>`;
+  if (g.sim) h += `<button class="albtn" data-report="${esc(g.sim)}" data-ex="${g.exercise}" title="Every problem of this simulation, to send to its vendor">fix report for ${esc(g.sim)}${simName(g.sim) ? " (" + esc(simName(g.sim)) + ")" : ""}</button>`;
   return h + `</div></div>`;
 }
 
@@ -717,7 +813,7 @@ function renderEntityRows(all, terms, now) {
     const sel = selected && selected === i.entity ? " sel" : "";
     return `<li class="${cls}${i.quiet ? " quiet" : ""}${sel}" ${noEntity(i.entity) ? "" : `data-ent="${esc(i.entity)}"`}>`
       + `<div class="l1"><span class="rule">${esc(titleOf(i))}</span>${who}${badge}<span class="meta">${times}${ago}</span></div>`
-      + `<div class="l2" title="${esc(msg)}">${esc(msg)}${i.sender && i.kind !== "error" ? ` · <span>${esc(i.sender)}</span>` : ""}</div>`
+      + `<div class="l2" title="${esc(msg)}">${esc(msg)}${i.sender && i.kind !== "error" ? ` · <span>${named(i.sender, senderName(i.sender))}</span>` : ""}</div>`
       + `<div class="l3">${btns}</div></li>`;
   }).join("") || `<li class="empty">${all.length ? "no issues match the filter" : "No issues. Faults, defects and decode errors appear here as they happen."}</li>`;
 }
@@ -846,7 +942,7 @@ function renderDetail() {
   }
   if (d && d.sources) {
     h += `<h3>senders (${d.sources.length})</h3><table><thead><tr><th>address</th><th>via</th><th>reports</th><th>heartbeat</th><th>jitter</th><th>last</th><th>type</th></tr></thead><tbody>`
-      + d.sources.map(s => `<tr class="${s.etype !== e.etype ? "conflict" : ""}"><td>${esc(s.addr)}</td><td>${s.via ? esc(s.via) : "–"}</td><td>${s.reports}</td>`
+      + d.sources.map(s => `<tr class="${s.etype !== e.etype ? "conflict" : ""}"><td>${named(s.addr, senderName(s.addr))}${nameBtn("address", ipOf(s.addr))}</td><td>${s.via ? esc(s.via) : "–"}</td><td>${s.reports}</td>`
         + `<td>${s.hb_mean ? s.hb_mean.toFixed(2) + " s" : "–"}</td><td>${s.hb_sd ? "±" + s.hb_sd.toFixed(2) + " s" : "–"}</td>`
         + `<td>${fmtAge(Math.max(0, now - s.seen))} ago</td><td>${esc(s.etype)}</td></tr>`).join("")
       + `</tbody></table>`;
@@ -1088,6 +1184,8 @@ $("alerts").onclick = ev => {
 };
 $("board").onclick = ev => {
   const btn = ev.target.closest("button");
+  if (btn && btn.dataset.name) { nameIt(btn.dataset.name, btn.dataset.val); return; }
+  if (btn && btn.dataset.report) { openReport(btn.dataset.report, btn.dataset.ex); return; }
   if (btn && btn.dataset.cmd) { ev.stopPropagation(); cmdButton(btn); return; }
   if (btn && btn.dataset.log) { $("filter").value = btn.dataset.log.trim(); showBoard("log"); return; }
   const card = ev.target.closest("li.prob");
@@ -1122,6 +1220,7 @@ $("rows").onclick = ev => {
 };
 $("detail").onclick = ev => {
   const btn = ev.target.closest("button");
+  if (btn && btn.dataset.name) { nameIt(btn.dataset.name, btn.dataset.val); return; }
   if (!btn || !selected) return;
   if (btn.dataset.cmd) return cmdButton(btn);
   const e = byId[selected], ex = e ? e.exercise : 0;
@@ -1349,6 +1448,15 @@ $("ieForm").onsubmit = ev => {
 };
 $("ieCancel").onclick = ieReset;
 $("ieClose").onclick = () => $("inputsEd").classList.remove("on");
+$("rpClose").onclick = () => $("reportEd").classList.remove("on");
+$("reportEd").onclick = ev => { if (ev.target.id === "reportEd") $("reportEd").classList.remove("on"); };
+$("rpSince").onchange = loadReport;
+$("rpCopy").onclick = () => {
+  const done = () => $("rpMsg").textContent = "copied: paste it into an email or ticket";
+  navigator.clipboard.writeText($("rpText").value).then(done, () => { $("rpText").select(); document.execCommand("copy"); done(); });
+};
+$("rpMd").onclick = () => download(rpFile("md"), $("rpText").value, "text/markdown");
+$("rpCsv").onclick = () => fetch(reportUrl("csv"), auth()).then(r => r.text()).then(t => download(rpFile("csv"), t, "text/csv"));
 document.addEventListener("keydown", ev => { if (ev.key === "Escape") $("inputsEd").classList.remove("on"); });
 
 // --- traffic chart: PDU/s from /api/query, split by type / site / sender ---
@@ -1938,6 +2046,7 @@ fetch("/api/log?limit=500", auth()).then(r => {
   if (r.status === 401) { showLogin(); return; }
   r.json().then(d => (d.entries || []).forEach(e => pushEntry(e, true)));
   loadExplain();
+  loadNames();
   connect();
 }).catch(() => connect());
 showBoard(boardView);

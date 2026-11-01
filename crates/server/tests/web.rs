@@ -781,3 +781,82 @@ fn dashboards_saved_listed_and_deleted() {
     assert!(del("ops-view").starts_with("HTTP/1.1 404"));
     assert!(http_get(addr, "/api/dashboards").contains("\"dashboards\":[]"));
 }
+
+#[test]
+fn sender_names_and_the_fix_report() {
+    let hub = Hub::new();
+    // Without --config, names hold until restart, and say so.
+    let m = hub
+        .sender_command(r#"{"cmd":"sender_set","simulation":"9:9","name":"JSAF \"B\""}"#)
+        .unwrap();
+    assert!(
+        m.contains("named 9:9 'JSAF \"B\"'") && m.contains("until restart"),
+        "{m}"
+    );
+    hub.sender_command(r#"{"cmd":"sender_set","address":"10.0.9.10","name":"VBS4 host"}"#)
+        .unwrap();
+    let j = hub.senders_json();
+    assert!(
+        j.contains(r#"{"simulation":"9:9","name":"JSAF \"B\""}"#) && j.contains(r#""config_file":null"#),
+        "{j}"
+    );
+    assert!(hub
+        .sender_command(r#"{"cmd":"sender_set","address":"vbs4","name":"x"}"#)
+        .is_err());
+
+    // Two of 9:9's entities time out; 8:1 has its own problem.
+    let ev = |entity: &str, at: f64| AlertEvent {
+        at,
+        state: AlertState::Firing,
+        alert: Alert {
+            rule: Rule::EntityTimeout,
+            pack: "dis-base".into(),
+            rule_id: "entity-timeout".into(),
+            key: EntityKey {
+                exercise: 1,
+                id: entity.parse().unwrap(),
+            },
+            severity: Severity::Warning,
+            since: at,
+            message: format!("{entity} sent no Entity State for 12.1 s"),
+            sender: Some("10.0.9.10:3000".parse().unwrap()),
+            kind: "silent",
+            facts: vec![("silent for", "12.1 s".into())],
+        },
+        reason: String::new(),
+    };
+    for (e, at) in [("9:9:1", 100.0), ("9:9:2", 101.0), ("8:1:1", 102.0)] {
+        hub.log("alert", &alert_json(&ev(e, at)));
+    }
+    let mut claims = std::collections::BTreeMap::new();
+    claims.insert(
+        "10.0.9.10:3000".to_string(),
+        nn_server::summary::SenderInfo {
+            claims: ["9:9".to_string()].into(),
+            entities: 2,
+            last_seen: 101.0,
+        },
+    );
+    hub.set_conformance(Vec::new(), claims);
+
+    let (md, ct) = hub.report("sim=9:9&since=0").unwrap();
+    assert_eq!(ct, "text/markdown; charset=utf-8");
+    assert!(
+        md.starts_with("# NetworkNinja fix report: simulation 9:9 (JSAF \"B\")"),
+        "{md}"
+    );
+    assert!(md.contains("10.0.9.10:3000 (VBS4 host)"), "{md}");
+    assert!(
+        md.contains("## 1. Entity stopped reporting") && md.contains("**Entities (2):** 9:9:1, 9:9:2"),
+        "{md}"
+    );
+    assert!(
+        md.contains("| silent for | 12.1 s |") && md.contains("**How to fix:**"),
+        "{md}"
+    );
+    assert!(!md.contains("8:1:1"), "{md}");
+    let (csv, ct) = hub.report("sim=9:9&since=0&format=csv").unwrap();
+    assert_eq!((ct, csv.lines().count()), ("text/csv; charset=utf-8", 2), "{csv}");
+    assert!(hub.report("since=0").unwrap_err().contains("sim=SITE:APP"));
+    assert!(hub.report("sim=9:9&format=pdf").is_err());
+}

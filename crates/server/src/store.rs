@@ -205,6 +205,19 @@ impl EventStore {
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
+    /// The log entries of alerts and decode errors since `since`, oldest
+    /// first, as their JSON (for the fix report).
+    pub fn alert_entries(&self, since: f64) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare_cached("SELECT json FROM events WHERE at >= ?1 AND kind IN ('alert', 'error') ORDER BY at")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![since], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
     /// Highest seq seen (all runs), so numbering continues across restarts.
     pub fn max_seq(&self) -> u64 {
         self.conn

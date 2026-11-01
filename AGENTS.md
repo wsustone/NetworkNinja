@@ -231,6 +231,17 @@ title comes from `/api/explain` (`titleOf`), expands (keys in
 affected-entity chips, clause (parsed from the message by `CITE`), and
 "ack all" / "mute this check". The timeline counts firings seen since the
 page loaded (the `/api/log` backlog plus live), 2-minute bars over an hour.
+Sender names (`nn_server::names`): `[[sender]]` blocks (`name` + `address`
+"ip" / "ip:port" or `simulation` "site:app" / "site"), most specific wins.
+`GET /api/senders`; `POST /api/senders {"cmd":"sender_set", address|simulation,
+name}` (empty name removes) saves via `config::save_senders` when started with
+`--config`, else lasts until restart. Handled in `Hub`, not the serve loop.
+The dashboard names senders by IP (source ports change on restart).
+Fix report (`nn_server::report`): `GET /api/report?sim=S:A[&exercise=&since=
+&format=md|csv]` groups the simulation's alert firings (entity site:app) and
+its senders' decode errors (senders whose claims include it) by check and
+finding, from the store (`alert_entries`) or the in-memory log. Card button
+"fix report for S:A" opens it (copy Markdown, download .md / .csv).
 
 ## Timing and identity semantics (October 2026 review fixes)
 
