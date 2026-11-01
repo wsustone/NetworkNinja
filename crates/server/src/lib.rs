@@ -6,7 +6,9 @@
 
 pub mod auth;
 pub mod config;
+pub mod names;
 pub mod pdustore;
+pub mod report;
 pub mod store;
 pub mod summary;
 pub mod tls;

@@ -77,6 +77,8 @@ pub struct Hub {
     config_file: Mutex<Option<String>>,
     /// The outcome of the latest listener change: (number, ok, message).
     input_result: Mutex<(u64, bool, String)>,
+    /// Friendly names for senders and simulations (`[[sender]]`).
+    names: Mutex<crate::names::Names>,
     /// Saved dashboards when there is no `--db` store: name →
     /// (updated unix second, JSON definition).
     dashboards: Mutex<BTreeMap<String, (i64, String)>>,
@@ -128,6 +130,7 @@ impl Hub {
             inputs_live: std::sync::atomic::AtomicBool::new(false),
             config_file: Mutex::new(None),
             input_result: Mutex::new((0, true, String::new())),
+            names: Mutex::new(crate::names::Names::default()),
             conformance: Mutex::new((Vec::new(), BTreeMap::new())),
             dashboards: Mutex::new(BTreeMap::new()),
         }
@@ -520,6 +523,120 @@ impl Hub {
     /// The `--config` file listener changes may be saved to.
     pub fn set_config_file(&self, path: Option<String>) {
         *self.config_file.lock().unwrap() = path;
+    }
+
+    /// The sender names in force (from the config file, then edits).
+    pub fn set_names(&self, names: crate::names::Names) {
+        *self.names.lock().unwrap() = names;
+    }
+
+    /// `/api/senders`: the names, and where edits are saved.
+    pub fn senders_json(&self) -> String {
+        let names = self.names.lock().unwrap();
+        let items: Vec<String> = names
+            .0
+            .iter()
+            .map(|n| {
+                format!(
+                    "{{\"{}\":\"{}\",\"name\":\"{}\"}}",
+                    n.target.key(),
+                    esc(&n.target.to_string()),
+                    esc(&n.name)
+                )
+            })
+            .collect();
+        let file = self.config_file.lock().unwrap().clone();
+        format!(
+            "{{\"names\":[{}],\"config_file\":{}}}",
+            items.join(","),
+            file.map_or("null".into(), |f| format!("\"{}\"", esc(&f)))
+        )
+    }
+
+    /// A `/api/senders` command: `{"cmd":"sender_set","address":"10.0.5.10",
+    /// "name":"VBS4 host"}` (or `"simulation":"9:9"`; an empty name removes
+    /// it). Saved to the `--config` file when there is one. Returns what
+    /// happened, for the dashboard to show.
+    pub fn sender_command(&self, text: &str) -> Result<String, String> {
+        use crate::names::Target;
+        if jstr(text, "cmd") != Some("sender_set") {
+            return Err("expected {\"cmd\":\"sender_set\", \"address\" or \"simulation\": ..., \"name\": ...}".into());
+        }
+        let target = match (jstr(text, "address"), jstr(text, "simulation")) {
+            (Some(a), None) => Target::address(a)?,
+            (None, Some(s)) => Target::simulation(s)?,
+            _ => return Err("give either address or simulation".into()),
+        };
+        let name = crate::report::json_string(text, "name").unwrap_or_default();
+        let mut names = self.names.lock().unwrap();
+        names.set(target, &name);
+        let what = if name.trim().is_empty() {
+            format!("removed the name of {target}")
+        } else {
+            format!("named {target} '{}'", name.trim())
+        };
+        match self.config_file.lock().unwrap().as_deref() {
+            Some(path) => {
+                crate::config::save_senders(path, &names).map_err(|e| format!("{what}, but saving failed: {e}"))?;
+                Ok(format!("{what}; saved to {path}"))
+            }
+            None => Ok(format!(
+                "{what} (until restart: start with --config FILE to keep names)"
+            )),
+        }
+    }
+
+    /// `/api/report`: one simulation's problems as Markdown or CSV.
+    /// `sim=S:A`, optional `exercise`, `since` (epoch s, default 24 h ago),
+    /// `format=md|csv`.
+    pub fn report(&self, query: &str) -> Result<(String, &'static str), String> {
+        use crate::report::{build, Event};
+        let get = |k: &str| param(query, k);
+        let sim = get("sim").ok_or("sim=SITE:APP is required")?;
+        crate::names::Target::simulation(&sim)?;
+        let now = now_secs();
+        let since = match get("since") {
+            Some(v) => v
+                .parse::<f64>()
+                .map_err(|_| format!("since must be epoch seconds, got '{v}'"))?,
+            None => now - 86_400.0,
+        };
+        let exercise = match get("exercise") {
+            Some(v) => Some(
+                v.parse::<u8>()
+                    .map_err(|_| format!("exercise must be 0-255, got '{v}'"))?,
+            ),
+            None => None,
+        };
+        let entries = match self.store.lock().unwrap().as_ref() {
+            Some((store, _)) => store.alert_entries(since)?,
+            None => self.log_buf.lock().unwrap().iter().cloned().collect(),
+        };
+        let events: Vec<Event> = entries
+            .iter()
+            .filter_map(|e| Event::from_json(e))
+            .filter(|e| e.at >= since)
+            .collect();
+        // Senders that report this simulation's entities own its decode errors.
+        let senders = self
+            .conformance
+            .lock()
+            .unwrap()
+            .1
+            .iter()
+            .filter(|(_, info)| info.claims.contains(&sim))
+            .map(|(addr, _)| addr.clone())
+            .collect();
+        let names = self.names.lock().unwrap();
+        let r = build(&events, &sim, &senders, &names, (exercise, since, now));
+        Ok(match get("format").as_deref() {
+            Some("csv") => (r.csv(), "text/csv; charset=utf-8"),
+            None | Some("md") => (
+                r.markdown(&names, env!("CARGO_PKG_VERSION")),
+                "text/markdown; charset=utf-8",
+            ),
+            Some(f) => return Err(format!("format must be md or csv, got '{f}'")),
+        })
     }
 
     /// Record the outcome of a listener change, for the inputs editor.
@@ -988,6 +1105,28 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
         }
         ("GET", "/api/explain") => {
             let _ = respond(s, "200 OK", "application/json", &explain_json());
+        }
+        ("GET", "/api/senders") => {
+            let _ = respond(s, "200 OK", "application/json", &hub.senders_json());
+        }
+        ("POST", "/api/senders") => {
+            let text = String::from_utf8_lossy(&req.body).to_string();
+            let (status, body) = match hub.sender_command(&text) {
+                Ok(m) => ("200 OK", format!("{{\"ok\":true,\"message\":\"{}\"}}", esc(&m))),
+                Err(e) => ("400 Bad Request", format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&e))),
+            };
+            let _ = respond(s, status, "application/json", &body);
+        }
+        ("GET", "/api/report") => {
+            let _ = match hub.report(query) {
+                Ok((body, ct)) => respond(s, "200 OK", ct, &body),
+                Err(e) => respond(
+                    s,
+                    "400 Bad Request",
+                    "application/json",
+                    &format!("{{\"error\":\"{}\"}}", esc(&e)),
+                ),
+            };
         }
         ("GET", "/api/capture") => {
             let body = match hub.capture.lock().unwrap().as_ref() {

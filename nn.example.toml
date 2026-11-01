@@ -30,3 +30,16 @@ port = 3000
 # interface = "en0"
 # share = true
 # receive_buffer_mb = 16
+
+# Friendly names, shown in the dashboard and fix reports instead of bare
+# addresses and site:application numbers. The dashboard's ✎ buttons add and
+# change these (saved here; the old file is kept as nn.toml.bak). Name an
+# address (any port, or "10.0.5.10:3000" for one), a simulation
+# ("site:application"), or a whole site ("9").
+# [[sender]]
+# name = "VBS4 host"
+# address = "10.0.5.10"
+#
+# [[sender]]
+# name = "JSAF cell B"
+# simulation = "9:9"
