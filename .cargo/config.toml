@@ -1,0 +1,6 @@
+# Windows: link the C runtime statically, so nn-server.exe and
+# nn-generator.exe don't need VCRUNTIME140.dll (the Visual C++
+# Redistributable), which clean and air-gapped machines often lack.
+# packaging/check-deps.py checks every release build for this.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
