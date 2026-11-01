@@ -223,6 +223,14 @@ any unexplained finding: add a catalog entry with every new finding type.
 Fault presets live in `nn_generator::presets` (`Presets::all()`, `schedule`)
 so tests build the same runs as the CLI. Engine-level rules and tier S fill
 `facts`; tracker findings don't yet (their message is the detail).
+Dashboard Issues panel: tabs Problems (default) / Entities / Log
+(`boardView` in localStorage). A problem groups per-entity issues by
+(exercise, check `rule`, `finding`, simulation = entity site:app); its card
+title comes from `/api/explain` (`titleOf`), expands (keys in
+`localStorage.nn_expanded`) to message + facts, impact, causes, fix,
+affected-entity chips, clause (parsed from the message by `CITE`), and
+"ack all" / "mute this check". The timeline counts firings seen since the
+page loaded (the `/api/log` backlog plus live), 2-minute bars over an hour.
 
 ## Timing and identity semantics (October 2026 review fixes)
 

@@ -105,6 +105,34 @@
   #board .l2 { color:var(--dim); font-size:12px; margin-top:.15em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #board .l3 { margin-top:.3em; }
   #board .l3 .albtn { margin:0 .4em 0 0; }
+  /* Problem cards: one per simulation and finding, expandable. */
+  #board li.prob { padding:.5em .9em .55em; }
+  #board .prob .l1 { flex-wrap:nowrap; }
+  #board .prob .title { font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #board .prob .caret { color:var(--dim); font-size:10px; width:1em; flex:none; }
+  #board .prob .who { color:var(--dim); font-size:12px; margin-top:.15em; display:flex; gap:.6em; flex-wrap:wrap; align-items:baseline; }
+  #board .prob .who b { color:var(--fg); font-weight:500; }
+  #board .prob .who .ent { color:var(--fg); }
+  #board .chk { color:var(--dim); font-size:11px; font-family:ui-monospace,monospace; }
+  .spark { display:flex; align-items:flex-end; gap:1px; height:14px; margin-top:.35em; }
+  .spark i { flex:1; background:var(--line); min-height:1px; border-radius:1px 1px 0 0; }
+  .spark i.on { background:currentColor; }
+  li.crit .spark { color:var(--crit); } li.warn .spark { color:var(--warn); } li.err .spark { color:var(--crit); }
+  .sparkcap { display:flex; justify-content:space-between; color:var(--dim); font-size:9px; margin-top:1px; }
+  .exp { margin-top:.6em; padding-top:.55em; border-top:1px solid var(--line); cursor:default; font-size:12px; }
+  .exp dl { display:grid; grid-template-columns:7.5em 1fr; gap:.45em .8em; margin:0; }
+  .exp dt { color:var(--dim); }
+  .exp dd { margin:0; line-height:1.45; }
+  .exp code { font-size:11px; background:#21262d; padding:0 .3em; border-radius:3px; }
+  .facts { display:grid; grid-template-columns:max-content 1fr; gap:.1em .9em; margin-top:.35em; font-variant-numeric:tabular-nums; }
+  .facts span:nth-child(odd) { color:var(--dim); }
+  .chips { display:flex; flex-wrap:wrap; gap:.3em; }
+  .chip { font-family:ui-monospace,monospace; font-size:11px; padding:.1em .5em; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--fg); cursor:pointer; }
+  .chip:hover, .chip.sel { border-color:var(--dim); background:#1f2d3d; }
+  .chip i { font-style:normal; color:var(--dim); font-family:system-ui,sans-serif; margin-left:.35em; }
+  .chip.open { border-color:var(--crit); }
+  .exp .acts { margin-top:.6em; display:flex; gap:.4em; flex-wrap:wrap; }
+  .exp .acts .albtn { margin:0; font-size:11px; padding:.2em .6em; }
   .badge { font-size:10px; padding:0 .45em; border-radius:8px; border:1px solid currentColor; }
   .badge.open { color:var(--crit); } .badge.acked { color:var(--ok); }
   td.iss { font-variant-numeric:tabular-nums; }
@@ -228,7 +256,7 @@
 <main>
   <section id="issues">
     <h2>Issues <span id="aCount"></span>
-      <span class="tabs"><button id="tabBoard" class="on">Issues</button><button id="tabLog">Log</button></span></h2>
+      <span class="tabs"><button id="tabBoard" class="on" title="One card per problem: a check failing for one simulation, with every entity it affects">Problems</button><button id="tabEnt" title="One row per entity and check">Entities</button><button id="tabLog">Log</button></span></h2>
     <input id="filter" placeholder="filter: entity, rule, sender, message…">
     <ul id="board"></ul>
     <ul id="alerts" hidden></ul>
@@ -308,29 +336,107 @@ const QUIET = 120, DROP = 900;
 const issues = new Map();
 const SEV = {critical: 2, warning: 1};
 const noEntity = id => !id || id === "0:0:0";
+// `rule` is the check's id (an enum check's is its field); `ruleName` and
+// `finding` key the explanation catalog. Entries from before findings
+// existed have neither: they explain as their rule.
 function note(e) {
   if (e.kind === "alert") {
-    const key = `a|${e.exercise}|${e.rule}|${e.entity}`;
+    const finding = e.finding || "";
+    const key = `a|${e.exercise}|${e.rule}|${finding}|${e.entity}`;
     let i = issues.get(key);
-    if (!i) issues.set(key, i = {key, kind: "alert", rule: e.rule, pack: e.pack, entity: e.entity, exercise: e.exercise,
-      severity: e.severity, count: 0, first: e.at, last: e.at, message: "", sender: ""});
+    if (!i) issues.set(key, i = {key, kind: "alert", rule: e.rule, ruleName: e.rule_name || e.rule, finding, pack: e.pack,
+      entity: e.entity, exercise: e.exercise, severity: e.severity, count: 0, first: e.at, last: e.at, message: "",
+      sender: "", facts: [], times: []});
     if (e.state === "firing") {
       i.count++;
       i.last = Math.max(i.last, e.at);
       if (SEV[e.severity] > SEV[i.severity]) i.severity = e.severity;
-      i.message = e.message; i.sender = e.sender || i.sender;
+      i.message = e.message; i.sender = e.sender || i.sender; i.facts = e.facts || i.facts;
+      i.times.push(e.at); if (i.times.length > 200) i.times.shift();
     } else i.resolved = e.at;
   } else if (e.kind === "error") {
     const src = e.source || "unknown", key = `e|${src}`;
     let i = issues.get(key);
-    if (!i) issues.set(key, i = {key, kind: "error", rule: "decode-error", entity: "", severity: "critical",
-      count: 0, first: e.at, last: e.at, message: "", sender: src});
+    if (!i) issues.set(key, i = {key, kind: "error", rule: "decode-error", ruleName: "decode-error", finding: "*", entity: "",
+      severity: "critical", count: 0, first: e.at, last: e.at, message: "", sender: src, facts: [], times: []});
     i.count += e.count || 1; i.last = Math.max(i.last, e.at); i.message = e.message;
+    i.times.push(e.at); if (i.times.length > 200) i.times.shift();
   }
 }
 // The issue's open alert, if any: state.alerts is the truth for "open".
 function openAlert(i) {
-  return i.kind === "alert" && state ? state.alerts.find(a => a.rule === i.rule && a.entity === i.entity) : null;
+  return i.kind === "alert" && state
+    ? state.alerts.find(a => a.rule === i.rule && a.entity === i.entity && (!a.finding || !i.finding || a.finding === i.finding))
+    : null;
+}
+
+// --- explanations (GET /api/explain): what a finding means and how to fix it ---
+let EXPLAIN = {};
+function loadExplain() {
+  fetch("/api/explain", auth()).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    EXPLAIN = {};
+    for (const x of d.explanations) EXPLAIN[x.rule + "|" + x.kind] = x;
+    renderBoard(); renderDetail();
+  }).catch(() => {});
+}
+const explainOf = i => EXPLAIN[i.ruleName + "|" + i.finding] || EXPLAIN[i.ruleName + "|*"] || null;
+// A headline for an issue: the catalog's, else the check's own name. A
+// rule-wide entry (`*`) names the finding: the heartbeat rule's PDU type.
+function titleOf(i) {
+  const x = explainOf(i);
+  if (!x) return i.ruleName === "enum-violation" ? "Bad enumeration value" : i.ruleName;
+  return x.kind === "*" && i.finding && i.finding !== "*" ? `${x.title} (${i.finding})` : x.title;
+}
+// The clause a message cites, and the message without it.
+const CITE = /\s*\(IEEE 1278\.1 ([^]*?),? draft D16r18\)|;\s*IEEE 1278\.1 ([^]*?),? draft D16r18/;
+const clauseOf = m => { const x = CITE.exec(m || ""); return x ? (x[1] || x[2]).replace(/,$/, "") : ""; };
+const uncited = m => (m || "").replace(CITE, "");
+// A DIS simulation is its entity IDs' site:application.
+const simOf = id => { const p = (id || "").split(":"); return p.length === 3 && !noEntity(id) ? p[0] + ":" + p[1] : ""; };
+
+// --- problems: issues grouped by exercise, check, finding and simulation ---
+// One simulation failing one check on forty entities is one problem with
+// forty entities, not forty rows.
+const expanded = new Set();
+try { for (const k of JSON.parse(localStorage.nn_expanded || "[]")) expanded.add(k); } catch (e) {}
+function saveExpanded() { try { localStorage.nn_expanded = JSON.stringify([...expanded].slice(-50)); } catch (e) {} }
+function problemList(all) {
+  const groups = new Map();
+  for (const i of all) {
+    const sim = i.kind === "error" ? "" : simOf(i.entity);
+    const key = i.kind === "error" ? i.key : `p|${i.exercise}|${i.rule}|${i.finding}|${sim || i.entity}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, g = {key, kind: i.kind, rule: i.rule, ruleName: i.ruleName, finding: i.finding, pack: i.pack,
+      exercise: i.exercise, sim, members: [], severity: i.severity, count: 0, first: i.first, last: i.last, senders: new Set()});
+    g.members.push(i);
+    g.count += i.count;
+    g.first = Math.min(g.first, i.first); g.last = Math.max(g.last, i.last);
+    if (SEV[i.severity] > SEV[g.severity]) g.severity = i.severity;
+    if (i.sender) g.senders.add(i.sender);
+  }
+  const out = [...groups.values()];
+  for (const g of out) {
+    g.open = g.members.filter(m => m.open);
+    g.quiet = g.members.every(m => m.quiet);
+    g.latest = g.members.reduce((a, b) => (b.last > a.last ? b : a));
+    g.members.sort((a, b) => (!!b.open - !!a.open) || (b.last - a.last));
+  }
+  return out.sort((a, b) => (!!b.open.length - !!a.open.length) || (a.quiet - b.quiet)
+    || (SEV[b.severity] - SEV[a.severity]) || (b.last - a.last));
+}
+// Firings over the last hour in 30 two-minute bars.
+function sparkHtml(g, now) {
+  const bins = new Array(30).fill(0), span = 3600, w = span / bins.length;
+  for (const m of g.members) for (const t of m.times) {
+    const k = Math.floor((t - (now - span)) / w);
+    if (k >= 0 && k < bins.length) bins[k]++;
+  }
+  const max = Math.max(...bins);
+  if (!max) return "";
+  return `<div class="spark" title="firings per 2 minutes, last hour">` + bins.map(n =>
+    `<i class="${n ? "on" : ""}" style="height:${n ? Math.max(18, 100 * n / max) : 8}%"></i>`).join("")
+    + `</div><div class="sparkcap"><span>1 h ago</span><span>now</span></div>`;
 }
 function issueList() {
   const now = state ? state.at : Date.now() / 1000;
@@ -404,16 +510,88 @@ function renderFeed() {
 }
 
 const stripLead = (msg, id) => msg.startsWith(id + " ") ? msg.slice(id.length + 1) : msg;
+// "board" (problems), "entities" (one row per entity and check) or "log".
 let boardView = "board";
+try { if (["board", "entities", "log"].includes(localStorage.nn_board)) boardView = localStorage.nn_board; } catch (e) {}
 function renderBoard() {
   const terms = $("filter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const hay = i => [i.rule, i.entity, i.sender, i.message, i.pack, byId[i.entity] ? byId[i.entity].marking : ""].join(" ").toLowerCase();
   const all = issueList();
-  const list = all.filter(i => !terms.length || terms.every(t => hay(i).includes(t)));
+  const probs = problemList(all);
   const now = state ? state.at : Date.now() / 1000;
-  const active = all.filter(i => !i.quiet).length;
-  $("aCount").textContent = boardView === "board"
-    ? `${active} active · ${all.length - active} quiet` : `${feed.length} events`;
+  if (boardView === "entities") renderEntityRows(all, terms, now);
+  else renderProblems(probs, terms, now);
+  const live = boardView === "entities" ? all : probs;
+  const active = live.filter(i => !i.quiet).length;
+  $("aCount").textContent = boardView === "log" ? `${feed.length} events`
+    : `${active} active · ${live.length - active} quiet`;
+  renderHealth(probs);
+}
+
+function renderProblems(probs, terms, now) {
+  const hay = g => [titleOf(g), g.rule, g.ruleName, g.finding, g.sim, [...g.senders].join(" "), g.latest.message,
+    ...g.members.map(m => m.entity + " " + (byId[m.entity] ? byId[m.entity].marking : ""))].join(" ").toLowerCase();
+  const list = probs.filter(g => !terms.length || terms.every(t => hay(g).includes(t)));
+  $("board").innerHTML = list.map(g => problemHtml(g, now)).join("")
+    || `<li class="empty">${probs.length ? "no problems match the filter" : "No problems. Faults, defects and decode errors appear here as they happen."}</li>`;
+}
+
+function problemHtml(g, now) {
+  const cls = g.kind === "error" ? "err" : (g.severity === "critical" ? "crit" : "warn");
+  const open = g.open.length, unacked = g.open.filter(m => !m.open.ack);
+  const isOpen = expanded.has(g.key);
+  const ents = g.members.filter(m => !noEntity(m.entity));
+  const one = ents.length === 1 ? ents[0] : null;
+  const mark = id => byId[id] && byId[id].marking ? `<i>${esc(byId[id].marking)}</i>` : "";
+  const badge = open ? (unacked.length ? `<span class="badge open">OPEN${open > 1 ? " " + open : ""}</span>`
+    : `<span class="badge acked">acked</span>`) : "";
+  const ago = open ? `open ${fmtAge(Math.max(0, now - Math.min(...g.open.map(m => m.open.since))))}`
+    : `${fmtAge(Math.max(0, now - g.last))} ago`;
+  const check = g.ruleName === "enum-violation" ? g.rule : g.ruleName + (g.finding && g.finding !== "*" ? " · " + g.finding : "");
+  const senders = [...g.senders];
+  const who = g.kind === "error"
+    ? `<span>from <b>${esc(senders[0] || "?")}</b></span>`
+    : (g.sim ? `<span>Simulation <b>${esc(g.sim)}</b></span>` : "")
+      + (senders.length ? `<span>${senders.map(esc).join(", ")}</span>` : "")
+      + (one ? `<span class="ent">${esc(one.entity)}${mark(one.entity)}</span>` : ents.length ? `<span><b>${ents.length}</b> entities</span>` : "");
+  let h = `<li class="prob ${cls}${g.quiet ? " quiet" : ""}" data-key="${esc(g.key)}"${one ? ` data-ent="${esc(one.entity)}"` : ""}>`
+    + `<div class="l1"><span class="caret">${isOpen ? "▼" : "▶"}</span><span class="title" title="${esc(titleOf(g))}">${esc(titleOf(g))}</span>`
+    + `${badge}<span class="meta">${g.count > 1 ? `<b>×${g.count}</b> · ` : ""}${ago}</span></div>`
+    + `<div class="who"><span class="chk">${esc(check)}</span>${who}</div>`
+    + sparkHtml(g, now);
+  if (isOpen) h += expHtml(g, ents, unacked, mark);
+  return h + `</li>`;
+}
+
+// The expanded card: what happened, why it matters, how to fix it, where.
+function expHtml(g, ents, unacked, mark) {
+  const x = explainOf(g), m = g.latest;
+  // The whole message: in a card for several entities it names the latest.
+  const msg = uncited(m.open ? m.open.message : m.message);
+  const facts = (m.open && m.open.facts) || m.facts || [];
+  const clause = clauseOf(m.open ? m.open.message : m.message);
+  const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : "";
+  const ticks = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
+  const what = esc(msg) + (facts.length ? `<div class="facts">${facts.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}</div>` : "")
+    + (ents.length > 1 ? `<div class="chk">the latest of ${ents.length}</div>` : "");
+  const chips = ents.length ? `<div class="chips">` + ents.slice(0, 60).map(e =>
+    `<button class="chip${e.open ? " open" : ""}${selected === e.entity ? " sel" : ""}" data-ent="${esc(e.entity)}" title="${e.count} firing${e.count > 1 ? "s" : ""}${e.open ? ", open" : ""}">${esc(e.entity)}${mark(e.entity)}</button>`).join("")
+    + (ents.length > 60 ? `<span class="chk">+${ents.length - 60} more</span>` : "") + `</div>` : "";
+  let h = `<div class="exp"><dl>`
+    + row("What happened", what)
+    + (x ? row("Why it matters", ticks(x.impact)) + row("Likely causes", ticks(x.causes)) + row("How to fix", ticks(x.fix)) : "")
+    + row(ents.length > 1 ? `Affected (${ents.length})` : "Entity", chips)
+    + row("First seen", fmtWhen(g.first) + (g.count > 1 ? ` · ${g.count} firings` : ""))
+    + row("Reference", clause ? esc("IEEE 1278.1 " + clause) + ' <span class="chk">draft D16r18</span>' : "")
+    + `</dl><div class="acts">`;
+  if (unacked.length) h += `<button class="albtn" data-grp="ack">ack${unacked.length > 1 ? " all " + unacked.length : ""}</button>`;
+  if (g.kind === "alert") h += `<button class="albtn" data-cmd="mute_rule" data-rule="${esc(g.rule)}" data-secs="300" title="Silence this check for every entity for 5 minutes">mute this check 5m</button>`;
+  h += `<button class="albtn" data-log="${esc(g.kind === "error" ? [...g.senders][0] || "" : g.rule + " " + (g.sim || ""))}">show in log</button>`;
+  return h + `</div></div>`;
+}
+
+function renderEntityRows(all, terms, now) {
+  const hay = i => [i.rule, titleOf(i), i.entity, i.sender, i.message, i.pack, byId[i.entity] ? byId[i.entity].marking : ""].join(" ").toLowerCase();
+  const list = all.filter(i => !terms.length || terms.every(t => hay(i).includes(t)));
   $("board").innerHTML = list.map(i => {
     const cls = i.kind === "error" ? "err" : (i.severity === "critical" ? "crit" : "warn");
     const ent = byId[i.entity];
@@ -430,11 +608,10 @@ function renderBoard() {
       + `<button class="albtn" data-log="${esc(i.kind === "error" ? i.sender : i.rule + " " + i.entity)}">log</button>`;
     const sel = selected && selected === i.entity ? " sel" : "";
     return `<li class="${cls}${i.quiet ? " quiet" : ""}${sel}" ${noEntity(i.entity) ? "" : `data-ent="${esc(i.entity)}"`}>`
-      + `<div class="l1"><span class="rule">${esc(i.rule)}</span>${who}${badge}<span class="meta">${times}${ago}</span></div>`
+      + `<div class="l1"><span class="rule">${esc(titleOf(i))}</span>${who}${badge}<span class="meta">${times}${ago}</span></div>`
       + `<div class="l2" title="${esc(msg)}">${esc(msg)}${i.sender && i.kind !== "error" ? ` · <span>${esc(i.sender)}</span>` : ""}</div>`
       + `<div class="l3">${btns}</div></li>`;
   }).join("") || `<li class="empty">${all.length ? "no issues match the filter" : "No issues. Faults, defects and decode errors appear here as they happen."}</li>`;
-  renderHealth(all);
 }
 
 function renderHealth(all) {
@@ -452,8 +629,10 @@ function renderHealth(all) {
 }
 function showBoard(v) {
   boardView = v;
-  $("board").hidden = v !== "board"; $("alerts").hidden = v === "board";
-  $("tabBoard").classList.toggle("on", v === "board"); $("tabLog").classList.toggle("on", v !== "board");
+  try { localStorage.nn_board = v; } catch (e) {}
+  $("board").hidden = v === "log"; $("alerts").hidden = v !== "log";
+  $("tabBoard").classList.toggle("on", v === "board"); $("tabEnt").classList.toggle("on", v === "entities");
+  $("tabLog").classList.toggle("on", v === "log");
   renderBoard(); renderFeed();
 }
 
@@ -554,7 +733,7 @@ function renderDetail() {
         ? `<button class="albtn" data-cmd="ack" data-rule="${esc(i.rule)}" data-ent="${esc(i.entity)}" data-ex="${e.exercise}">ack</button>`
         : i.open && i.open.ack ? `<span class="acked">· acked by ${esc(i.open.ack.by)}</span>` : "";
       const when = i.open ? `open since ${fmtWhen(i.open.since)}` : `last ${fmtWhen(i.last)}${i.count > 1 ? `, ×${i.count}` : ""}`;
-      return `<div class="al ${i.severity === "critical" ? "crit" : "warn"}"><b>${esc(i.rule)}</b> ${esc(stripLead(i.open ? i.open.message : i.message, e.id))} <span class="t">${when}</span>${btns}</div>`;
+      return `<div class="al ${i.severity === "critical" ? "crit" : "warn"}"><b>${esc(titleOf(i))}</b> ${esc(uncited(stripLead(i.open ? i.open.message : i.message, e.id)))} <span class="t">${when}</span>${btns}</div>`;
     }).join("");
   }
   if (d && d.sources) {
@@ -802,11 +981,32 @@ $("alerts").onclick = ev => {
 $("board").onclick = ev => {
   const btn = ev.target.closest("button");
   if (btn && btn.dataset.cmd) { ev.stopPropagation(); cmdButton(btn); return; }
-  if (btn && btn.dataset.log) { $("filter").value = btn.dataset.log; showBoard("log"); return; }
+  if (btn && btn.dataset.log) { $("filter").value = btn.dataset.log.trim(); showBoard("log"); return; }
+  const card = ev.target.closest("li.prob");
+  if (btn && btn.dataset.grp === "ack" && card) {
+    // Ack every open, unacked alert of the problem, with one note.
+    const g = problemList(issueList()).find(p => p.key === card.dataset.key);
+    if (!g) return;
+    const note = prompt("Note (optional):", "") || "";
+    for (const m of g.open) if (!m.open.ack) cmd({cmd: "ack", rule: m.rule, entity: m.entity, exercise: m.exercise, note});
+    return;
+  }
+  if (btn && btn.classList.contains("chip")) { if (selected !== btn.dataset.ent) selectEntity(btn.dataset.ent); return; }
+  if (card) {
+    // The expanded part is for reading and selecting: only the header toggles.
+    if (ev.target.closest(".exp")) return;
+    if (expanded.has(card.dataset.key)) expanded.delete(card.dataset.key); else expanded.add(card.dataset.key);
+    saveExpanded();
+    // A one-entity problem selects its entity as it opens.
+    if (expanded.has(card.dataset.key) && card.dataset.ent && selected !== card.dataset.ent) selectEntity(card.dataset.ent);
+    else renderBoard();
+    return;
+  }
   const li = ev.target.closest("li[data-ent]");
   if (li && selected !== li.dataset.ent) selectEntity(li.dataset.ent);
 };
 $("tabBoard").onclick = () => showBoard("board");
+$("tabEnt").onclick = () => showBoard("entities");
 $("tabLog").onclick = () => showBoard("log");
 $("rows").onclick = ev => {
   const tr = ev.target.closest("tr[data-id]");
@@ -1137,6 +1337,8 @@ initMap();
 fetch("/api/log?limit=500", auth()).then(r => {
   if (r.status === 401) { showLogin(); return; }
   r.json().then(d => (d.entries || []).forEach(e => pushEntry(e, true)));
+  loadExplain();
   connect();
 }).catch(() => connect());
+showBoard(boardView);
 </script>
