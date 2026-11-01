@@ -288,11 +288,18 @@ broken down.
 5. Dashboard builder, saved dashboards, templates; alert routes.
    Done so far: `GET/PUT/DELETE /api/dashboards` (a `dashboards` table in
    the `--db` store, in-memory without it) and a "Dashboards" tab whose
-   widgets (timeseries, toplist, counter) bind to §2 query objects and
-   are built picker-only with a live preview. Shipped templates:
-   "Exercise overview" and "Conformance & health". Still open: alert
-   routes, and the map/event-stream/table widget kinds and drag-resize
-   from §5 Phase B.
+   widgets bind to §2 query objects and are built picker-only with a
+   live preview. Widget kinds: timeseries, toplist and counter over
+   `/api/query`; status tiles (a query plus a warn/critical threshold,
+   "bad above" or "bad below"; thresholds also colour counters and draw
+   on timeseries); an event stream over the live feed (alerts, decode
+   errors, info, filtered by state, severity and words, with ack); and a
+   violations table over `/api/events/summary` (one or two dimensions).
+   Every group, row and event clicks through to the entity or the
+   filtered log. Shipped templates: "Exercise overview", "Conformance &
+   health" and "Error hunt". Still open: alert routes, the map widget,
+   drag-resize, dashboard-level time range and template variables, and
+   "create monitor from widget" once slice 3 lands.
 
 ## Consequences
 
