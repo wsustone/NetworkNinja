@@ -16,7 +16,7 @@ families so far did. Status per type is in [pdu-coverage.md](pdu-coverage.md).
 | H header and framing | all 72 types |
 | S structure (lengths, counts, record lengths) | all 72 on v7; types 1–27 on v6 |
 | E enumerations (SISO-REF-010) | 59 fixed-offset fields in 40 types, plus Entity State, Fire and Detonation fields |
-| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
+| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, Electromagnetic Emission, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
 
 Everything else is checked for shape and enumerations, but not for meaning.
 
@@ -173,6 +173,17 @@ Common in military exercises, and where field-level bugs are frequent.
 | Enumerations inside beams: Emitter Name (UID 75), Function (76), Beam Function (78), jamming technique | field (tier E) | 7.6.2 |
 | An emitter that stops without a final update ("emitter off" state) | lifecycle | 5.7.3.3 |
 
+*Done:* rule `emission` (`nn_rules::emission`, systems keyed by exercise, entity and Emitter
+Number): `dropout` (the heartbeat, per system), `identity-change`, `reserved-number`,
+`duplicate-number`, `high-density`, `pulse-params`, `track-target` (NO_SITE/NO_APPLIC/NO_ENTITY,
+or an unknown entity after the startup grace), `repeat-deactivated` (5.7.3.6), and
+`destroyed-emitting` (5.7.3.3.3 b). EE left the generic `heartbeat` rule, which timed out an
+entity rather than a system. Generator `--emission-every SECS`, faults `--emitter-dropout`,
+`--emitter-rename`, `--reserved-beam`, `--dense-targets`, `--half-pulsed`, `--no-site-target`,
+`--repeat-deactivated`, `--destroyed-emitting`, preset `--all-emission-faults`. Still to do: the
+beam enumerations (they sit in repeated records, which tier E's fixed-offset fields can't reach
+yet) and jamming's Track/Jam emitter and beam numbers.
+
 ### Designator (24)
 
 | Check | Kind | Clause |
@@ -282,7 +293,8 @@ silence and exact-detection tests, coverage-table update and docs.
    `directed-energy`.
 5. **Entity Damage Status and Collision.** *Done:* rules `entity-damage`, `collision`; the
    Wave 1 wrap-up added the field checks and rule `attribute`.
-6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations.
+6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations. *Done*
+   except the beam enumerations: rule `emission`.
 7. **Designator, IFF.**
 8. **Logistics**, built on the SIMAN tracker.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.

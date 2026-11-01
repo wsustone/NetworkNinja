@@ -58,6 +58,9 @@ pub enum Rule {
     /// An Attribute PDU or a Coupled PDU Extension breaks the issuance
     /// rules (`crate::attribute`).
     Attribute,
+    /// An emitter system's EE PDUs break the issuance rules
+    /// (`crate::emission`).
+    Emission,
 }
 
 impl Rule {
@@ -80,6 +83,7 @@ impl Rule {
             Rule::EntityDamage => "entity-damage",
             Rule::Collision => "collision",
             Rule::Attribute => "attribute",
+            Rule::Emission => "emission",
         }
     }
 
@@ -102,6 +106,7 @@ impl Rule {
             "entity-damage" => Some(Rule::EntityDamage),
             "collision" => Some(Rule::Collision),
             "attribute" => Some(Rule::Attribute),
+            "emission" => Some(Rule::Emission),
             _ => None,
         }
     }
@@ -197,6 +202,10 @@ pub struct RuleConfig {
     /// How far an "entity impact" Detonation may be from its target's
     /// dead-reckoned position, metres, plus the target's speed x 1 s.
     pub impact_tolerance: f64,
+    /// HBT_PDU_EE: an active emitter system's EE PDU is due this often.
+    pub ee_heartbeat: f64,
+    /// EE_HIGH_DENSITY_THRSH: most targets a beam lists one by one.
+    pub high_density_threshold: f64,
 }
 
 impl Default for RuleConfig {
@@ -223,6 +232,8 @@ impl Default for RuleConfig {
             collision_window: 5.0,
             collision_speed: 0.1,
             impact_tolerance: 100.0,
+            ee_heartbeat: 5.0,
+            high_density_threshold: 10.0,
         }
     }
 }
@@ -335,6 +346,7 @@ pub struct Engine {
     directed_energy: DirectedEnergy,
     damage: Damage,
     collisions: Collisions,
+    emissions: crate::emission::Emissions,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -373,6 +385,7 @@ impl Engine {
             directed_energy: DirectedEnergy::default(),
             damage: Damage::default(),
             collisions: Collisions::default(),
+            emissions: crate::emission::Emissions::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
@@ -693,6 +706,15 @@ impl Engine {
         out
     }
 
+    fn emission_limits(&self) -> crate::emission::Limits {
+        crate::emission::Limits {
+            heartbeat: self.config.ee_heartbeat,
+            multiplier: self.config.heartbeats.timeout_multiplier,
+            high_density: self.config.high_density_threshold.clamp(0.0, 255.0) as u8,
+            grace: self.config.stationary_heartbeat * self.config.timeout_multiplier,
+        }
+    }
+
     /// Attribute PDU issuance and Coupled PDU Extension on one PDU's bytes,
     /// with its neighbours in the datagram.
     pub fn check_attribute(
@@ -745,6 +767,15 @@ impl Engine {
                     .observe(now, source, raw, table, limits)
                     .into_iter()
                     .map(|f| (Rule::Collision, f)),
+            );
+        }
+        if self.enabled(Rule::Emission) {
+            let limits = self.emission_limits();
+            found.extend(
+                self.emissions
+                    .observe(now, source, raw, table, &limits)
+                    .into_iter()
+                    .map(|f| (Rule::Emission, f)),
             );
         }
         let mut out = Vec::new();
@@ -1020,6 +1051,13 @@ impl Engine {
                 .into_iter()
                 .map(|f| (Rule::Collision, f)),
         );
+        let limits = self.emission_limits();
+        found.extend(
+            self.emissions
+                .expire(now, &limits, table, frozen)
+                .into_iter()
+                .map(|f| (Rule::Emission, f)),
+        );
         for (rule, f) in found {
             self.point_event(now, rule, f.kind, f.key, Some(f.sender), f.message, &mut out);
         }
@@ -1120,7 +1158,8 @@ impl Engine {
                 | Rule::DirectedEnergy
                 | Rule::EntityDamage
                 | Rule::Collision
-                | Rule::Attribute => {}
+                | Rule::Attribute
+                | Rule::Emission => {}
             }
         }
         out
