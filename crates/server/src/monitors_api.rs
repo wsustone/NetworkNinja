@@ -10,7 +10,7 @@
 //! memory holds, about the last ten minutes).
 
 use crate::report::json_string;
-use nn_rules::monitors::{MonitorDef, MAX_WINDOW};
+use nn_rules::monitors::{check_composites, MonitorDef, MAX_WINDOW};
 use nn_rules::{AlertEvent, Monitor};
 use std::sync::mpsc::Sender;
 
@@ -41,12 +41,13 @@ fn def_json(m: &Monitor, d: &MonitorDef) -> String {
         })
         .collect();
     format!(
-        "{{\"id\":{},\"name\":{},\"type\":{},\"metric\":{},\"event\":{},\"where\":[{}],\"by\":[{}],\"agg\":{},\"window\":{},\"condition\":{},\"for\":{},\"severity\":{},\"describe\":{},\"toml\":{},\"firing\":[{}]}}",
+        "{{\"id\":{},\"name\":{},\"type\":{},\"metric\":{},\"event\":{},\"of\":{},\"where\":[{}],\"by\":[{}],\"agg\":{},\"window\":{},\"condition\":{},\"for\":{},\"severity\":{},\"describe\":{},\"toml\":{},\"firing\":[{}]}}",
         q(&d.id),
         q(&d.name),
         q(d.kind.name()),
         opt(d.metric.map(|x| x.name().to_string())),
         opt(d.event.clone()),
+        opt(d.of.as_ref().map(|e| e.to_string())),
         wh.join(","),
         by.join(","),
         q(d.agg.name()),
@@ -76,7 +77,7 @@ pub fn list_json(m: &Monitor, file: Option<&str>) -> String {
 /// One monitor from a request's `toml`.
 fn one(body: &str) -> Result<MonitorDef, String> {
     let src = json_string(body, "toml").ok_or("missing \"toml\": a [[monitor]] block")?;
-    let mut defs = MonitorDef::parse_all(&src)?;
+    let mut defs = MonitorDef::parse_blocks(&src)?;
     match defs.len() {
         1 => Ok(defs.remove(0)),
         0 => Err("no [[monitor]] block in \"toml\"".into()),
@@ -134,6 +135,7 @@ pub fn handle(m: &mut Monitor, body: &str, file: Option<&str>) -> (Result<String
                     "added"
                 }
             };
+            check_composites(&defs)?;
             let where_ = saved(&defs)?;
             events = m.set_monitors(defs);
             Ok(format!(
@@ -149,6 +151,12 @@ pub fn handle(m: &mut Monitor, body: &str, file: Option<&str>) -> (Result<String
             if defs.len() == before {
                 return Err(format!("no monitor '{id}'"));
             }
+            if let Some(c) = defs
+                .iter()
+                .find(|d| d.of.as_ref().is_some_and(|e| e.refs().contains(&id.as_str())))
+            {
+                return Err(format!("composite '{}' uses '{id}': change or delete it first", c.id));
+            }
             let where_ = saved(&defs)?;
             events = m.set_monitors(defs);
             Ok(format!(
@@ -156,9 +164,26 @@ pub fn handle(m: &mut Monitor, body: &str, file: Option<&str>) -> (Result<String
                 esc(&where_)
             ))
         })(),
-        Some("preview") => one(body).map(|def| {
+        Some("preview") => one(body).and_then(|def| {
+            let mut defs = m.user_monitors.defs.clone();
+            defs.retain(|d| d.id != def.id);
+            defs.push(def.clone());
+            check_composites(&defs)?;
+            // Start late enough that the windows (a composite's monitors' too)
+            // are full of what memory holds.
+            let warm = match &def.of {
+                Some(of) => {
+                    defs.iter()
+                        .filter(|d| of.refs().contains(&d.id.as_str()))
+                        .map(|d| d.window.max(d.for_secs))
+                        .max()
+                        .unwrap_or(0)
+                        + def.for_secs
+                }
+                None => def.window.max(def.for_secs),
+            };
             let now = m.now;
-            let from = now - MAX_WINDOW as f64 + def.window.max(def.for_secs) as f64;
+            let from = now - MAX_WINDOW as f64 + warm.min(MAX_WINDOW) as f64;
             let (n, groups) = m.user_monitors.preview(&def, &m.metrics, (from, now, 5.0));
             let g: Vec<String> = groups
                 .iter()
@@ -167,12 +192,12 @@ pub fn handle(m: &mut Monitor, body: &str, file: Option<&str>) -> (Result<String
                     format!("\"{}\"", esc(&t.join(", ")))
                 })
                 .collect();
-            format!(
+            Ok(format!(
                 "{{\"would_fire\":{n},\"groups\":[{}],\"span\":{:.0},\"describe\":\"{}\"}}",
                 g.join(","),
                 (now - from).max(0.0),
                 esc(&def.describe())
-            )
+            ))
         }),
         Some(c) => Err(format!("unknown cmd '{c}' (expected list, put, delete or preview)")),
     };

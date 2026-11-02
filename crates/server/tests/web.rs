@@ -976,6 +976,25 @@ fn monitors_api_puts_lists_previews_deletes_and_saves() {
     let (r, _) = handle(&mut m, &put(&quiet.replace("for = 15", "for = 30")), Some(&path));
     assert!(r.unwrap().contains("updated monitor quiet"));
     assert_eq!(m.user_monitors.defs[0].for_secs, 30);
+    // A composite over it: previews and saves alone, lists its expression,
+    // and keeps what it names from being deleted or regrouped under it.
+    let both = "[[monitor]]\nid = \"both\"\ntype = \"composite\"\nof = \"quiet && !gone\"\nby = [\"sender\"]\n";
+    let (r, _) = handle(&mut m, &put(both), Some(&path));
+    assert!(r.unwrap_err().contains("'gone', which isn't a monitor"));
+    let one = both.replace("quiet && !gone", "!quiet");
+    let (p, _) = handle(&mut m, &put(&one).replace("\"put\"", "\"preview\""), Some(&path));
+    assert!(p.unwrap().starts_with("{\"would_fire\":0,"));
+    let (r, _) = handle(&mut m, &put(&one), Some(&path));
+    assert!(r.unwrap().contains("added monitor both"));
+    assert_eq!(load(&path).unwrap().len(), 2);
+    let (list, _) = handle(&mut m, "{\"cmd\":\"list\"}", Some(&path));
+    assert!(list.unwrap().contains("\"of\":\"!quiet\""));
+    let (r, _) = handle(&mut m, &put(&quiet.replace("by = [\"sender\"]\n", "")), Some(&path));
+    assert!(r.unwrap_err().contains("groups by sender, which 'quiet' doesn't"));
+    let (r, _) = handle(&mut m, "{\"cmd\":\"delete\",\"id\":\"quiet\"}", Some(&path));
+    assert!(r.unwrap_err().contains("composite 'both' uses 'quiet'"));
+    let (r, _) = handle(&mut m, "{\"cmd\":\"delete\",\"id\":\"both\"}", Some(&path));
+    assert!(r.unwrap().contains("deleted monitor both"));
     let (r, _) = handle(&mut m, "{\"cmd\":\"delete\",\"id\":\"quiet\"}", Some(&path));
     assert!(r.unwrap().contains("deleted monitor quiet"));
     assert!(load(&path).unwrap().is_empty());

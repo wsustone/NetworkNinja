@@ -299,8 +299,16 @@ broken down.
    (a put or preview carries one `[[monitor]]` block as `toml`), answered by
    the serve loop over a channel like `/api/query`. The dashboard's Monitors
    tab lists them and builds one from pickers, with a live TOML view, preview
-   and save; a firing monitor is a "Monitor: NAME" problem card. Still open:
-   composite monitors and "create monitor from widget".
+   and save; a firing monitor is a "Monitor: NAME" problem card. Then
+   composites: `type = "composite"`, `of = "a && (b || !c)"` over other
+   monitors' ids, true per group (`by`, which every named monitor must
+   group by) when the named monitors are or aren't firing for it, held
+   for `for`; no composites of composites, and a monitor a composite names
+   can't be deleted or regrouped from under it. Composites evaluate after
+   the others each second and preview by replaying what they name. A
+   metric widget's "monitor" button opens the builder as a threshold on
+   the widget's query (board variables resolved as set), its threshold as
+   the condition.
 4. Standard rules by PDU family, starting with SISO-REF-010 generation
    and the behavioural rules listed in §3.
 5. Dashboard builder, saved dashboards, templates; alert routes.
@@ -326,7 +334,7 @@ broken down.
    substitute `$name` in where-filters. In edit mode a widget's title
    bar drags it to a new place and its corner resizes it (1–3 columns ×
    1–3 rows of a fixed-height grid; charts fill their cell). Still open:
-   alert routes, and "create monitor from widget" once slice 3 lands.
+   alert routes.
    The map stays its own view, not a widget.
 
 ## Consequences

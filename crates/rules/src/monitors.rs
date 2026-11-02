@@ -23,6 +23,12 @@
 //! by = ["sender"]
 //! window = 300
 //! condition = ">= 20"
+//!
+//! [[monitor]]
+//! id = "quiet-and-noisy"
+//! type = "composite"
+//! of = "site7-silent && !noisy-sender"
+//! by = ["sender"]
 //! ```
 //!
 //! - **threshold**: the metric, folded over the last `window` seconds per
@@ -32,6 +38,11 @@
 //! - **event-count**: alert firings matching `event` and `where` in the last
 //!   `window` seconds, per group, meet `condition` (default `>= 1`) for
 //!   `for` seconds.
+//! - **composite**: a boolean expression (`&&`, `||`, `!`, parentheses) over
+//!   other monitors' ids, true for a group when the monitors it names are
+//!   (or, negated, aren't) firing for that group, held for `for` seconds. Its
+//!   `by` must be dimensions every monitor it names groups by (none: any
+//!   group counts); composites of composites aren't allowed.
 //!
 //! Metric windows read the in-memory buckets, so windows and `for` are at
 //! most [`MAX_WINDOW`] seconds. (The ADR's `name` for an event-count's rule
@@ -53,6 +64,7 @@ pub enum Kind {
     Threshold,
     Absence,
     EventCount,
+    Composite,
 }
 
 impl Kind {
@@ -61,11 +73,12 @@ impl Kind {
             Kind::Threshold => "threshold",
             Kind::Absence => "absence",
             Kind::EventCount => "event-count",
+            Kind::Composite => "composite",
         }
     }
 
     fn from_name(s: &str) -> Option<Kind> {
-        [Kind::Threshold, Kind::Absence, Kind::EventCount]
+        [Kind::Threshold, Kind::Absence, Kind::EventCount, Kind::Composite]
             .into_iter()
             .find(|k| k.name() == s)
     }
@@ -124,6 +137,140 @@ impl std::fmt::Display for Condition {
     }
 }
 
+/// A composite's expression over monitor ids.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Ref(String),
+    Not(Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+}
+
+impl Expr {
+    /// `a && (b || !c)`: `!` binds tightest, then `&&`, then `||`.
+    pub fn parse(src: &str) -> Result<Expr, String> {
+        let mut toks = Vec::new();
+        let cs: Vec<char> = src.chars().collect();
+        let mut i = 0;
+        while i < cs.len() {
+            let c = cs[i];
+            if c.is_whitespace() {
+                i += 1;
+            } else if "()!".contains(c) {
+                toks.push(c.to_string());
+                i += 1;
+            } else if (c == '&' || c == '|') && cs.get(i + 1) == Some(&c) {
+                toks.push(format!("{c}{c}"));
+                i += 2;
+            } else if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                let start = i;
+                while i < cs.len() && (cs[i].is_ascii_alphanumeric() || cs[i] == '-' || cs[i] == '_') {
+                    i += 1;
+                }
+                toks.push(cs[start..i].iter().collect());
+            } else {
+                return Err(format!(
+                    "'{c}' in \"{src}\" (use monitor ids with &&, ||, ! and parentheses)"
+                ));
+            }
+        }
+        let mut pos = 0;
+        let e = Self::or(&toks, &mut pos)?;
+        match toks.get(pos) {
+            None => Ok(e),
+            Some(t) => Err(format!("unexpected '{t}' in \"{src}\"")),
+        }
+    }
+
+    fn or(t: &[String], p: &mut usize) -> Result<Expr, String> {
+        let mut e = Self::and(t, p)?;
+        while t.get(*p).map(String::as_str) == Some("||") {
+            *p += 1;
+            e = Expr::Or(Box::new(e), Box::new(Self::and(t, p)?));
+        }
+        Ok(e)
+    }
+
+    fn and(t: &[String], p: &mut usize) -> Result<Expr, String> {
+        let mut e = Self::not(t, p)?;
+        while t.get(*p).map(String::as_str) == Some("&&") {
+            *p += 1;
+            e = Expr::And(Box::new(e), Box::new(Self::not(t, p)?));
+        }
+        Ok(e)
+    }
+
+    fn not(t: &[String], p: &mut usize) -> Result<Expr, String> {
+        let tok = t.get(*p).ok_or("the expression ends early")?;
+        *p += 1;
+        match tok.as_str() {
+            "!" => Ok(Expr::Not(Box::new(Self::not(t, p)?))),
+            "(" => {
+                let e = Self::or(t, p)?;
+                if t.get(*p).map(String::as_str) != Some(")") {
+                    return Err("a '(' isn't closed".into());
+                }
+                *p += 1;
+                Ok(e)
+            }
+            "&&" | "||" | ")" => Err(format!("expected a monitor id, got '{tok}'")),
+            id => Ok(Expr::Ref(id.to_string())),
+        }
+    }
+
+    /// The monitor ids it names, in order.
+    pub fn refs(&self) -> Vec<&str> {
+        match self {
+            Expr::Ref(id) => vec![id.as_str()],
+            Expr::Not(e) => e.refs(),
+            Expr::And(a, b) | Expr::Or(a, b) => {
+                let mut v = a.refs();
+                v.extend(b.refs());
+                v
+            }
+        }
+    }
+
+    pub fn eval(&self, firing: &dyn Fn(&str) -> bool) -> bool {
+        match self {
+            Expr::Ref(id) => firing(id),
+            Expr::Not(e) => !e.eval(firing),
+            Expr::And(a, b) => a.eval(firing) && b.eval(firing),
+            Expr::Or(a, b) => a.eval(firing) || b.eval(firing),
+        }
+    }
+}
+
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        // Parenthesise an || inside an &&, and anything compound under a !.
+        let sub = |e: &Expr, f: &mut std::fmt::Formatter, paren: bool| {
+            if paren {
+                write!(f, "({e})")
+            } else {
+                write!(f, "{e}")
+            }
+        };
+        match self {
+            Expr::Ref(id) => write!(f, "{id}"),
+            Expr::Not(e) => {
+                write!(f, "!")?;
+                sub(e, f, !matches!(**e, Expr::Ref(_) | Expr::Not(_)))
+            }
+            Expr::And(a, b) => {
+                sub(a, f, matches!(**a, Expr::Or(..)))?;
+                write!(f, " && ")?;
+                sub(b, f, matches!(**b, Expr::Or(..) | Expr::And(..)))
+            }
+            Expr::Or(a, b) => {
+                sub(a, f, false)?;
+                write!(f, " || ")?;
+                sub(b, f, matches!(**b, Expr::Or(..)))
+            }
+        }
+    }
+}
+
 /// One user monitor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonitorDef {
@@ -134,6 +281,8 @@ pub struct MonitorDef {
     pub metric: Option<Metric>,
     /// Event-count: the rule name or check id to count, or `*`.
     pub event: Option<String>,
+    /// Composite: the expression over other monitors.
+    pub of: Option<Expr>,
     pub filter: Vec<(Dim, String)>,
     pub by: Vec<Dim>,
     pub agg: Fold,
@@ -167,12 +316,13 @@ fn number(v: &Value, what: &str) -> Result<f64, String> {
 impl MonitorDef {
     /// One `[[monitor]]` table, validated.
     pub fn from_table(t: &Table) -> Result<MonitorDef, String> {
-        const KEYS: [&str; 12] = [
+        const KEYS: [&str; 13] = [
             "id",
             "name",
             "type",
             "metric",
             "event",
+            "of",
             "where",
             "by",
             "agg",
@@ -192,10 +342,35 @@ impl MonitorDef {
         let what = |k: &str| format!("monitor '{id}' {k}");
         let kind_s = get("type", "type")?.ok_or_else(|| format!("monitor '{id}' needs a type"))?;
         let kind = Kind::from_name(&kind_s).ok_or_else(|| {
-            format!("monitor '{id}': unknown type '{kind_s}' (expected threshold, absence or event-count)")
+            format!("monitor '{id}': unknown type '{kind_s}' (expected threshold, absence, event-count or composite)")
         })?;
         let name = get("name", &what("name"))?.unwrap_or_else(|| id.clone());
+        if kind == Kind::Composite {
+            if let Some(k) = ["metric", "event", "where", "agg", "window", "condition"]
+                .into_iter()
+                .find(|k| t.contains_key(*k))
+            {
+                return Err(format!(
+                    "monitor '{id}': a composite takes of, by, for and severity, not {k}"
+                ));
+            }
+        } else if t.contains_key("of") {
+            return Err(format!("monitor '{id}': only a composite takes of"));
+        }
+        let of = match kind {
+            Kind::Composite => {
+                let src = get("of", &what("of"))?
+                    .ok_or_else(|| format!("monitor '{id}': a composite needs of, e.g. of = \"a && !b\""))?;
+                let e = Expr::parse(&src).map_err(|e| format!("monitor '{id}' of: {e}"))?;
+                if e.refs().contains(&id.as_str()) {
+                    return Err(format!("monitor '{id}' can't name itself in of"));
+                }
+                Some(e)
+            }
+            _ => None,
+        };
         let (metric, event) = match kind {
+            Kind::Composite => (None, None),
             Kind::EventCount => (None, Some(get("event", &what("event"))?.unwrap_or_else(|| "*".into()))),
             _ => {
                 let m = get("metric", &what("metric"))?.ok_or_else(|| format!("monitor '{id}' needs a metric"))?;
@@ -213,9 +388,12 @@ impl MonitorDef {
                 (Some(metric), None)
             }
         };
-        let dims: Vec<Dim> = match metric {
-            Some(m) => m.dims().to_vec(),
-            None => EVENT_DIMS.to_vec(),
+        // A composite's `by` is checked against the monitors it names, in
+        // `check_composites`.
+        let dims: Vec<Dim> = match (metric, kind) {
+            (Some(m), _) => m.dims().to_vec(),
+            (None, Kind::Composite) => Dim::ALL.to_vec(),
+            (None, _) => EVENT_DIMS.to_vec(),
         };
         let dim = |s: &str| -> Result<Dim, String> {
             let d = Dim::from_name(s).ok_or_else(|| format!("monitor '{id}': unknown dimension '{s}'"))?;
@@ -300,6 +478,7 @@ impl MonitorDef {
             kind,
             metric,
             event,
+            of,
             filter,
             by,
             agg,
@@ -310,8 +489,16 @@ impl MonitorDef {
         })
     }
 
-    /// Every `[[monitor]]` block of a file's text.
+    /// Every `[[monitor]]` block of a file's text, composites checked
+    /// against the rest ([`check_composites`]).
     pub fn parse_all(src: &str) -> Result<Vec<MonitorDef>, String> {
+        let out = Self::parse_blocks(src)?;
+        check_composites(&out)?;
+        Ok(out)
+    }
+
+    /// The blocks alone: a composite may name monitors defined elsewhere.
+    pub fn parse_blocks(src: &str) -> Result<Vec<MonitorDef>, String> {
         let root = crate::minitoml::parse(src).map_err(|e| e.to_string())?;
         if let Some(k) = root.keys().find(|k| k.as_str() != "monitor") {
             return Err(format!(
@@ -350,6 +537,9 @@ impl MonitorDef {
         if let Some(e) = &self.event {
             s += &format!("event = {}\n", q(e));
         }
+        if let Some(e) = &self.of {
+            s += &format!("of = {}\n", q(&e.to_string()));
+        }
         for (d, v) in &self.filter {
             s += &format!("where.{} = {}\n", d.name(), q(v));
         }
@@ -360,7 +550,7 @@ impl MonitorDef {
         if self.metric.is_some() {
             s += &format!("agg = {}\n", q(self.agg.name()));
         }
-        if self.kind != Kind::Absence {
+        if !matches!(self.kind, Kind::Absence | Kind::Composite) {
             s += &format!("window = {}\n", self.window);
         }
         if let Some(c) = &self.condition {
@@ -384,6 +574,7 @@ impl MonitorDef {
             (Some(m), _) if self.kind == Kind::Absence => format!("{} silent for {} s", m.name(), self.for_secs),
             (Some(m), _) => format!("{} {} over {} s", m.name(), self.agg.name(), self.window),
             (None, Some(e)) => format!("{e} firings over {} s", self.window),
+            _ if self.of.is_some() => format!("{}", self.of.as_ref().unwrap()),
             _ => String::new(),
         };
         let wh: Vec<String> = self.filter.iter().map(|(d, v)| format!("{}={v}", d.name())).collect();
@@ -402,6 +593,34 @@ impl MonitorDef {
             }
         )
     }
+}
+
+/// Composites must name monitors that exist and aren't composites, and
+/// group only by dimensions all of them group by.
+pub fn check_composites(defs: &[MonitorDef]) -> Result<(), String> {
+    for d in defs {
+        let Some(of) = &d.of else { continue };
+        for r in of.refs() {
+            let target = defs
+                .iter()
+                .find(|o| o.id == r)
+                .ok_or_else(|| format!("composite '{}' names '{r}', which isn't a monitor", d.id))?;
+            if target.kind == Kind::Composite {
+                return Err(format!(
+                    "composite '{}' names '{r}', another composite (name its monitors instead)",
+                    d.id
+                ));
+            }
+            if let Some(b) = d.by.iter().find(|b| !target.by.contains(b)) {
+                return Err(format!(
+                    "composite '{}' groups by {}, which '{r}' doesn't",
+                    d.id,
+                    b.name()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// An alert firing, as an event-count monitor sees it.
@@ -498,8 +717,38 @@ fn measure(
                 out.insert(g, (v, def.condition.is_some_and(|c| c.holds(v))));
             }
         }
+        Kind::Composite => {}
     }
     out
+}
+
+/// A composite's groups and whether its expression holds for each, given
+/// the other monitors' state: a monitor counts for a group when one of its
+/// firing groups has the group's values.
+fn measure_composite(
+    def: &MonitorDef,
+    state: &BTreeMap<(String, TagPairs), GroupState>,
+) -> BTreeMap<TagPairs, (f64, bool)> {
+    let Some(of) = &def.of else { return BTreeMap::new() };
+    let refs = of.refs();
+    let project = |g: &TagPairs| -> TagPairs { g.iter().filter(|(d, _)| def.by.contains(d)).cloned().collect() };
+    let mut firing: BTreeMap<&str, BTreeSet<TagPairs>> = BTreeMap::new();
+    for ((id, g), s) in state {
+        if s.firing && refs.contains(&id.as_str()) {
+            firing.entry(id.as_str()).or_default().insert(project(g));
+        }
+    }
+    let mut groups: BTreeSet<TagPairs> = firing.values().flatten().cloned().collect();
+    if def.by.is_empty() {
+        groups.insert(Vec::new());
+    }
+    groups
+        .into_iter()
+        .map(|g| {
+            let holds = of.eval(&|id| firing.get(id).is_some_and(|gs| gs.contains(&g)));
+            (g, (if holds { 1.0 } else { 0.0 }, holds))
+        })
+        .collect()
 }
 
 fn query(def: &MonitorDef, from: i64, to: i64) -> Query {
@@ -547,8 +796,18 @@ impl Monitors {
     /// Evaluate every monitor at `now`: the groups that opened or resolved.
     pub fn evaluate(&mut self, now: f64, metrics: &Metrics) -> Vec<(usize, TagPairs, Change)> {
         let mut out = Vec::new();
-        for (i, def) in self.defs.iter().enumerate() {
-            let values = measure(def, now, metrics, &self.events);
+        // Composites last, so they see this round's state of what they name.
+        let order: Vec<usize> = (0..self.defs.len())
+            .filter(|&i| self.defs[i].kind != Kind::Composite)
+            .chain((0..self.defs.len()).filter(|&i| self.defs[i].kind == Kind::Composite))
+            .collect();
+        for i in order {
+            let def = &self.defs[i];
+            let values = if def.kind == Kind::Composite {
+                measure_composite(def, &self.state)
+            } else {
+                measure(def, now, metrics, &self.events)
+            };
             // Groups seen now, and groups that were open but have no value.
             let mut groups: BTreeSet<TagPairs> = values.keys().cloned().collect();
             groups.extend(
@@ -590,16 +849,29 @@ impl Monitors {
         metrics: &Metrics,
         (from, to, step): (f64, f64, f64),
     ) -> (usize, BTreeSet<TagPairs>) {
+        // A composite replays the monitors it names alongside it.
+        let mut defs: Vec<MonitorDef> = match &def.of {
+            Some(of) => self
+                .defs
+                .iter()
+                .filter(|d| of.refs().contains(&d.id.as_str()))
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        };
+        defs.retain(|d| d.id != def.id);
+        defs.push(def.clone());
+        let me = defs.len() - 1;
         let mut sim = Monitors {
-            defs: vec![def.clone()],
+            defs,
             state: BTreeMap::new(),
             events: self.events.clone(),
         };
         let (mut fired, mut groups) = (0, BTreeSet::new());
         let mut t = from;
         while t <= to {
-            for (_, g, c) in sim.evaluate(t, metrics) {
-                if let Change::Fire { .. } = c {
+            for (i, g, c) in sim.evaluate(t, metrics) {
+                if let (true, Change::Fire { .. }) = (i == me, c) {
                     fired += 1;
                     groups.insert(g);
                 }
@@ -769,5 +1041,113 @@ condition = ">= 20"
         }
         .preview(&def, &m, (0.0, 80.0, 5.0));
         assert_eq!((n, groups.len()), (1, 1));
+    }
+
+    #[test]
+    fn composite_expressions_parse_print_and_validate() {
+        for (src, back) in [
+            ("a && (b || !c)", "a && (b || !c)"),
+            ("!(a || b) && c", "!(a || b) && c"),
+            ("a || b && c", "a || b && c"),
+            ("(a && b) || c", "a && b || c"),
+        ] {
+            let e = Expr::parse(src).unwrap();
+            assert_eq!(e.to_string(), back, "{src}");
+            assert_eq!(Expr::parse(back).unwrap(), e, "{back} reads back the same");
+        }
+        assert_eq!(Expr::parse("a && !b").unwrap().refs(), ["a", "b"]);
+        for bad in ["a &&", "a & b", "(a || b", "a b", "&& a", ""] {
+            assert!(Expr::parse(bad).is_err(), "{bad}");
+        }
+        let base = "[[monitor]]\nid = \"q\"\ntype = \"absence\"\nmetric = \"pdu.count\"\nby = [\"sender\"]\n";
+        let err = |extra: &str| MonitorDef::parse_all(&format!("{base}{extra}")).unwrap_err();
+        assert!(err("[[monitor]]\nid = \"c\"\ntype = \"composite\"\nof = \"q && gone\"\n").contains("isn't a monitor"));
+        assert!(
+            err("[[monitor]]\nid = \"c\"\ntype = \"composite\"\nof = \"q\"\nby = [\"site\"]\n").contains("doesn't")
+        );
+        assert!(
+            err("[[monitor]]\nid = \"c\"\ntype = \"composite\"\nof = \"q\"\nmetric = \"pdu.count\"\n")
+                .contains("not metric")
+        );
+        assert!(err("[[monitor]]\nid = \"c\"\ntype = \"composite\"\nof = \"c || q\"\n").contains("itself"));
+        assert!(err("[[monitor]]\nid = \"c\"\ntype = \"composite\"\nof = \"q\"\n[[monitor]]\nid = \"d\"\ntype = \"composite\"\nof = \"c\"\n").contains("another composite"));
+        // A valid one prints back the same.
+        let d = defs(&format!(
+            "{base}[[monitor]]\nid = \"c\"\ntype = \"composite\"\nof = \"!q\"\nby = [\"sender\"]\nfor = 5\n"
+        ));
+        let back: String = d.iter().map(|m| m.to_toml()).collect();
+        assert_eq!(defs(&back), d, "{back}");
+        assert_eq!(d[1].describe(), "!q by sender");
+    }
+
+    #[test]
+    fn composites_fire_per_group_on_the_monitors_they_name() {
+        let mut ms = Monitors::default();
+        // Sender 3001 stops at 100 s: it goes quiet and stops being busy;
+        // 3000 stays busy throughout.
+        ms.set(defs(
+            r#"
+[[monitor]]
+id = "quiet"
+type = "absence"
+metric = "pdu.count"
+by = ["sender"]
+for = 15
+
+[[monitor]]
+id = "busy"
+type = "threshold"
+metric = "pdu.count"
+by = ["sender"]
+window = 10
+condition = "> 1"
+
+[[monitor]]
+id = "gone"
+type = "composite"
+of = "quiet && !busy"
+by = ["sender"]
+
+[[monitor]]
+id = "working"
+type = "composite"
+of = "busy && !quiet"
+by = ["sender"]
+
+[[monitor]]
+id = "anyone-quiet"
+type = "composite"
+of = "quiet"
+"#,
+        ));
+        let m = traffic(100, 200);
+        let mut fired: Vec<(String, TagPairs)> = Vec::new();
+        for t in (60..200).step_by(5) {
+            for (i, g, c) in ms.evaluate(t as f64, &m) {
+                if let Change::Fire { .. } = c {
+                    fired.push((ms.defs[i].id.clone(), g));
+                }
+            }
+        }
+        let of = |id: &str| -> Vec<&TagPairs> { fired.iter().filter(|(i, _)| i == id).map(|(_, g)| g).collect() };
+        let s = |p: u16| vec![(Dim::Sender, src(p).to_string())];
+        assert_eq!(of("gone"), [&s(3001)]);
+        assert_eq!(of("working"), [&s(3000), &s(3001)], "both work before 3001 stops");
+        assert_eq!(of("anyone-quiet"), [&Vec::new()], "no by: one group");
+        // 3001's "working" resolved when it went quiet; 3000's is still open.
+        let open: Vec<_> = ms
+            .firing()
+            .filter(|(id, _, _)| *id == "working")
+            .map(|(_, g, _)| g.clone())
+            .collect();
+        assert_eq!(open, [s(3000)]);
+        // Preview replays the monitors a composite names.
+        let gone = ms.defs[2].clone();
+        let (n, groups) = Monitors {
+            defs: ms.defs.clone(),
+            ..Default::default()
+        }
+        .preview(&gone, &m, (60.0, 199.0, 5.0));
+        assert_eq!((n, groups.into_iter().collect::<Vec<_>>()), (1, vec![s(3001)]));
     }
 }
