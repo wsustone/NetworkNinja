@@ -217,6 +217,17 @@ target (PRF @16, PW @20, targets @45, high density @46, status @47).
 Generator `--emission-every SECS` (an AN/APG-63 for 30 s), eight faults, preset
 `--all-emission-faults`; `SimEntity.destroyed` sets appearance Damage 3.
 
+Designator (`nn_rules::designator`, rule `designator`): keyed by (exercise,
+designating entity); heartbeat and Power-0-final stay with `heartbeat`. Adds
+spot-offset (0:0:0 with an offset), unknown-target (after grace),
+stale-target / designator-gone (an entity ceased to exist while Power > 0,
+no Power 0 within `final_report_window`). Bytes: designating @12, designated
+@20, power f32 @28, spot offset @36, location @48, DR algorithm @72 (UID 44,
+in `fields`). Generator `--designator-every SECS` (30 s at 5 s heartbeat);
+it switches off properly when either entity goes; faults `--spot-offset`,
+`--unknown-designated`, `--target-gone`, `--designator-gone`, preset
+`--all-designator-faults`. Entities "cease to exist" via `final_due`.
+
 Explanations (alerts work): every `Alert` carries `kind` (the finding type)
 and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and
 `facts` (`[[name, value], ...]`). **Not `kind`** in JSON: log entries already

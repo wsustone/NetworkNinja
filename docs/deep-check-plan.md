@@ -194,6 +194,14 @@ Beam Function (78) per beam (`nn_decode::fields::repeated_fields`); fault
 | Designated entity D-SPOT_NO_ENTITY means the spot relative to the entity is 0, 0, 0 | field | 5.7.4.3 |
 | Designated entity unknown to the exercise | cross-PDU | 5.7.4 |
 
+*Done:* the heartbeat, and Power 0 as final, are the `heartbeat` rule's; rule `designator`
+(`nn_rules::designator`) adds `spot-offset`, `unknown-target` (after the startup grace),
+`stale-target` (designated entity gone, no Power 0 within `final_report_window`) and
+`designator-gone` (designating entity gone with the designator on). The Dead Reckoning
+Algorithm field (UID 44) is checked with `--siso`. Generator `--designator-every SECS`, faults
+`--spot-offset`, `--unknown-designated`, `--target-gone`, `--designator-gone`, preset
+`--all-designator-faults`.
+
 ### IFF (28): the largest set of rules in the clause (33 "shall"s)
 
 | Check | Kind | Clause |
@@ -296,7 +304,7 @@ silence and exact-detection tests, coverage-table update and docs.
    Wave 1 wrap-up added the field checks and rule `attribute`.
 6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations. *Done*:
    rule `emission`, repeated-field enumerations.
-7. **Designator, IFF.**
+7. **Designator, IFF.** *Designator done:* rule `designator`.
 8. **Logistics**, built on the SIMAN tracker.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.
 10. **Timestamps and PDU Status bits** (cross-cutting).
