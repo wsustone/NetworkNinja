@@ -215,6 +215,8 @@ impl Family for Iff {
         if self.unflagged_change || self.heartbeat_unflagged {
             tx.last_change = f64::NEG_INFINITY;
         }
+        // The heartbeat a `heartbeat-unflagged` change owes clears its flag.
+        let clearing = tx.clear_next;
         let r = if t - tx.last_change >= every - 1e-9 {
             tx.code += 1;
             tx.last_change = t;
@@ -241,7 +243,13 @@ impl Family for Iff {
         } else {
             return;
         };
-        let f = std::mem::take(&mut self.pending);
+        // Other faults wait until that change and its heartbeat are out, so
+        // faults queued together (say, during a freeze) don't mask it.
+        let f = if clearing || tx.clear_next {
+            Faults::default()
+        } else {
+            std::mem::take(&mut self.pending)
+        };
         // A mode switch is a change, both ways: flag it and the PDU after.
         let flag = std::mem::replace(&mut tx.flag_once, f.mode_mismatch);
         let r = Report {

@@ -11,11 +11,12 @@
 # Scenarios:
 #   clean  four vendors side by side (standard, legacy, body-axis, gateway;
 #          sites 1-8), every PDU type, SIMAN handshakes, radios, collisions,
-#          damage, DE shots, radar emissions and laser designators. A clean exercise: the
-#          dashboard should stay quiet.
+#          damage, DE shots, radar emissions, laser designators and IFF
+#          transponders. A clean exercise: the dashboard should stay quiet.
 #   demo   the same, plus a "faulty vendor" on sites 9-12 that runs every
 #          fault, PDU defect, handshake, radio, lifecycle, warfare,
-#          interaction, emission and designator fault, then starts over, every 5 minutes.
+#          interaction, emission, designator and IFF fault, then starts over,
+#          every 5 minutes.
 #
 # Environment:
 #   NN_CONFIG a serve --config file (listeners, dashboard, database...); the
@@ -89,7 +90,7 @@ up() {
             --duration 86400 --site-base $((2 * p + 1)) --sites 2 --application $((p + 1)) \
             --seed $((11 + p)) --fire-every 10 --all-types 10 --siman-every 3 --radio-every 6 \
             --collision-every 20 --damage-every 60 --de-every 30 --emission-every 45 \
-            --designator-every 50 \
+            --designator-every 50 --iff-every 60 \
             --truth /dev/null
         p=$((p + 1))
     done
@@ -102,6 +103,7 @@ up() {
             --all-handshake-faults --all-radio-faults --all-lifecycle-faults --all-warfare-faults --all-interaction-faults \
             --all-emission-faults \
             --all-designator-faults --designator-every 30 \
+            --all-iff-faults --iff-every 60 \
             --collision-every 20 --damage-every 60 --de-every 30 --emission-every 30 --truth /dev/null; done"
     fi
     echo "$scenario" >"$state/scenario"
