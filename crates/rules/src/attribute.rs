@@ -38,6 +38,7 @@ pub struct Finding {
     pub key: EntityKey,
     pub sender: SocketAddr,
     pub message: String,
+    pub facts: crate::engine::Facts,
 }
 
 fn cite(clause: &str) -> String {
@@ -68,6 +69,50 @@ fn state_pdu(pdu_type: u8) -> bool {
 /// Check one PDU of a datagram. `prev` and `next` are the PDUs either side
 /// of it in the same datagram.
 pub fn check(source: SocketAddr, pdu: &[u8], prev: Option<&[u8]>, next: Option<&[u8]>) -> Vec<Finding> {
+    let mut out = findings(source, pdu, prev, next);
+    if !out.is_empty() {
+        let common = attribute_facts(pdu, prev);
+        for f in out.iter_mut().filter(|f| f.facts.is_empty()) {
+            f.facts = common.clone();
+        }
+    }
+    out
+}
+
+/// What an Attribute PDU says about itself, and what it follows.
+fn attribute_facts(pdu: &[u8], prev: Option<&[u8]>) -> crate::engine::Facts {
+    let mut f = Vec::new();
+    if let (Some(&t), Some(&v)) = (pdu.get(22), pdu.get(23)) {
+        f.push((
+            "extends PDU type",
+            format!("{t} ({})", if t == 0 { "Other" } else { nn_decode::pdu_type_name(t) }),
+        ));
+        f.push(("of protocol version", v.to_string()));
+    }
+    if let Some(m) = u32_at(pdu, 24) {
+        f.push((
+            "Master Attribute Record Type",
+            if m == MULTIPLES_PRESENT {
+                "0 (MULTIPLES_PRESENT)".into()
+            } else {
+                m.to_string()
+            },
+        ));
+    }
+    if let Some(n) = u16_at(pdu, 30) {
+        f.push(("record sets", n.to_string()));
+    }
+    let coupled_to = prev.filter(|p| coupled(p)).and_then(|p| p.get(2));
+    f.push((
+        "coupled to",
+        coupled_to.map_or("nothing (not coupled)".into(), |&t| {
+            nn_decode::pdu_type_name(t).to_string()
+        }),
+    ));
+    f
+}
+
+fn findings(source: SocketAddr, pdu: &[u8], prev: Option<&[u8]>, next: Option<&[u8]>) -> Vec<Finding> {
     let (Some(&exercise), Some(&pdu_type)) = (pdu.get(1), pdu.get(2)) else {
         return Vec::new();
     };
@@ -94,6 +139,11 @@ pub fn check(source: SocketAddr, pdu: &[u8], prev: Option<&[u8]>, next: Option<&
                     id_of(pdu),
                     cite("5.3.6.3 b)1)iii")
                 ),
+                facts: vec![
+                    ("PDU", name.to_string()),
+                    ("PDU Status CEI", "1 (coupled)".into()),
+                    ("next PDU in the datagram", next.and_then(|n| n.get(2)).map_or("none".into(), |&t| nn_decode::pdu_type_name(t).to_string())),
+                ],
             });
         }
         return out;
@@ -107,6 +157,7 @@ pub fn check(source: SocketAddr, pdu: &[u8], prev: Option<&[u8]>, next: Option<&
             key,
             sender: source,
             message: format!("Attribute PDU from {}:{}: {message}", origin.site, origin.application),
+            facts: Vec::new(),
         })
     };
     let (Some(&for_type), Some(&for_version), Some(master), Some(sets)) =

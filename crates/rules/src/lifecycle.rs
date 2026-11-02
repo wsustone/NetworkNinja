@@ -47,6 +47,7 @@ pub struct Finding {
     pub key: EntityKey,
     pub sender: SocketAddr,
     pub message: String,
+    pub facts: crate::engine::Facts,
 }
 
 #[derive(Debug, Default)]
@@ -75,11 +76,12 @@ impl Lifecycle {
             id: es.entity_id,
         };
         let mut out = Vec::new();
-        let f = |kind, message: String| Finding {
+        let f = |kind, message: String, facts: crate::engine::Facts| Finding {
             kind,
             key,
             sender: source,
             message: format!("{}: {message}", es.entity_id),
+            facts,
         };
         let deactivated = es.appearance & appearance::DEACTIVATED != 0;
         let marking = es.marking.text();
@@ -105,6 +107,7 @@ impl Lifecycle {
                         "reports active again after its Deactivated report: a simulator still sending a removed entity, or the Entity ID reused{}",
                         cite("5.6.5.3.4")
                     ),
+                    vec![("appearance State", "active, after Deactivated".into()), ("marking", marking.clone())],
                 ));
             }
             (Some(at), true) if now - at > window => {
@@ -117,6 +120,10 @@ impl Lifecycle {
                         now - at,
                         cite("5.6.5.3.4")
                     ),
+                    vec![
+                        ("deactivated", format!("{:.0} s ago", now - at)),
+                        ("final-report window", format!("{window:.0} s")),
+                    ],
                 ));
             }
             _ => {}
@@ -131,6 +138,10 @@ impl Lifecycle {
                         "DR algorithm Static with a speed of {speed:.1} m/s: receivers won't move it{}",
                         cite("Annex E")
                     ),
+                    vec![
+                        ("DR algorithm", "1 (Static)".into()),
+                        ("speed", format!("{speed:.1} m/s")),
+                    ],
                 ));
             }
         }
@@ -140,18 +151,25 @@ impl Lifecycle {
                 out.push(f(
                     "type-change",
                     format!("type changed from {t} to {}{}", es.entity_type, cite("5.3.2")),
+                    vec![
+                        ("was", t.to_string()),
+                        ("now", es.entity_type.to_string()),
+                        ("sender", source.to_string()),
+                    ],
                 ));
             }
             if force != es.force_id {
                 out.push(f(
                     "force-change",
                     format!("force ID changed from {force} to {}{}", es.force_id, cite("5.3.2")),
+                    vec![("was", force.to_string()), ("now", es.force_id.to_string())],
                 ));
             }
             if mark != marking {
                 out.push(f(
                     "marking-change",
                     format!("marking changed from '{mark}' to '{marking}'{}", cite("5.3.2")),
+                    vec![("was", mark.clone()), ("now", marking.clone())],
                 ));
             }
         }
@@ -188,6 +206,10 @@ impl Lifecycle {
                 "{id}: Entity State Update with no Entity State ever giving its type: receivers can't place it{}",
                 cite("5.3.5")
             ),
+            facts: vec![
+                ("full Entity States seen", "none".into()),
+                ("watched for", format!("{:.0} s", now - started)),
+            ],
         })
     }
 
@@ -207,6 +229,11 @@ impl Lifecycle {
                             key.id,
                             cite("5.6.5.3.4")
                         ),
+                        facts: vec![
+                            ("removed", format!("{:.0} s ago", now - at)),
+                            ("final report due within", format!("{window:.0} s")),
+                            ("last report", format!("{:.0} s ago", now - life.last_seen)),
+                        ],
                     });
                 }
             }

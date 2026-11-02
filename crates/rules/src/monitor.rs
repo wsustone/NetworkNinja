@@ -245,6 +245,17 @@ impl Monitor {
             return Vec::new();
         }
         self.echo_reported.insert((d.source, kind), now);
+        let mut facts: crate::engine::Facts = vec![
+            ("sender", d.source.to_string()),
+            ("second copy after", format!("{:.1} ms", gap * 1000.0)),
+        ];
+        match &overlap {
+            Some((a, b)) => facts.push(("listeners", format!("'{a}' and '{b}'"))),
+            None => facts.push(("listener", d.listener.as_deref().unwrap_or("-").to_string())),
+        }
+        if let Some(&t) = raw.get(2) {
+            facts.push(("PDU type", nn_decode::pdu_type_name(t).to_string()));
+        }
         let message = match overlap {
             Some((a, b)) => format!(
                 "{}'s datagrams reach two listeners, '{a}' and '{b}': each is counted once; change the listeners so they don't overlap (docs/capture.md)",
@@ -265,11 +276,11 @@ impl Monitor {
         let mut out = Vec::new();
         self.engine.point_event(
             now,
-            crate::engine::Rule::DuplicateDelivery,
-            kind,
+            (crate::engine::Rule::DuplicateDelivery, kind),
             EntityKey { exercise, id },
             Some(d.source),
             message,
+            facts,
             &mut out,
         );
         out

@@ -55,6 +55,7 @@ pub struct Finding {
     pub id: EntityId,
     pub sender: SocketAddr,
     pub message: String,
+    pub facts: crate::engine::Facts,
 }
 
 #[derive(Debug, Default)]
@@ -133,6 +134,12 @@ impl Heartbeats {
                         "{id} stopped sending {name}: none for {silent:.1} s (heartbeat {} {hb} s × {}; IEEE 1278.1 {}, draft D16r18)",
                         h.symbol, cfg.timeout_multiplier, h.clause
                     ),
+                    facts: vec![
+                        ("PDU type", name.to_string()),
+                        ("silent for", format!("{silent:.1} s")),
+                        ("timeout", format!("{timeout:.1} s")),
+                        ("heartbeat", format!("{} = {hb} s", h.symbol)),
+                    ],
                 });
             }
             // A long-silent object is gone, not late.

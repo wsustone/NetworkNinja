@@ -36,8 +36,10 @@ impl Sink for Collect {
     }
 }
 
-/// (rule, finding type) of every alert a run of all presets raises.
-fn findings(profile_name: &str) -> BTreeSet<(&'static str, &'static str)> {
+/// (rule, finding type) of every alert a run of all presets raises, and
+/// those raised with no facts (evidence) at all.
+type Findings = BTreeSet<(&'static str, &'static str)>;
+fn findings(profile_name: &str) -> (Findings, Findings) {
     let mut cfg = Config {
         duration: 600.0,
         sites: 4,
@@ -56,22 +58,27 @@ fn findings(profile_name: &str) -> BTreeSet<(&'static str, &'static str)> {
     let xml = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/siso-mini.xml")).unwrap();
     let siso = Siso::parse(&xml).unwrap();
     let mut m = Monitor::with_packs(&Merged::load_with(Some(&siso), &[] as &[&str]).unwrap());
-    let mut out = BTreeSet::new();
+    let (mut out, mut bare) = (BTreeSet::new(), BTreeSet::new());
     for d in &sink.out {
         for e in m.ingest(d).1 {
             if e.state == AlertState::Firing {
                 out.insert((e.alert.rule.name(), e.alert.kind));
+                if e.alert.facts.is_empty() {
+                    bare.insert((e.alert.rule.name(), e.alert.kind));
+                }
             }
         }
     }
-    out
+    (out, bare)
 }
 
 #[test]
-fn every_finding_the_presets_raise_is_explained() {
-    let mut all = BTreeSet::new();
+fn every_finding_the_presets_raise_is_explained_with_evidence() {
+    let (mut all, mut bare) = (BTreeSet::new(), BTreeSet::new());
     for p in ["standard", "legacy", "body-axis", "gateway"] {
-        all.extend(findings(p));
+        let (a, b) = findings(p);
+        all.extend(a);
+        bare.extend(b);
     }
     let missing: Vec<_> = all.iter().filter(|(r, k)| explain::explain(r, k).is_none()).collect();
     assert!(
@@ -80,6 +87,8 @@ fn every_finding_the_presets_raise_is_explained() {
         missing.len(),
         all.len()
     );
+    // Every alert carries its evidence as named facts, for the problem card.
+    assert!(bare.is_empty(), "findings raised without facts: {bare:?}");
 }
 
 #[test]
