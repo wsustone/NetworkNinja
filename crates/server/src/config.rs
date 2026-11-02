@@ -46,6 +46,8 @@ pub struct ServeConfig {
     pub users: Option<String>,
     pub cert: Option<String>,
     pub key: Option<String>,
+    /// The user monitors file (`[[monitor]]` blocks, ADR 0008).
+    pub monitors: Option<String>,
     /// `[[sender]]` blocks: friendly names for senders and simulations.
     pub senders: crate::names::Names,
 }
@@ -64,6 +66,7 @@ const SERVE_KEYS: &[&str] = &[
     "users",
     "cert",
     "key",
+    "monitors",
 ];
 const SENDER_KEYS: &[&str] = &["name", "address", "simulation"];
 const LISTEN_KEYS: &[&str] = &[
@@ -219,6 +222,7 @@ pub fn parse(src: &str) -> Result<ServeConfig, String> {
         cfg.users = s("users")?;
         cfg.cert = s("cert")?;
         cfg.key = s("key")?;
+        cfg.monitors = s("monitors")?;
         if let Some(v) = t.get("rulepacks") {
             cfg.rulepacks = strings(v, "serve.rulepacks")?;
         }

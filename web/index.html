@@ -78,6 +78,25 @@
   #reportEd .foot { padding:.6em .9em .8em; display:flex; gap:.6em; align-items:center; flex-wrap:wrap; font-size:12px; }
   #reportEd .foot button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.45em 1em; font:inherit; font-weight:600; cursor:pointer; }
   #reportEd .foot button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
+  /* Monitors (ADR 0008 slice 3): your own conditions, one alert per group. */
+  #mon { margin:1em; }
+  #mon h2 { display:flex; gap:.6em; align-items:center; flex-wrap:wrap; }
+  #mon h2 .chk { font-weight:400; }
+  #mon table { width:100%; font-size:12px; border-collapse:collapse; }
+  #mon th, #mon td { text-align:left; padding:.35em .5em; border-bottom:1px solid var(--line); vertical-align:top; }
+  #mon td .bad { color:var(--crit); font-weight:600; } #mon td .good { color:var(--ok); }
+  #monEd { margin-top:1em; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.8em .9em; }
+  #monEd .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:.6em 1em; }
+  #monEd label { display:flex; flex-direction:column; gap:.2em; font-size:11px; color:var(--dim); }
+  #monEd input, #monEd select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.35em .5em; font:inherit; font-size:13px; }
+  #monEd .row { display:flex; gap:.5em; align-items:center; flex-wrap:wrap; margin-top:.6em; font-size:12px; }
+  #monEd .row button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.4em 1em; font:inherit; font-weight:600; cursor:pointer; }
+  #monEd .row button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
+  #monEd pre { background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:.5em .6em; font:11px/1.4 ui-monospace,monospace; margin:.6em 0 0; white-space:pre-wrap; }
+  #monEd .wh { display:flex; gap:.4em; align-items:center; margin-bottom:.3em; }
+  #monEd .bys { display:flex; flex-wrap:wrap; gap:.2em .8em; font-size:12px; color:var(--fg); }
+  #monEd .bys label { flex-direction:row; align-items:center; gap:.3em; color:var(--fg); font-size:12px; }
+  #monMsg.bad { color:var(--crit); } #monMsg.good { color:var(--ok); }
   #toast { position:fixed; bottom:1.2em; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:.55em 1em; font-size:12px; z-index:10; display:none; max-width:min(640px,90vw); }
   #toast.on { display:block; } #toast.bad { border-color:var(--crit); }
   .nm { color:var(--fg); font-weight:500; }
@@ -310,7 +329,7 @@
 
 <header>
   <b>NetworkNinja</b>
-  <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button><button id="tabDash">Dashboards</button></span>
+  <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button><button id="tabDash">Dashboards</button><button id="tabMon" title="Your own conditions: a federate going quiet, a rate out of range, a check firing too often">Monitors</button></span>
   <span id="conn" class="down">connecting…</span>
   <span class="stat">exercise <b id="hEx">–</b></span>
   <span class="stat" id="hFrozen"></span>
@@ -349,6 +368,29 @@
   </div>
   <div class="tablewrap"><table id="ctable"></table></div>
   <div class="hint">Counts are alert firings and decode errors attributed to each sender. Click a count to see those events in the live log.</div>
+</section>
+<section id="mon" hidden>
+  <h2>Monitors <span class="chk" id="monFile"></span><button class="albtn" id="monNew">new monitor</button></h2>
+  <div class="hint">Your own conditions on the traffic and the alert stream. Each opens one alert per group (per sender, site…) in the Problems panel, with ack and mute like any other.</div>
+  <div class="tablewrap"><table><thead><tr><th>monitor</th><th>watching</th><th>fires when</th><th>severity</th><th>now</th><th></th></tr></thead><tbody id="monRows"></tbody></table></div>
+  <div id="monEd" hidden>
+    <div class="grid">
+      <label>name<input id="mName" placeholder="e.g. Site 7 federate silent"></label>
+      <label>id<input id="mId" placeholder="from the name"></label>
+      <label>type<select id="mType"><option value="absence">absence: a group goes quiet</option><option value="threshold">threshold: a value out of range</option><option value="event-count">event count: a check fires too often</option></select></label>
+      <label id="mMetricL">metric<select id="mMetric"></select></label>
+      <label id="mEventL">rule or check<input id="mEvent" list="mEvents" placeholder="* for any"><datalist id="mEvents"></datalist></label>
+      <label id="mAggL">aggregation<select id="mAgg"></select></label>
+      <label id="mWindowL">window (s)<input id="mWindow" type="number" min="1" value="60"></label>
+      <label id="mCondL">condition<span style="display:flex;gap:.3em"><select id="mOp"><option>&gt;</option><option>&gt;=</option><option>&lt;</option><option>&lt;=</option></select><input id="mVal" type="number" step="any" value="1" style="flex:1"></span></label>
+      <label><span id="mForLabel">for (s)</span><input id="mFor" type="number" min="0" value="15"></label>
+      <label>severity<select id="mSev"><option>warning</option><option>critical</option></select></label>
+    </div>
+    <div class="row" style="align-items:flex-start"><span style="color:var(--dim);min-width:4.5em">where</span><div id="mWhere" style="flex:1"></div><button class="plain" id="mAddWhere">+ filter</button></div>
+    <div class="row"><span style="color:var(--dim);min-width:4.5em">one alert per</span><div class="bys" id="mBy"></div></div>
+    <pre id="mToml"></pre>
+    <div class="row"><button id="mSave">save</button><button class="plain" id="mPreview">preview</button><button class="plain" id="mCancel">cancel</button><span id="monMsg"></span></div>
+  </div>
 </section>
 <section id="dash" hidden>
   <h2>Dashboard
@@ -535,6 +577,12 @@ const explainOf = i => EXPLAIN[i.ruleName + "|" + i.finding] || EXPLAIN[i.ruleNa
 // A headline for an issue: the catalog's, else the check's own name. A
 // rule-wide entry (`*`) names the finding: the heartbeat rule's PDU type.
 function titleOf(i) {
+  if (i.ruleName === "monitor") {
+    // A problem card holds its facts on its members; an issue on itself.
+    const facts = i.facts || (i.latest && i.latest.facts) || [];
+    const f = facts.find(([k]) => k === "monitor");
+    if (f) return "Monitor: " + f[1].replace(/ \([^)]*\)$/, "");
+  }
   const x = explainOf(i);
   if (!x) return i.ruleName === "enum-violation" ? "Bad enumeration value" : i.ruleName;
   return x.kind === "*" && i.finding && i.finding !== "*" ? `${x.title} (${i.finding})` : x.title;
@@ -1302,17 +1350,164 @@ function loadRuns() {
 // --- conformance view: /api/events/summary pivots (ADR 0008 slice 2) ---
 let conf = null;
 function showView(v) {
-  const isConf = v === "conf", isDash = v === "dash";
+  const isConf = v === "conf", isDash = v === "dash", isMon = v === "mon";
   $("conf").hidden = !isConf;
   $("dash").hidden = !isDash;
-  document.querySelector("main").hidden = isConf || isDash;
+  $("mon").hidden = !isMon;
+  document.querySelector("main").hidden = isConf || isDash || isMon;
   $("tabConf").classList.toggle("on", isConf);
   $("tabDash").classList.toggle("on", isDash);
-  $("tabLive").classList.toggle("on", !isConf && !isDash);
-  if (isConf) confQuery();
+  $("tabMon").classList.toggle("on", isMon);
+  $("tabLive").classList.toggle("on", !isConf && !isDash && !isMon);
+  if (isMon) monLoad();
+  else if (isConf) confQuery();
   else if (isDash) { if (!dash.list) dashFetch(); else renderDash(); }
   else { renderTraffic(); if (map) map.resize(); }
 }
+// --- Monitors (ADR 0008 slice 3): GET /api/monitors, POST {cmd: put|delete|preview} ---
+// The metrics and their dimensions, as nn_state::metrics defines them.
+const MON_METRICS = {
+  "pdu.count": ["exercise", "pdu_type", "site", "kind", "domain", "sender"],
+  "pdu.duplicates": ["exercise", "pdu_type", "sender"],
+  "bytes.count": ["sender"], "datagram.count": ["sender"], "decode.errors": ["sender"],
+  "entity.active": ["exercise", "site", "kind", "force"],
+  "entity.heartbeat_mean": ["exercise", "entity", "sender"],
+  "entity.heartbeat_jitter": ["exercise", "entity", "sender"],
+  "entity.dr_error": ["exercise", "entity"],
+  "alerts.open": ["exercise", "pack", "rule", "severity"],
+};
+const MON_GAUGES = new Set(["entity.active", "entity.heartbeat_mean", "entity.heartbeat_jitter", "entity.dr_error", "alerts.open"]);
+const MON_EVENT_DIMS = ["exercise", "site", "app", "entity", "sender", "rule"];
+let mon = {list: [], file: null, editing: null};
+function monPost(body) {
+  return fetch("/api/monitors", auth({method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}))
+    .then(r => r.json().then(d => r.ok ? d : Promise.reject(d.error || "failed")));
+}
+function monLoad() {
+  fetch("/api/monitors", auth()).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    mon.list = d.monitors; mon.file = d.file;
+    $("monFile").textContent = d.file ? `saved to ${d.file}` : "kept until restart (start the server with --monitors FILE to keep them)";
+    monRender();
+  }).catch(() => {});
+}
+function monRender() {
+  $("monRows").innerHTML = mon.list.map(m => {
+    const fires = m.type === "absence" ? `silent for ${m.for} s` : `${esc(m.condition || "")}${m.for ? ` for ${m.for} s` : ""}`;
+    const now = m.firing.length
+      ? `<span class="bad">FIRING ${m.firing.length}</span> ${m.firing.slice(0, 4).map(f => esc(f.group || "all")).join("; ")}${m.firing.length > 4 ? " …" : ""}`
+      : `<span class="good">ok</span>`;
+    return `<tr><td><b>${esc(m.name)}</b><br><span class="chk">${esc(m.id)} · ${esc(m.type)}</span></td><td>${esc(m.describe)}</td><td>${fires}</td><td>${esc(m.severity)}</td><td>${now}</td>`
+      + `<td><button class="albtn" data-medit="${esc(m.id)}">edit</button><button class="albtn" data-mdel="${esc(m.id)}">delete</button></td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="empty">No monitors yet. "new monitor" sets one up, for example a federate going quiet.</td></tr>`;
+}
+setInterval(() => { if (!$("mon").hidden) monLoad(); }, 5000);
+const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "monitor";
+// The editor's fields as a [[monitor]] block, the server's own format.
+function monToml() {
+  const t = $("mType").value, q = v => JSON.stringify(String(v));
+  let s = `[[monitor]]\nid = ${q($("mId").value || slug($("mName").value))}\nname = ${q($("mName").value || $("mId").value || "monitor")}\ntype = ${q(t)}\n`;
+  if (t === "event-count") s += `event = ${q($("mEvent").value || "*")}\n`;
+  else s += `metric = ${q($("mMetric").value)}\n`;
+  for (const row of $("mWhere").querySelectorAll(".wh")) {
+    const d = row.querySelector("select").value, v = row.querySelector("input").value.trim();
+    if (v) s += `where.${d} = ${q(v)}\n`;
+  }
+  const by = [...$("mBy").querySelectorAll("input:checked")].map(i => q(i.value));
+  if (by.length) s += `by = [${by.join(", ")}]\n`;
+  if (t === "threshold") s += `agg = ${q($("mAgg").value)}\n`;
+  if (t !== "absence") s += `window = ${+$("mWindow").value || 60}\ncondition = ${q($("mOp").value + " " + (+$("mVal").value))}\n`;
+  s += `for = ${+$("mFor").value || 0}\nseverity = ${q($("mSev").value)}\n`;
+  return s;
+}
+function monDims() {
+  return $("mType").value === "event-count" ? MON_EVENT_DIMS : (MON_METRICS[$("mMetric").value] || []);
+}
+function monWhereRow(d = "", v = "") {
+  const dims = monDims();
+  const div = document.createElement("div");
+  div.className = "wh";
+  div.innerHTML = `<select>${dims.map(x => `<option${x === d ? " selected" : ""}>${x}</option>`).join("")}</select><input value="${esc(v)}" placeholder="value"><button class="albtn" type="button">×</button>`;
+  div.querySelector("button").onclick = () => { div.remove(); monSync(); };
+  div.oninput = div.onchange = monSync;
+  $("mWhere").appendChild(div);
+}
+// Show the fields the type uses; keep the TOML view current.
+function monSync(refresh) {
+  const t = $("mType").value, metric = $("mMetric").value, gauge = MON_GAUGES.has(metric);
+  $("mMetricL").hidden = t === "event-count";
+  $("mEventL").hidden = t !== "event-count";
+  $("mAggL").hidden = t !== "threshold";
+  $("mWindowL").hidden = $("mCondL").hidden = t === "absence";
+  $("mForLabel").textContent = t === "absence" ? "silent for (s)" : "must hold for (s)";
+  if (refresh) {
+    const aggs = gauge ? ["avg", "min", "max", "sum"] : ["rate", "sum", "count", "max", "min", "avg"];
+    const was = $("mAgg").value;
+    $("mAgg").innerHTML = aggs.map(a => `<option${a === was ? " selected" : ""}>${a}</option>`).join("");
+    const checked = new Set([...$("mBy").querySelectorAll("input:checked")].map(i => i.value));
+    $("mBy").innerHTML = monDims().map(d => `<label><input type="checkbox" value="${d}"${checked.has(d) ? " checked" : ""}>${d}</label>`).join("");
+    for (const row of $("mWhere").querySelectorAll(".wh")) {
+      const sel = row.querySelector("select"), v = sel.value;
+      sel.innerHTML = monDims().map(x => `<option${x === v ? " selected" : ""}>${x}</option>`).join("");
+    }
+  }
+  $("mToml").textContent = monToml();
+}
+function monEdit(m) {
+  mon.editing = m ? m.id : null;
+  $("monEd").hidden = false;
+  $("monMsg").textContent = ""; $("monMsg").className = "";
+  $("mMetric").innerHTML = Object.keys(MON_METRICS).map(k => `<option>${k}</option>`).join("");
+  $("mEvents").innerHTML = ["*", ...new Set(Object.values(EXPLAIN).map(x => x.rule))].map(r => `<option value="${esc(r)}">`).join("");
+  $("mName").value = m ? m.name : ""; $("mId").value = m ? m.id : ""; $("mId").disabled = !!m;
+  $("mType").value = m ? m.type : "absence";
+  $("mMetric").value = (m && m.metric) || "pdu.count";
+  $("mEvent").value = (m && m.event) || "";
+  $("mWindow").value = m ? m.window : 60;
+  const cond = (m && m.condition || "> 1").split(" ");
+  $("mOp").value = cond[0]; $("mVal").value = cond[1] || 1;
+  $("mFor").value = m ? m.for : 15;
+  $("mSev").value = m ? m.severity : "warning";
+  $("mWhere").innerHTML = "";
+  $("mBy").innerHTML = "";
+  monSync(true);
+  if (m) {
+    for (const [d, v] of m.where) monWhereRow(d, v);
+    for (const i of $("mBy").querySelectorAll("input")) i.checked = m.by.includes(i.value);
+    $("mAgg").value = m.agg;
+  } else {
+    for (const i of $("mBy").querySelectorAll("input")) i.checked = i.value === "sender";
+  }
+  monSync();
+  $("monEd").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+function monSay(msg, bad) { $("monMsg").textContent = msg; $("monMsg").className = bad ? "bad" : "good"; }
+$("monNew").onclick = () => monEdit(null);
+$("mCancel").onclick = () => { $("monEd").hidden = true; };
+$("mAddWhere").onclick = () => { monWhereRow(); monSync(); };
+$("mType").onchange = $("mMetric").onchange = () => monSync(true);
+$("monEd").oninput = () => monSync();
+$("mBy").onchange = () => monSync();
+$("mName").oninput = () => { if (!mon.editing) $("mId").value = slug($("mName").value); monSync(); };
+$("mPreview").onclick = () => {
+  monSay("checking the last few minutes…");
+  monPost({cmd: "preview", toml: monToml()}).then(d => monSay(
+    d.would_fire
+      ? `would have fired ${d.would_fire} time${d.would_fire > 1 ? "s" : ""} in the last ${Math.round(d.span / 60)} min, for ${d.groups.slice(0, 3).join("; ") || "all"}${d.groups.length > 3 ? " …" : ""}`
+      : `would not have fired in the last ${Math.round(d.span / 60)} min`))
+    .catch(e => monSay(String(e), true));
+};
+$("mSave").onclick = () => monPost({cmd: "put", toml: monToml()})
+  .then(d => { monSay(d.message); mon.editing = $("mId").value; $("mId").disabled = true; monLoad(); })
+  .catch(e => monSay(String(e), true));
+$("monRows").onclick = ev => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  if (b.dataset.medit) monEdit(mon.list.find(m => m.id === b.dataset.medit));
+  if (b.dataset.mdel && confirm(`Delete monitor ${b.dataset.mdel}? Its open alerts resolve.`))
+    monPost({cmd: "delete", id: b.dataset.mdel}).then(d => { toast(d.message); monLoad(); }).catch(e => toast(String(e), true));
+};
+
 function confSince() {
   const v = $("csince").value, now = state ? state.at : Date.now() / 1000;
   return Math.floor(now - (v === "run" ? (state ? state.uptime : 3600) : +v));
@@ -1387,6 +1582,7 @@ $("ctable").onclick = ev => {
 $("tabLive").onclick = () => showView("live");
 $("tabConf").onclick = () => showView("conf");
 $("tabDash").onclick = () => showView("dash");
+$("tabMon").onclick = () => showView("mon");
 $("cpivot").onchange = $("csince").onchange = confQuery;
 setInterval(confQuery, 5000);
 
