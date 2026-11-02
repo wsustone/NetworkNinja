@@ -116,7 +116,12 @@ impl EventStore {
             CREATE TABLE IF NOT EXISTS dashboards(
                 name TEXT PRIMARY KEY,
                 updated INTEGER NOT NULL,
-                json TEXT NOT NULL);",
+                json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS evidence(
+                seq INTEGER PRIMARY KEY,
+                at REAL NOT NULL,
+                source TEXT NOT NULL,
+                pdu BLOB NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
         // Files from before slice 2 gain the tag columns in place.
@@ -203,6 +208,25 @@ impl EventStore {
             })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Keep the PDU that raised the alert logged as `seq`.
+    pub fn insert_evidence(&self, seq: u64, at: f64, source: &str, pdu: &[u8]) {
+        let _ = self.conn.execute(
+            "INSERT OR REPLACE INTO evidence(seq, at, source, pdu) VALUES(?1, ?2, ?3, ?4)",
+            params![seq as i64, at, source, pdu],
+        );
+    }
+
+    /// The PDU kept for the alert logged as `seq`: when, from whom, its bytes.
+    pub fn evidence(&self, seq: u64) -> Option<(f64, String, Vec<u8>)> {
+        self.conn
+            .query_row(
+                "SELECT at, source, pdu FROM evidence WHERE seq = ?1",
+                params![seq as i64],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok()
     }
 
     /// The log entries of alerts and decode errors since `since`, oldest

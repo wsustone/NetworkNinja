@@ -113,6 +113,7 @@ fn alert_and_state_json() {
             facts: vec![("first sender", "10.0.0.1:4000 \"a\"".into())],
         },
         reason: String::new(),
+        pdu: None,
     };
     let j = alert_json(&e);
     // The event log adds "kind":"alert"; the alert mustn't bring its own.
@@ -611,6 +612,7 @@ fn events_summary_groups_violations_by_sender_and_migrates_old_stores() {
             facts: Vec::new(),
         },
         reason: String::new(),
+        pdu: None,
     };
     let a = "10.0.1.10:40000";
     let b = "10.0.2.10:40000";
@@ -824,6 +826,7 @@ fn sender_names_and_the_fix_report() {
             facts: vec![("silent for", "12.1 s".into())],
         },
         reason: String::new(),
+        pdu: None,
     };
     for (e, at) in [("9:9:1", 100.0), ("9:9:2", 101.0), ("8:1:1", 102.0)] {
         hub.log("alert", &alert_json(&ev(e, at)));
@@ -859,4 +862,47 @@ fn sender_names_and_the_fix_report() {
     assert_eq!((ct, csv.lines().count()), ("text/csv; charset=utf-8", 2), "{csv}");
     assert!(hub.report("since=0").unwrap_err().contains("sim=SITE:APP"));
     assert!(hub.report("sim=9:9&format=pdf").is_err());
+}
+
+#[test]
+fn an_alerts_pdu_is_kept_for_api_evidence() {
+    let hub = Hub::new();
+    let mut e = AlertEvent {
+        at: 50.0,
+        state: AlertState::Firing,
+        alert: Alert {
+            rule: Rule::PduFamily,
+            pack: "dis-base".into(),
+            rule_id: "pdu-family".into(),
+            key: EntityKey {
+                exercise: 1,
+                id: "1:1:0".parse().unwrap(),
+            },
+            severity: Severity::Warning,
+            since: 50.0,
+            message: "IFF from 1:1:0: protocol family 5".into(),
+            sender: Some("10.0.1.10:3000".parse().unwrap()),
+            kind: "family",
+            facts: Vec::new(),
+        },
+        reason: String::new(),
+        pdu: None,
+    };
+    // Without a PDU (a timeout, say) there is nothing to show.
+    let plain = hub.log_alert(&e);
+    assert!(!plain.contains("\"pdu\":"), "{plain}");
+    assert!(hub.evidence_json(1).is_none());
+    let bytes: Vec<u8> = vec![7, 1, 28, 5, 0, 0, 0, 0, 0, 16, 0, 0, 0, 1, 0, 1];
+    e.pdu = Some(bytes.into());
+    let entry = hub.log_alert(&e);
+    assert!(
+        entry.starts_with("{\"seq\":2,") && entry.contains("\"pdu\":16"),
+        "{entry}"
+    );
+    let j = hub.evidence_json(2).expect("kept");
+    assert!(
+        j.contains("\"source\":\"10.0.1.10:3000\"") && j.contains("[\"PDU Type\",\"28 (IFF)\"]"),
+        "{j}"
+    );
+    assert!(j.contains("\"hex\":\"0000  07 01 1c 05"), "{j}");
 }
