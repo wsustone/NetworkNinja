@@ -294,6 +294,12 @@
   .wtab th { text-align:left; color:var(--dim); font-weight:400; padding:.15em .3em; border-bottom:1px solid var(--line); }
   .wtab td { padding:.2em .3em; border-bottom:1px solid rgba(48,54,61,.5); } .wtab .n { text-align:right; font-variant-numeric:tabular-nums; }
   .wtab tr.go, .wlist tr.go, .wleg span.go { cursor:pointer; } .wtab tr.go:hover td, .wlist tr.go:hover td { background:rgba(255,255,255,.05); } .wleg span.go:hover { color:var(--fg); }
+  /* Board-wide time range and template variables. */
+  #dbar { display:flex; gap:1.4em; align-items:center; flex-wrap:wrap; font-size:12px; color:var(--dim); margin-top:.5em; }
+  #dbar .grp, #dvars, #dvars .var { display:flex; gap:.4em; align-items:center; }
+  #dvars { gap:.8em; flex-wrap:wrap; }
+  #dbar select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.2em .4em; font:inherit; font-size:12px; }
+  #dvSeek { width:220px; margin:0 .2em; } #dvAt { min-width:9em; } #dvAt.paused { color:var(--warn); }
   @media (max-width:700px) { #dgrid { grid-template-columns:1fr; } .wcard.wide { grid-column:span 1; } }
 </style>
 
@@ -353,6 +359,11 @@
     <span id="dTpl"></span>
     <span class="msg" id="dMsg"></span>
   </h2>
+  <div id="dbar">
+    <span class="grp">range <select id="dvSpan"><option value="">per widget</option><option value="600">last 10 min</option><option value="3600">last 1 h</option><option value="86400">last 24 h</option><option value="run">whole run</option></select></span>
+    <span class="grp"><button class="albtn" id="dvBack" title="step back one range">◀</button><input type="range" id="dvSeek" min="0" max="1" step="1" title="drag to look back in time"><button class="albtn" id="dvFwd" title="step forward one range">▶</button><span id="dvAt">live</span><button class="albtn" id="dvNow" hidden>back to live</button></span>
+    <span id="dvars"></span>
+  </div>
   <div id="dgrid"></div>
 </section>
 <main>
@@ -1623,7 +1634,7 @@ function thLevel(v, th) {
   return past(th.crit) ? "crit" : past(th.warn) ? "warn" : "ok";
 }
 const TEMPLATES = {
-  "Exercise overview": {about: "traffic, entity population and alerts at a glance", widgets: [
+  "Exercise overview": {about: "traffic, entity population and alerts at a glance", vars: [{dim: "exercise"}, {dim: "site"}], widgets: [
     W("PDU rate", "counter", "pdu.count", "rate", 60),
     W("Active entities", "counter", "entity.active", "sum", 60),
     W("Open alerts", "counter", "alerts.open", "sum", 60),
@@ -1643,7 +1654,7 @@ const TEMPLATES = {
     W("Largest dead-reckoning error", "toplist", "entity.dr_error", "max", 600, {q: {by: ["entity"]}}),
     W("Heartbeat jitter (worst entity)", "timeseries", "entity.heartbeat_jitter", "max", 3600),
   ]},
-  "Error hunt": {about: "is anything wrong right now, and who is causing it", widgets: [
+  "Error hunt": {about: "is anything wrong right now, and who is causing it", vars: [{dim: "sender"}, {dim: "rule"}], widgets: [
     W("Critical alerts", "status", "alerts.open", "sum", 60, {q: {where: {severity: "critical"}}, th: {dir: "above", warn: "", crit: 0}}),
     W("Open alerts", "status", "alerts.open", "sum", 60, {th: {dir: "above", warn: 0, crit: 5}}),
     W("Decode errors, 10 min", "status", "decode.errors", "sum", 600, {th: {dir: "above", warn: 0, crit: 10}}),
@@ -1654,7 +1665,8 @@ const TEMPLATES = {
     W("Open alerts by severity", "timeseries", "alerts.open", "sum", 3600, {q: {by: ["severity"]}}),
   ]},
 };
-const dash = {list: null, name: null, tpl: null, def: null, dirty: false, edit: false, data: [], editing: null};
+const dash = {list: null, name: null, tpl: null, def: null, dirty: false, edit: false, data: [], editing: null,
+  view: {span: "", to: null}, vals: {}, varOpts: {}, tick: 0};
 const clone = o => JSON.parse(JSON.stringify(o));
 const dashNameOk = n => /^[\p{L}\p{N} ._-]{1,64}$/u.test(n);
 function dashMsg(t, bad) { $("dMsg").textContent = t || ""; $("dMsg").style.color = bad ? "var(--crit)" : "var(--dim)"; }
@@ -1672,37 +1684,138 @@ function dashOpen(name) {
   const d = dash.list.find(x => x.name === name);
   if (!d) return;
   dash.name = name; dash.tpl = null; dash.def = clone(d.def); dash.dirty = false;
+  dash.vals = {}; dash.varOpts = {};
   localStorage.nn_dash = name;
   dashLoaded();
 }
 function dashOpenTemplate(tpl) {
   dash.name = null; dash.tpl = tpl; dash.dirty = false;
-  dash.def = {version: 1, widgets: tpl ? clone(TEMPLATES[tpl].widgets) : []};
+  dash.def = {version: 1, widgets: tpl ? clone(TEMPLATES[tpl].widgets) : [], vars: tpl ? clone(TEMPLATES[tpl].vars || []) : []};
+  dash.vals = {}; dash.varOpts = {};
   dashLoaded();
 }
-function dashLoaded() { dash.data = dash.def.widgets.map(() => null); renderDash(); dashRefresh(); }
+function dashLoaded() { dash.data = dash.def.widgets.map(() => null); renderDash(); dashRefresh(); varOptionsFetch(); }
+// Re-query every widget without blanking it (view changes).
+function dashReload() { renderDash(); dashRefresh(); }
 
-// The time range a widget covers, ending at the feed's clock (a replay's
-// position when replaying, like the traffic chart).
+// --- the board's view: one time range and point in time for every widget ---
+const clockNow = () => state && state.at ? state.at : Date.now() / 1000;
+// When this run started on the feed's clock.
+const runStart = () => state ? clockNow() - (state.replay ? state.replay.pos : state.uptime) : clockNow() - 3600;
+// What the scrubber can reach: the replay file, or the last 24 h (or the run, if longer).
+function viewDomain() {
+  const now = clockNow();
+  if (state && state.replay) return [now - state.replay.pos, now - state.replay.pos + state.replay.dur];
+  return [Math.min(now - 86400, runStart()), now];
+}
+// The time range a widget covers: the board's range when one is set, else
+// its own; ending at the board's paused time, else the feed's clock.
 function widgetRange(q) {
-  const to = Math.ceil(state && state.at ? state.at : Date.now() / 1000);
-  const span = q.span === "run" ? Math.max(60, state ? (state.replay ? state.replay.pos : state.uptime) : 3600) : +q.span;
+  const v = dash.view, to = Math.ceil(v.to ?? clockNow());
+  const sp = v.span || q.span;
+  const span = sp === "run" ? Math.max(60, to - runStart()) : +sp;
   return {from: Math.floor(to - span), to, span};
 }
+// A widget's effective filters: `$name` values come from the board's
+// variables, and a variable also applies to any widget whose metric carries
+// that dimension. "*" means all.
+function whereOf(q) {
+  const out = {}, dims = (METRICS[q.name] || {dims: []}).dims;
+  for (const [k, v] of Object.entries(q.where || {})) {
+    if (v === "") continue;
+    if (v[0] === "$") { const val = dash.vals[v.slice(1)]; if (val && val !== "*") out[k] = val; continue; }
+    out[k] = v;
+  }
+  for (const vr of (dash.def && dash.def.vars) || []) {
+    const val = dash.vals[vr.dim];
+    if (val && val !== "*" && out[vr.dim] === undefined && dims.includes(vr.dim)) out[vr.dim] = val;
+  }
+  return out;
+}
+const varValues = dims => ((dash.def && dash.def.vars) || []).filter(v => dims.includes(v.dim) && dash.vals[v.dim] && dash.vals[v.dim] !== "*").map(v => dash.vals[v.dim]);
 function widgetParams(w) {
   const q = w.q, {from, to, span} = widgetRange(q);
   const window = w.kind === "timeseries" ? (+q.window || Math.max(5, Math.ceil(span / 240 / 5) * 5)) : to - from;
   const p = new URLSearchParams({name: q.name, agg: q.agg, window, from, to});
   if (q.by.length) p.set("by", q.by.join(","));
-  for (const [k, v] of Object.entries(q.where)) if (v !== "") p.set("where." + k, v);
+  for (const [k, v] of Object.entries(whereOf(q))) p.set("where." + k, v);
   return p;
 }
+// Values for each variable's dropdown: the groups of a metric that carries the dimension, over the last hour.
+const VAR_METRIC = dim => Object.keys(METRICS).find(k => METRICS[k].dims.includes(dim));
+function varOptionsFetch() {
+  for (const vr of (dash.def && dash.def.vars) || []) {
+    const name = VAR_METRIC(vr.dim);
+    if (!name) continue;
+    const {from, to} = widgetRange({span: 3600});
+    const p = new URLSearchParams({name, agg: METRICS[name].gauge ? "max" : "sum", by: vr.dim, window: to - from, from, to});
+    fetch("/api/query?" + p, auth()).then(jsonOrError).then(d => {
+      if (!d.groups) return;
+      dash.varOpts[vr.dim] = d.groups.map(g => g.tags[vr.dim]).filter(x => x != null && x !== "").sort();
+      renderVars();
+    }).catch(() => {});
+  }
+}
+function renderVars() {
+  const vars = (dash.def && dash.def.vars) || [];
+  $("dvars").innerHTML = vars.map(vr => {
+    const opts = dash.varOpts[vr.dim] || [], cur = dash.vals[vr.dim] || "*";
+    const list = cur === "*" || opts.includes(cur) ? opts : [cur, ...opts];
+    return `<span class="var">${esc(DIM_LABEL[vr.dim] || vr.dim)}<select data-var="${esc(vr.dim)}" title="$${esc(vr.dim)}"><option value="*">all</option>${list.map(o => `<option value="${esc(o)}" ${o === cur ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>${dash.edit ? `<button class="albtn" data-delvar="${esc(vr.dim)}" title="remove this variable">✕</button>` : ""}</span>`;
+  }).join("") + (dash.edit ? `<select id="dvAdd"><option value="">+ variable…</option>${Object.keys(DIM_LABEL).filter(d => !vars.some(v => v.dim === d)).map(d => `<option value="${d}">${DIM_LABEL[d]}</option>`).join("")}</select>` : "");
+}
+function renderViewBar() {
+  const v = dash.view, [a, b] = viewDomain(), to = v.to ?? clockNow();
+  $("dvSpan").value = v.span;
+  const s = $("dvSeek"); s.min = Math.floor(a); s.max = Math.ceil(b);
+  if (document.activeElement !== s) s.value = Math.round(to);
+  $("dvAt").textContent = v.to === null ? "live" : "ending " + new Date(v.to * 1000).toLocaleTimeString() + " · paused";
+  $("dvAt").classList.toggle("paused", v.to !== null);
+  $("dvNow").hidden = v.to === null;
+}
+$("dvSpan").onchange = () => { dash.view.span = $("dvSpan").value; dashReload(); };
+function viewStep(dir) {
+  const {span} = widgetRange({span: dash.view.span || 3600}), [a, b] = viewDomain();
+  const to = Math.min(b, Math.max(a, (dash.view.to ?? clockNow()) + dir * span));
+  dash.view.to = to >= b - 1 ? null : to;
+  dashReload();
+}
+$("dvBack").onclick = () => viewStep(-1);
+$("dvFwd").onclick = () => viewStep(1);
+$("dvNow").onclick = () => { dash.view.to = null; dashReload(); };
+$("dvSeek").oninput = () => { dash.view.to = +$("dvSeek").value; renderViewBar(); };
+$("dvSeek").onchange = () => { const [, b] = viewDomain(); if (+$("dvSeek").value >= b - 1) dash.view.to = null; dashReload(); };
+$("dvars").onchange = ev => {
+  const t = ev.target;
+  if (t.id === "dvAdd") {
+    if (!t.value) return;
+    (dash.def.vars = dash.def.vars || []).push({dim: t.value});
+    dash.dirty = true; renderDash(); varOptionsFetch();
+    return;
+  }
+  if (t.dataset.var) { dash.vals[t.dataset.var] = t.value; dashReload(); }
+};
+$("dvars").onclick = ev => {
+  const b = ev.target.closest("[data-delvar]");
+  if (!b) return;
+  dash.def.vars = (dash.def.vars || []).filter(v => v.dim !== b.dataset.delvar);
+  delete dash.vals[b.dataset.delvar];
+  dash.dirty = true; dashReload();
+};
 const jsonOrError = r => r.ok ? r.json() : r.json().catch(() => ({})).then(e => ({error: e.error || "HTTP " + r.status}));
 function widgetFetch(w) {
-  if (w.kind === "events") return Promise.resolve(eventsData(w));
+  if (w.kind === "events") {
+    // Live: the page's feed. Paused: that window from the store.
+    if (dash.view.to === null) return Promise.resolve(eventsData(w));
+    const {from, to} = widgetRange(w.q);
+    return fetch("/api/log?" + new URLSearchParams({from, to, limit: 500}), auth()).then(jsonOrError)
+      .then(d => d.error ? d : eventsData(w, d.entries || []));
+  }
   if (w.kind === "table") {
-    const p = new URLSearchParams({by: tableBy(w).join(","), since: widgetRange(w.q).from});
-    if (w.q.where && w.q.where.exercise) p.set("exercise", w.q.where.exercise);
+    const wh = whereOf(w.q), {from, to} = widgetRange(w.q), p = new URLSearchParams({by: tableBy(w).join(","), since: from, until: to});
+    const [ex] = [wh.exercise, ...varValues(["exercise"])].filter(Boolean), [ent] = varValues(["entity"]);
+    if (ex) p.set("exercise", ex);
+    if (ent) p.set("entity", ent);
     return fetch("/api/events/summary?" + p, auth()).then(jsonOrError);
   }
   return fetch("/api/query?" + widgetParams(w), auth()).then(jsonOrError);
@@ -1710,14 +1823,14 @@ function widgetFetch(w) {
 const tableBy = w => ((w.tab && w.tab.by) || ["sender"]).filter(Boolean);
 // Event-stream widgets read the page's live feed (the entries the Live tab
 // shows), so they work without --db and update as entries arrive.
-function eventsData(w) {
-  const ev = w.ev || {}, {from} = widgetRange(w.q);
-  const terms = (ev.text || "").toLowerCase().split(/\s+/).filter(Boolean);
+function eventsData(w, src = feed) {
+  const ev = w.ev || {}, {from, to} = widgetRange(w.q);
+  const terms = (ev.text || "").toLowerCase().split(/\s+/).filter(Boolean).concat(varValues(["sender", "rule", "entity", "severity", "pack"]).map(v => v.toLowerCase()));
   const hay = e => [e.entity, e.rule, e.message, e.pack, e.state, e.sender, e.severity, e.kind === "error" ? "decode-error" : ""].join(" ").toLowerCase();
   const items = [], max = +ev.n || 25;
-  for (let i = feed.length - 1; i >= 0 && items.length < max; i--) {
-    const e = feed[i];
-    if ((e.at || 0) < from) continue;
+  for (let i = src.length - 1; i >= 0 && items.length < max; i--) {
+    const e = src[i];
+    if ((e.at || 0) < from || (e.at || 0) > to) continue;
     if (e.kind === "alert" ? ev.alert === false : e.kind === "error" ? ev.err === false : !ev.info) continue;
     if (e.kind === "alert" && ev.state !== "all" && e.state !== "firing") continue;
     if (e.kind === "alert" && ev.sev && e.severity !== ev.sev) continue;
@@ -1727,7 +1840,7 @@ function eventsData(w) {
   return {events: items};
 }
 function dashEventsRedraw() {
-  if (!dash.def) return;
+  if (!dash.def || dash.view.to !== null) return;
   dash.def.widgets.forEach((w, i) => {
     if (w.kind !== "events") return;
     dash.data[i] = eventsData(w);
@@ -1737,6 +1850,8 @@ function dashEventsRedraw() {
 }
 function dashRefresh() {
   if ($("dash").hidden || !dash.def) return;
+  renderViewBar();
+  if (++dash.tick % 6 === 0) varOptionsFetch();
   const def = dash.def;
   def.widgets.forEach((w, i) => widgetFetch(w).then(d => {
     if (dash.def !== def || def.widgets[i] !== w) return;
@@ -1760,6 +1875,7 @@ function renderDash() {
     : dash.tpl ? "template — “save as” to keep your own copy" : dash.def && dash.def.widgets.length ? "not saved yet" : "";
   const grid = $("dgrid");
   grid.classList.toggle("edit", dash.edit);
+  renderViewBar(); renderVars();
   if (!dash.def) { grid.innerHTML = ""; return; }
   const ws = dash.def.widgets, n = ws.length;
   grid.innerHTML = ws.map((w, i) => {
@@ -1777,7 +1893,8 @@ function renderDash() {
 const fmtSpan = s => s < 120 ? `last ${s} s` : s < 7200 ? `last ${Math.round(s / 60)} min` : `last ${Math.round(s / 3600)} h`;
 // The one-line summary under a widget's title.
 function widgetDesc(w) {
-  const span = w.q.span === "run" ? "whole run" : fmtSpan(+w.q.span);
+  const sp = dash.view.span || w.q.span;
+  const span = (sp === "run" ? "whole run" : fmtSpan(+sp)) + (dash.view.span ? " (board)" : "");
   if (w.kind === "events") {
     const ev = w.ev || {};
     const what = [ev.alert !== false && (ev.state === "all" ? "alerts" : "firing alerts"), ev.err !== false && "decode errors", ev.info && "info"].filter(Boolean).join(", ") || "nothing selected";
@@ -1956,7 +2073,8 @@ $("dFile").onchange = () => {
       throw new Error("not a NetworkNinja dashboard file");
     for (const w of d.widgets) { w.q.by = Array.isArray(w.q.by) ? w.q.by : []; w.q.where = w.q.where || {}; w.title = String(w.title || w.q.name); }
     if (dash.dirty && !confirm("Discard unsaved changes?")) return;
-    dash.name = null; dash.tpl = null; dash.def = {version: 1, widgets: d.widgets};
+    const vars = Array.isArray(d.vars) ? d.vars.filter(v => v && DIM_LABEL[v.dim]).map(v => ({dim: v.dim})) : [];
+    dash.name = null; dash.tpl = null; dash.def = {version: 1, widgets: d.widgets, vars}; dash.vals = {}; dash.varOpts = {};
     dashLoaded(); dash.dirty = true; renderDash();
     dashMsg(`imported "${d.name || f.name}" — “save as” to keep it`);
   }).catch(e => dashMsg("import failed: " + e.message, true));
@@ -2022,7 +2140,7 @@ function weMetricChanged(w) {
 }
 function weAddWhere(k, v = "") {
   const m = METRICS[$("weMetric").value];
-  $("weWhere").insertAdjacentHTML("beforeend", `<div class="wrow"><select>${m.dims.map(d => `<option value="${d}" ${d === k ? "selected" : ""}>${DIM_LABEL[d]}</option>`).join("")}</select><input type="text" placeholder="value" value="${esc(v)}"><button type="button" class="albtn">✕</button></div>`);
+  $("weWhere").insertAdjacentHTML("beforeend", `<div class="wrow"><select>${m.dims.map(d => `<option value="${d}" ${d === k ? "selected" : ""}>${DIM_LABEL[d]}</option>`).join("")}</select><input type="text" placeholder="value or $variable" value="${esc(v)}"><button type="button" class="albtn">✕</button></div>`);
 }
 const TH_KINDS = ["timeseries", "counter", "status"];
 function weKindChanged() {
