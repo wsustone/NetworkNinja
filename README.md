@@ -61,8 +61,9 @@ rulepacks/    base DIS rule pack (dis-base.toml, compiled into nn-server)
 Ready-to-run builds for Linux (x86_64, static), Windows (x86_64) and macOS (universal) are on
 the [Releases](https://github.com/wsustone/NetworkNinja/releases) page
 ([latest](https://github.com/wsustone/NetworkNinja/releases/latest)): unpack one and follow
-its `QUICKSTART.md` ([packaging/QUICKSTART.md](packaging/QUICKSTART.md)). Builds aren't signed
-yet, so the quick start explains the macOS and Windows warnings.
+its `QUICKSTART.md` ([packaging/QUICKSTART.md](packaging/QUICKSTART.md)). Until signed builds
+ship (see the [code signing policy](#code-signing-policy)), the quick start explains the macOS
+and Windows warnings.
 
 To cut a release, set the workspace version in `Cargo.toml`, then push a matching tag
 (`git tag v0.1.0 && git push origin v0.1.0`). The Release workflow builds every platform and
@@ -144,6 +145,23 @@ The same traffic into the dashboard instead of the console:
 The page shows live entities (positions converted to lat/lon), a one-second state feed and the alert stream, each alert citing its rule pack. `--http` changes the bind; it stays on localhost until configured.
 
 Both tools take `--help`. The generator prints ground truth (PDU counts by type, faults and their times) as JSON; the listener's final summary should match it. `replay` reads pcap and pcapng.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+Windows builds are signed through SignPath Foundation, and macOS builds with the maintainer's
+Apple Developer ID; both are built from this repository by the
+[Release workflow](.github/workflows/release.yml) on GitHub-hosted runners
+([packaging/SIGNING.md](packaging/SIGNING.md)). Only `nn-server` and `nn-generator`, built from
+this project's own source, are signed.
+
+- Committers and reviewers: [Juston Morgan](https://github.com/wsustone)
+- Approvers (each release's signing request): [Juston Morgan](https://github.com/wsustone)
+
+Privacy: this program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it. `nn-server` only
+listens on the ports and serves the dashboard you configure; `nn-generator` sends test traffic
+only to the target you give it.
 
 ## License
 

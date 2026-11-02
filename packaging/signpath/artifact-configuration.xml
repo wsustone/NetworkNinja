@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration for the Windows build (packaging/SIGNING.md).
+  Paste this into the SignPath project's default artifact configuration. The
+  Release workflow uploads nn-server.exe and nn-generator.exe as one zip and
+  passes the workspace version as `version`; SignPath refuses binaries whose
+  version resource (packaging/winres.rs) doesn't match.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file-set product-name="NetworkNinja" product-version="${version}" file-version="${version}" original-filename="${file.name}">
+      <include path="nn-server.exe" />
+      <include path="nn-generator.exe" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>

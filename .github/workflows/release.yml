@@ -117,6 +117,81 @@ jobs:
             exit 0
           fi
           bash packaging/macos-sign.sh "$dir"
+      # The version resource code signing checks (packaging/winres.rs).
+      - name: Check version info (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          $dir = "dist/networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          foreach ($b in "nn-server.exe", "nn-generator.exe") {
+            $v = (Get-Item "$dir/$b").VersionInfo
+            "$b : $($v.ProductName) $($v.ProductVersion), $($v.FileDescription)"
+            if ($v.ProductName -ne "NetworkNinja" -or $v.ProductVersion -ne "${{ steps.version.outputs.version }}") {
+              throw "$b doesn't carry the NetworkNinja version resource"
+            }
+          }
+      # Authenticode signing by SignPath Foundation (packaging/SIGNING.md):
+      # tags use the release-signing policy, which waits for a person to
+      # approve the request in SignPath; other runs use test-signing. Until
+      # the secret and variable are set the Windows build stays unsigned,
+      # with a warning on the run.
+      - name: Signing setup (Windows)
+        id: winsign
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if [[ -z "$SIGNPATH_API_TOKEN" || -z "$SIGNPATH_ORGANIZATION_ID" ]]; then
+            echo "::warning::SignPath isn't set up: this Windows build is unsigned, and SmartScreen will warn testers (packaging/SIGNING.md)"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "policy=release-signing" >> "$GITHUB_OUTPUT"
+          else
+            echo "policy=test-signing" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        id: unsigned
+        if: steps.winsign.outputs.enabled == 'true'
+        with:
+          name: windows-unsigned
+          path: |
+            dist/networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}/nn-server.exe
+            dist/networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}/nn-generator.exe
+          if-no-files-found: error
+      - name: Sign (Windows)
+        if: steps.winsign.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'NetworkNinja' }}
+          signing-policy-slug: ${{ steps.winsign.outputs.policy }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+          wait-for-completion: true
+          # Time to approve a release-signing request.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist/networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}
+      - name: Check signature (Windows)
+        if: steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $dir = "dist/networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          foreach ($b in "nn-server.exe", "nn-generator.exe") {
+            $s = Get-AuthenticodeSignature "$dir/$b"
+            "$b : $($s.Status), $($s.SignerCertificate.Subject)"
+            # Test-signing certificates aren't trusted; a release must be.
+            if ("${{ steps.winsign.outputs.policy }}" -eq "release-signing" -and $s.Status -ne "Valid") {
+              throw "$b isn't validly signed"
+            }
+            if (-not $s.SignerCertificate) { throw "$b isn't signed" }
+          }
       - name: Archive
         shell: bash
         run: |
@@ -183,4 +258,5 @@ jobs:
           pre=""
           [[ "$GITHUB_REF_NAME" == *-* ]] && pre="--prerelease"
           gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" \
-            --draft $pre --generate-notes --title "NetworkNinja $GITHUB_REF_NAME"
+            --draft $pre --generate-notes --title "NetworkNinja $GITHUB_REF_NAME" \
+            --notes "Unpack an archive and follow its QUICKSTART.md; check downloads against SHA256SUMS.txt. [Code signing policy](https://github.com/wsustone/NetworkNinja#code-signing-policy)."

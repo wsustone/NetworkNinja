@@ -1,8 +1,9 @@
 # Signing the release builds
 
 Unsigned builds make macOS and Windows warn testers on first launch. The Release workflow signs
-the macOS build when the repository has the secrets below; until then it builds unsigned and the
-run shows a warning saying so.
+the macOS build with an Apple Developer ID and the Windows build through SignPath Foundation, each
+when the repository has its secrets (below); until then that build is unsigned and the run shows
+a warning saying so.
 
 ## macOS: Developer ID signing and notarization
 
@@ -53,11 +54,52 @@ codesign -dv --verbose=2 nn-server                    # Authority=Developer ID A
 The certificate lasts five years; the API key until you revoke it. Rotate either by replacing
 its secret.
 
-## Windows
+## Windows: SignPath Foundation
 
-Windows trusts Authenticode signatures only: a Google or Apple account doesn't help. The choices
-are Microsoft's **Azure Trusted Signing** (a monthly subscription; signs from CI with an Azure
-identity) or a code-signing certificate from a certificate authority (OV, or EV for immediate
-SmartScreen reputation; usually on a hardware token or a cloud HSM). Either can be added to the
-workflow's Windows build in the same way: a signing step between Stage and Archive that runs
-when its secrets are set.
+Windows trusts Authenticode signatures only, so a Google or Apple account doesn't help. As an
+open-source project, NetworkNinja can get a free certificate through
+[SignPath Foundation](https://signpath.org): the certificate is issued to SignPath Foundation, and
+SignPath signs only builds that come from this repository's Release workflow on GitHub-hosted
+runners. The README's [code signing policy](../README.md#code-signing-policy) is part of their
+terms.
+
+The workflow's Windows build checks that both programs carry the version resource SignPath
+checks (`packaging/winres.rs`: ProductName "NetworkNinja", ProductVersion the workspace version).
+When SignPath is set up, it then uploads the two programs, has SignPath sign them, and checks the
+signatures before archiving. Tags use the **release-signing** policy, which waits up to an hour
+for you to approve the request in SignPath; other runs use **test-signing**.
+
+### One-time setup
+
+1. **Apply** at <https://signpath.org/apply> with the repository URL. Their terms ask for:
+   an OSI licence (Apache-2.0), an actively maintained and already released project,
+   multi-factor authentication on GitHub and SignPath for everyone on the team, and the
+   README's code signing policy.
+2. **In SignPath**, once accepted (they usually set the project up with you):
+   - a project, slug `NetworkNinja` (or another; see the variable below), linked to the
+     trusted build system *GitHub.com* and this repository;
+   - its default artifact configuration: paste
+     [`packaging/signpath/artifact-configuration.xml`](signpath/artifact-configuration.xml);
+   - signing policies `test-signing` and `release-signing`, the latter with you as approver and
+     restricted to tags or `main`;
+   - an API token for a CI user with submitter permission on both policies.
+3. **In GitHub**, NetworkNinja → Settings → Secrets and variables → Actions:
+
+   | Kind | Name | Value |
+   | --- | --- | --- |
+   | Secret | `SIGNPATH_API_TOKEN` | the CI user's API token |
+   | Variable | `SIGNPATH_ORGANIZATION_ID` | your SignPath organization ID |
+   | Variable (optional) | `SIGNPATH_PROJECT_SLUG` | the project slug, if not `NetworkNinja` |
+
+### Checking it
+
+Re-run the Release workflow on a pull request that touches `packaging/`: "Sign (Windows)" submits
+a test-signing request and "Check signature (Windows)" prints each program's signer. After a
+tagged release, on Windows:
+
+```powershell
+Get-AuthenticodeSignature .\nn-server.exe   # Status Valid, signer SignPath Foundation
+```
+
+SmartScreen may still warn about a newly signed program until it builds up reputation; the
+publisher shown is then SignPath Foundation rather than "Unknown publisher".
