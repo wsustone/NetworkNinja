@@ -148,6 +148,9 @@
   .chip i { font-style:normal; color:var(--dim); font-family:system-ui,sans-serif; margin-left:.35em; }
   .chip.open { border-color:var(--crit); }
   .exp .acts { margin-top:.6em; display:flex; gap:.4em; flex-wrap:wrap; }
+  .pdu { margin-top:.35em; }
+  .pdu pre { margin:.4em 0 0; padding:.5em .6em; background:var(--bg); border:1px solid var(--line); border-radius:4px; font:11px/1.4 ui-monospace,monospace; overflow-x:auto; max-height:260px; white-space:pre; }
+  .pdu .facts { margin-top:.2em; }
   .exp .acts .albtn { margin:0; font-size:11px; padding:.2em .6em; }
   .badge { font-size:10px; padding:0 .45em; border-radius:8px; border:1px solid currentColor; }
   .badge.open { color:var(--crit); } .badge.acked { color:var(--ok); }
@@ -483,6 +486,7 @@ function note(e) {
       i.last = Math.max(i.last, e.at);
       if (SEV[e.severity] > SEV[i.severity]) i.severity = e.severity;
       i.message = e.message; i.sender = e.sender || i.sender; i.facts = e.facts || i.facts;
+      if (e.pdu) { i.pduSeq = e.seq; i.pduLen = e.pdu; }
       i.times.push(e.at); if (i.times.length > 200) i.times.shift();
     } else i.resolved = e.at;
   } else if (e.kind === "error") {
@@ -561,6 +565,30 @@ function toast(msg, bad) {
   const t = $("toast");
   t.textContent = msg; t.className = "on" + (bad ? " bad" : "");
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "", 6000);
+}
+
+// --- the PDU behind an alert (GET /api/evidence?seq=) ---
+// Loaded on request and kept here, since the board re-renders every tick.
+const PDUS = {};
+function loadPdu(seq) {
+  if (PDUS[seq]) { PDUS[seq].shown = !PDUS[seq].shown; renderBoard(); return; }
+  PDUS[seq] = {shown: true, loading: true};
+  renderBoard();
+  fetch("/api/evidence?seq=" + seq, auth()).then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(d => { PDUS[seq] = {shown: true, data: d}; renderBoard(); })
+    .catch(() => { PDUS[seq] = {shown: true, error: "no longer kept (the server keeps the most recent 2000, or all with --db)"}; renderBoard(); });
+}
+function pduHtml(seq) {
+  const p = PDUS[seq];
+  if (!p || !p.shown) return "";
+  if (p.loading) return `<div class="pdu chk">loading…</div>`;
+  if (p.error) return `<div class="pdu chk">${esc(p.error)}</div>`;
+  const d = p.data, kv = list => `<div class="facts">${list.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("")}</div>`;
+  return `<div class="pdu"><span class="chk">from ${named(d.source, senderName(d.source))} at ${fmtWhen(d.at)}, ${d.length} bytes</span>`
+    + kv(d.header)
+    + (d.fields.length ? `<div class="chk" style="margin-top:.4em">enumerated fields</div>` + kv(d.fields) : "")
+    + (d.decoded ? `<pre>${esc(d.decoded)}</pre>` : "")
+    + `<pre>${esc(d.hex)}</pre></div>`;
 }
 
 // --- fix report (GET /api/report): one simulation's problems for its vendor ---
@@ -765,6 +793,15 @@ function problemHtml(g, now) {
   return h + `</li>`;
 }
 
+// The offending PDU, when the latest alert of the problem kept one (a
+// timeout has none: silence raised it).
+function pduRow(g) {
+  const m = g.members.filter(x => x.pduSeq).sort((a, b) => b.last - a.last)[0];
+  if (!m) return "";
+  const open = PDUS[m.pduSeq] && PDUS[m.pduSeq].shown;
+  return `<dt>The PDU</dt><dd><button class="albtn" data-pdu="${m.pduSeq}" style="margin:0">${open ? "hide" : "show"} the PDU (${m.pduLen} bytes${g.members.length > 1 ? ", " + esc(m.entity) : ""})</button>${pduHtml(m.pduSeq)}</dd>`;
+}
+
 // The expanded card: what happened, why it matters, how to fix it, where.
 function expHtml(g, ents, unacked, mark) {
   const x = explainOf(g), m = g.latest;
@@ -785,6 +822,7 @@ function expHtml(g, ents, unacked, mark) {
     + row(ents.length > 1 ? `Affected (${ents.length})` : "Entity", chips)
     + row("First seen", fmtWhen(g.first) + (g.count > 1 ? ` · ${g.count} firings` : ""))
     + row("Reference", clause ? esc("IEEE 1278.1 " + clause) + ' <span class="chk">draft D16r18</span>' : "")
+    + pduRow(g)
     + `</dl><div class="acts">`;
   if (unacked.length) h += `<button class="albtn" data-grp="ack">ack${unacked.length > 1 ? " all " + unacked.length : ""}</button>`;
   if (g.kind === "alert") h += `<button class="albtn" data-cmd="mute_rule" data-rule="${esc(g.rule)}" data-secs="300" title="Silence this check for every entity for 5 minutes">mute this check 5m</button>`;
@@ -1186,6 +1224,7 @@ $("board").onclick = ev => {
   const btn = ev.target.closest("button");
   if (btn && btn.dataset.name) { nameIt(btn.dataset.name, btn.dataset.val); return; }
   if (btn && btn.dataset.report) { openReport(btn.dataset.report, btn.dataset.ex); return; }
+  if (btn && btn.dataset.pdu) { loadPdu(btn.dataset.pdu); return; }
   if (btn && btn.dataset.cmd) { ev.stopPropagation(); cmdButton(btn); return; }
   if (btn && btn.dataset.log) { $("filter").value = btn.dataset.log.trim(); showBoard("log"); return; }
   const card = ev.target.closest("li.prob");
