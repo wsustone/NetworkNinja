@@ -614,6 +614,14 @@ static CATALOG: &[Explanation] = &[
         "Before (or as) the entity goes, send a final Designator PDU with Power 0.",
     ),
     x(
+        "monitor",
+        "*",
+        "A monitor you set up fired",
+        "This is your own condition, from the Monitors tab: whatever you decided matters for this exercise is happening (see the monitor's name and what it watches).",
+        "The traffic, federate or rule the monitor watches crossed its condition: a sender went quiet, a rate went out of range, or a check fired more often than you allowed.",
+        "Look at the group it names (the sender, site or entity) and its value against the condition. If the monitor is too sensitive, raise its condition or its `for` in the Monitors tab.",
+    ),
+    x(
         "decode-error",
         "*",
         "Unreadable PDU",

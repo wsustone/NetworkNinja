@@ -283,6 +283,17 @@ broken down.
 
 3. Monitors: `[[monitor]]` parsing in `nn_rules::pack`, the evaluator,
    `monitors.toml` layer, `/api/monitors` CRUD, builder UI with preview.
+   Done so far: `nn_rules::monitors` parses and validates `[[monitor]]`
+   blocks (types threshold, absence, event-count; filters as dotted
+   `where.DIM` keys; the event-count's rule is `event`, so `name` stays the
+   display name) and evaluates them every second on `Monitor::tick` over the
+   in-memory metric buckets (so windows and `for` are at most 600 s) and the
+   recent alert firings. Each group opens one alert, rule `monitor`,
+   `rule_id` = monitor id (+ `@tags`), through the engine's normal path
+   (active list, ack, mute by monitor id, event log). `Monitors::preview`
+   replays a monitor over memory for "would have fired N times". Still
+   open: composite monitors, the `monitors.toml` file, `/api/monitors`, the
+   builder UI.
 4. Standard rules by PDU family, starting with SISO-REF-010 generation
    and the behavioural rules listed in §3.
 5. Dashboard builder, saved dashboards, templates; alert routes.

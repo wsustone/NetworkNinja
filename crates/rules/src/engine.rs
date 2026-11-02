@@ -63,6 +63,10 @@ pub enum Rule {
     Emission,
     /// A designator's spot or its final report (`crate::designator`).
     Designator,
+    /// A user monitor's condition held (`crate::monitors`): one alert per
+    /// monitor and group; `rule_id` is the monitor id, with `@tags` for a
+    /// group.
+    UserMonitor,
 }
 
 impl Rule {
@@ -87,6 +91,7 @@ impl Rule {
             Rule::Attribute => "attribute",
             Rule::Emission => "emission",
             Rule::Designator => "designator",
+            Rule::UserMonitor => "monitor",
         }
     }
 
@@ -111,6 +116,7 @@ impl Rule {
             "attribute" => Some(Rule::Attribute),
             "emission" => Some(Rule::Emission),
             "designator" => Some(Rule::Designator),
+            "monitor" => Some(Rule::UserMonitor),
             _ => None,
         }
     }
@@ -371,6 +377,8 @@ pub struct Engine {
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
+    /// Open user-monitor alerts, by rule_id (monitor id and group).
+    monitor_active: BTreeMap<String, Alert>,
     /// Operator acknowledgements, keyed by (rule_id, entity).
     acks: BTreeMap<(String, EntityKey), Ack>,
     /// Active mutes (entity or rule, each with an expiry).
@@ -410,6 +418,7 @@ impl Engine {
             designators: crate::designator::Designators::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
+            monitor_active: BTreeMap::new(),
             acks: BTreeMap::new(),
             mutes: Vec::new(),
             last_tick: f64::NEG_INFINITY,
@@ -426,7 +435,7 @@ impl Engine {
     }
 
     pub fn active(&self) -> impl Iterator<Item = &Alert> {
-        self.active.values()
+        self.active.values().chain(self.monitor_active.values())
     }
 
     pub fn is_active(&self, rule: Rule, key: &EntityKey) -> bool {
@@ -438,7 +447,10 @@ impl Engine {
         self.mutes.iter().any(|m| {
             m.until > now
                 && match &m.scope {
-                    MuteScope::Rule(r) => r == rule_id,
+                    // A monitor's id mutes all its groups (`id@tags`).
+                    MuteScope::Rule(r) => {
+                        r == rule_id || rule_id.strip_prefix(r.as_str()).is_some_and(|g| g.starts_with('@'))
+                    }
                     MuteScope::Entity(k) => k == key,
                 }
         })
@@ -446,7 +458,7 @@ impl Engine {
 
     /// Acknowledge a firing alert (matched by its rule_id and entity).
     pub fn ack(&mut self, rule_id: &str, key: EntityKey, by: &str, note: &str, at: f64) -> bool {
-        if !self.active.values().any(|a| a.rule_id == rule_id && a.key == key) {
+        if !self.active().any(|a| a.rule_id == rule_id && a.key == key) {
             return false;
         }
         self.acks.insert(
@@ -463,6 +475,135 @@ impl Engine {
     /// The ack on an active alert, if any.
     pub fn ack_of(&self, rule_id: &str, key: &EntityKey) -> Option<&Ack> {
         self.acks.get(&(rule_id.to_string(), *key))
+    }
+
+    /// A user monitor's group opened or resolved: the alert event, unless
+    /// the rule is off or the monitor muted.
+    pub fn monitor_change(
+        &mut self,
+        at: f64,
+        def: &crate::monitors::MonitorDef,
+        group: &nn_state::metrics::TagPairs,
+        change: &crate::monitors::Change,
+    ) -> Option<AlertEvent> {
+        use crate::monitors::{Change, Kind};
+        use nn_state::metrics::Dim;
+        let tag = |d: Dim| group.iter().find(|(x, _)| *x == d).map(|(_, v)| v.as_str());
+        let filter = |d: Dim| def.filter.iter().find(|(x, _)| *x == d).map(|(_, v)| v.as_str());
+        let group_s: Vec<String> = group.iter().map(|(d, v)| format!("{}={v}", d.name())).collect();
+        let rule_id = if group.is_empty() {
+            def.id.clone()
+        } else {
+            format!("{}@{}", def.id, group_s.join(","))
+        };
+        if let Change::Resolve = change {
+            let alert = self.monitor_active.remove(&rule_id)?;
+            self.acks.retain(|(r, _), _| r != &rule_id);
+            return Some(AlertEvent {
+                at,
+                state: AlertState::Resolved,
+                alert,
+                reason: format!("{}: back within its condition", def.name),
+                pdu: None,
+            });
+        }
+        let Change::Fire { value } = change else { return None };
+        // The alert's entity: the group's, else its simulation, else none.
+        let n = |s: Option<&str>| s.and_then(|v| v.parse::<u16>().ok()).unwrap_or(0);
+        let id = match tag(Dim::Entity).and_then(|e| e.parse::<EntityId>().ok()) {
+            Some(e) => e,
+            None => EntityId::new(
+                n(tag(Dim::Site).or(filter(Dim::Site))),
+                n(tag(Dim::App).or(filter(Dim::App))),
+                0,
+            ),
+        };
+        let exercise = tag(Dim::Exercise)
+            .or(filter(Dim::Exercise))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let key = EntityKey { exercise, id };
+        if !self.enabled(Rule::UserMonitor)
+            || self.muted(&rule_id, &key, at)
+            || self.monitor_active.contains_key(&rule_id)
+        {
+            return None;
+        }
+        let who = if group_s.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", group_s.join(", "))
+        };
+        let what = match def.kind {
+            Kind::Absence => format!("nothing for {} s", def.for_secs),
+            Kind::Threshold => format!(
+                "{value:.3} {}",
+                def.condition.map(|c| c.to_string()).unwrap_or_default()
+            ),
+            Kind::EventCount => format!(
+                "{value:.0} firings, {}",
+                def.condition.map(|c| c.to_string()).unwrap_or_default()
+            ),
+        };
+        let message = format!("{}{who}: {what} [{}]", def.name, def.describe());
+        let mut facts: Facts = vec![
+            ("monitor", format!("{} ({})", def.name, def.id)),
+            ("type", def.kind.name().into()),
+        ];
+        if !group_s.is_empty() {
+            facts.push(("group", group_s.join(", ")));
+        }
+        facts.push(("value", format!("{value:.3}")));
+        if let Some(c) = def.condition {
+            facts.push(("condition", c.to_string()));
+        }
+        if def.for_secs > 0 {
+            facts.push(("held for", format!("{} s", def.for_secs)));
+        }
+        facts.push(("watching", def.describe()));
+        let alert = Alert {
+            rule: Rule::UserMonitor,
+            pack: "monitors".into(),
+            rule_id: rule_id.clone(),
+            key,
+            severity: def.severity,
+            since: at,
+            message: message.clone(),
+            sender: tag(Dim::Sender).and_then(|s| s.parse().ok()),
+            kind: def.kind.name(),
+            facts,
+        };
+        self.monitor_active.insert(rule_id, alert.clone());
+        Some(AlertEvent {
+            at,
+            state: AlertState::Firing,
+            alert,
+            reason: message,
+            pdu: None,
+        })
+    }
+
+    /// Resolve every open alert of monitors no longer defined.
+    pub fn retain_monitors(&mut self, at: f64, ids: &[&str]) -> Vec<AlertEvent> {
+        let gone: Vec<String> = self
+            .monitor_active
+            .keys()
+            .filter(|r| {
+                !ids.iter()
+                    .any(|id| r.as_str() == *id || r.strip_prefix(id).is_some_and(|g| g.starts_with('@')))
+            })
+            .cloned()
+            .collect();
+        gone.into_iter()
+            .filter_map(|r| self.monitor_active.remove(&r))
+            .map(|alert| AlertEvent {
+                at,
+                state: AlertState::Resolved,
+                alert,
+                reason: "monitor removed or changed".into(),
+                pdu: None,
+            })
+            .collect()
     }
 
     /// Mute a rule id (behavioural name or enum field path) everywhere.
@@ -1286,7 +1427,8 @@ impl Engine {
                 | Rule::Collision
                 | Rule::Attribute
                 | Rule::Emission
-                | Rule::Designator => {}
+                | Rule::Designator
+                | Rule::UserMonitor => {}
             }
         }
         out
