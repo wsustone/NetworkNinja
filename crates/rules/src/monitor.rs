@@ -56,6 +56,9 @@ pub struct Monitor {
     /// The listener each sender was last heard through.
     via: HashMap<SocketAddr, Arc<str>>,
     last_dedup_prune: f64,
+    /// User monitors (ADR 0008 slice 3), evaluated every second on the tick.
+    pub user_monitors: crate::monitors::Monitors,
+    last_monitor_eval: f64,
 }
 
 impl Monitor {
@@ -174,6 +177,7 @@ impl Monitor {
             }
             attach_pdu(&mut events[first_event..], &d.payload[range]);
         }
+        self.record_for_monitors(&events);
         events.extend(self.tick(now));
         (pdus, events)
     }
@@ -185,9 +189,66 @@ impl Monitor {
             self.last_prune = now;
             self.table.prune(now, ENTITY_EXPIRY);
         }
-        let events = self.engine.tick(now, &self.table);
+        let mut events = self.engine.tick(now, &self.table);
         self.sample_gauges(now);
+        self.record_for_monitors(&events);
+        if now - self.last_monitor_eval >= 1.0 && !self.user_monitors.defs.is_empty() {
+            self.last_monitor_eval = now;
+            for (i, group, change) in self.user_monitors.evaluate(now, &self.metrics) {
+                let def = self.user_monitors.defs[i].clone();
+                events.extend(self.engine.monitor_change(now, &def, &group, &change));
+            }
+        }
         events
+    }
+
+    /// Replace the user monitors, resolving the open alerts of any that
+    /// went or changed.
+    pub fn set_monitors(&mut self, defs: Vec<crate::monitors::MonitorDef>) -> Vec<AlertEvent> {
+        let unchanged: Vec<String> = defs
+            .iter()
+            .filter(|d| self.user_monitors.defs.contains(d))
+            .map(|d| d.id.clone())
+            .collect();
+        let keep: Vec<&str> = unchanged.iter().map(String::as_str).collect();
+        let out = self.engine.retain_monitors(self.now, &keep);
+        self.user_monitors.set(defs);
+        out
+    }
+
+    /// Alert firings, for event-count monitors to count (not their own).
+    fn record_for_monitors(&mut self, events: &[AlertEvent]) {
+        use crate::monitors::EventRec;
+        use nn_state::metrics::Dim;
+        if self.user_monitors.defs.is_empty() {
+            return;
+        }
+        for e in events
+            .iter()
+            .filter(|e| e.state == AlertState::Firing && e.alert.rule != crate::Rule::UserMonitor)
+        {
+            let a = &e.alert;
+            let mut tags = vec![(Dim::Exercise, a.key.exercise.to_string())];
+            let id = a.key.id;
+            if id.site != 0 {
+                tags.push((Dim::Site, id.site.to_string()));
+                tags.push((Dim::App, id.application.to_string()));
+            }
+            if id.entity != 0 && id.entity != 0xffff {
+                tags.push((Dim::Entity, id.to_string()));
+            }
+            if let Some(s) = a.sender {
+                tags.push((Dim::Sender, s.to_string()));
+            }
+            tags.push((Dim::Rule, a.rule_id.clone()));
+            tags.sort();
+            self.user_monitors.record(EventRec {
+                at: e.at,
+                rule_name: a.rule.name().to_string(),
+                rule_id: a.rule_id.clone(),
+                tags,
+            });
+        }
     }
 
     /// Is this PDU a copy of one already seen? From another sender within

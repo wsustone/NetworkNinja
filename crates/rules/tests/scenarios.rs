@@ -1555,3 +1555,77 @@ fn designations_told_right_are_silent_and_each_fault_fires_on_its_own() {
         );
     }
 }
+
+#[test]
+fn user_monitors_open_alerts_through_the_normal_path() {
+    use nn_rules::monitors::MonitorDef;
+    // Site 2's simulator restarts on a new port at 60 s: its old address
+    // goes quiet (an absence by sender), and site 1 clones an entity ID at
+    // 90 s (an event-count on id-conflict).
+    let cfg = Config {
+        duration: 150.0,
+        events: vec![
+            Event {
+                kind: EventKind::RestartPort,
+                target: Target::Site(2),
+                at: 60.0,
+            },
+            Event {
+                kind: EventKind::CloneId,
+                target: Target::Entity(EntityId::new(1, 1, 2)),
+                at: 90.0,
+            },
+        ],
+        ..Default::default()
+    };
+    let defs = MonitorDef::parse_all(
+        r#"
+[[monitor]]
+id = "quiet-sender"
+name = "Sender went quiet"
+type = "absence"
+metric = "pdu.count"
+by = ["sender"]
+for = 15
+severity = "critical"
+
+[[monitor]]
+id = "conflicts"
+type = "event-count"
+event = "id-conflict"
+window = 60
+"#,
+    )
+    .unwrap();
+    let mut m = Monitor::new(RuleConfig::default());
+    assert!(m.set_monitors(defs).is_empty());
+    let mut events = Vec::new();
+    for d in generate(&cfg) {
+        events.extend(m.ingest(&d).1);
+    }
+    let mine: Vec<&AlertEvent> = firing(&events)
+        .into_iter()
+        .filter(|e| e.alert.rule == Rule::UserMonitor)
+        .collect();
+    let ids: Vec<&str> = mine.iter().map(|e| e.alert.rule_id.as_str()).collect();
+    assert_eq!(mine.len(), 2, "{ids:?}\n{}", describe(&events));
+    let quiet = mine
+        .iter()
+        .find(|e| e.alert.rule_id.starts_with("quiet-sender@sender="))
+        .expect("absence");
+    assert_eq!(quiet.alert.severity, nn_rules::Severity::Critical);
+    assert!(
+        quiet.reason.starts_with("Sender went quiet (sender="),
+        "{}",
+        quiet.reason
+    );
+    assert!(quiet.alert.sender.is_some(), "pinned on the quiet sender");
+    assert!(mine.iter().any(|e| e.alert.rule_id == "conflicts"), "{ids:?}");
+    // Open, like any alert: in the engine's active list, ackable.
+    assert_eq!(m.engine.active().filter(|a| a.rule == Rule::UserMonitor).count(), 2);
+    let id = quiet.alert.rule_id.clone();
+    assert!(m.engine.ack(&id, quiet.alert.key, "op", "seen", 200.0));
+    // Removing the monitors resolves their alerts.
+    let gone = m.set_monitors(Vec::new());
+    assert_eq!(gone.iter().filter(|e| e.state == AlertState::Resolved).count(), 2);
+}
