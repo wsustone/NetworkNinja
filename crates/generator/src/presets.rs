@@ -19,6 +19,7 @@ pub struct Presets {
     pub interaction: bool,
     pub emission: bool,
     pub designator: bool,
+    pub iff: bool,
 }
 
 impl Presets {
@@ -35,6 +36,7 @@ impl Presets {
             interaction: true,
             emission: true,
             designator: true,
+            iff: true,
         }
     }
 }
@@ -123,6 +125,25 @@ pub fn schedule(
         .enumerate()
         {
             pending.push((kind, format!("@{}", d * (0.05 + 0.1 * i as f64))));
+        }
+    }
+    if p.iff {
+        cfg.iff_every.get_or_insert(60.0);
+        for (i, kind) in [
+            EventKind::IffMissingLayer,
+            EventKind::IffLayerBits,
+            EventKind::IffLayerOrder,
+            EventKind::IffEmptyLayer2,
+            EventKind::IffUnflaggedChange,
+            EventKind::IffHeartbeatUnflagged,
+            EventKind::IffModeMismatch,
+            // Last: the transponder's entity doesn't come back.
+            EventKind::IffDestroyedOn,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            pending.push((kind, format!("@{}", d * (0.08 + 0.1 * i as f64))));
         }
     }
     if p.designator {
@@ -253,6 +274,14 @@ pub fn schedule(
             | EventKind::UnknownDesignated
             | EventKind::TargetGone
             | EventKind::DesignatorGone
+            | EventKind::IffMissingLayer
+            | EventKind::IffLayerBits
+            | EventKind::IffLayerOrder
+            | EventKind::IffEmptyLayer2
+            | EventKind::IffUnflaggedChange
+            | EventKind::IffHeartbeatUnflagged
+            | EventKind::IffModeMismatch
+            | EventKind::IffDestroyedOn
             | EventKind::OneSidedCollision
             | EventKind::DuplicateCollision
             | EventKind::StaleAppearance

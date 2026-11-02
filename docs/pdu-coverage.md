@@ -74,7 +74,7 @@ Update this table in the same change that adds support. What comes next for each
 | 23 | Electromagnetic Emission | Distributed Emission Regeneration (6) | 5.7.3 | 7.6.2 | ✓ | ✓ | ✓ | partial | ✓ |
 | 24 | Designator | Distributed Emission Regeneration (6) | 5.7.4 | 7.6.3 | ✓ | ✓ | ✓ | ✓ | ✓ |
 | 29 | Underwater Acoustic | Distributed Emission Regeneration (6) | 5.7.5 | 7.6.4 | ✓ | ✓ v7 | ✓ | – | min |
-| 28 | IFF | Distributed Emission Regeneration (6) | 5.7.6 | 7.6.5 | ✓ | ✓ v7 | – | – | min |
+| 28 | IFF | Distributed Emission Regeneration (6) | 5.7.6 | 7.6.5 | ✓ | ✓ v7 | ✓ | ✓ v7 | ✓ |
 | 30 | Supplemental Emission/Entity State | Distributed Emission Regeneration (6) | 5.7.7 | 7.6.6 | ✓ | ✓ v7 | – | – | min |
 | 25 | Transmitter | Radio Communications (4) | 5.8.3 | 7.7.2 | ✓ | ✓ | ✓ | radio | ✓ |
 | 26 | Signal | Radio Communications (4) | 5.8.4 | 7.7.3 | ✓ | ✓ | – | radio | ✓ |

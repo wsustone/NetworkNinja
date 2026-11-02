@@ -188,6 +188,19 @@ severity = "warning"
 final_report_window = 12.0
 severity = "warning"
 
+# --- IFF (5.7.6, 7.6.5, Annex B) --------------------------------------------
+
+[rules.iff]
+# DIS v7. Layer 1's Information Layers name the layers present, in order;
+# Mode 5 and Mode S capable types (Annex B tables) carry Layers 3 and 4 while
+# on; Layer 2 has a Fundamental Parameter record; the Change Indicator marks
+# the initial report, each change and the heartbeat after it; System On/Off
+# agrees with System Mode; a system reports Off within final_window seconds
+# (IFF_PDU_FINAL) after its entity is deactivated, removed or destroyed. (Its
+# heartbeat, which continues while off, is the heartbeat rule's.)
+final_window = 10.0
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]

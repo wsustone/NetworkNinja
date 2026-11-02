@@ -15,8 +15,8 @@ families so far did. Status per type is in [pdu-coverage.md](pdu-coverage.md).
 | --- | --- |
 | H header and framing | all 72 types |
 | S structure (lengths, counts, record lengths) | all 72 on v7; types 1–27 on v6 |
-| E enumerations (SISO-REF-010) | 59 fixed-offset fields in 40 types, plus Entity State, Fire and Detonation fields |
-| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, Electromagnetic Emission, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
+| E enumerations (SISO-REF-010) | 63 fixed-offset fields in 41 types, plus Entity State, Fire and Detonation fields |
+| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, Electromagnetic Emission, Designator, IFF (v7), SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
 
 Everything else is checked for shape and enumerations, but not for meaning.
 
@@ -213,6 +213,17 @@ Algorithm field (UID 44) is checked with `--siso`. Generator `--designator-every
 | Layer header lengths and layer numbers valid (structure already checks lengths) | field | 7.6.5 |
 | Mode codes inside layer 1 parameters valid for the system type (Annex B) | field | Annex B |
 
+*Done (v7):* rule `iff` (`nn_rules::iff`, systems keyed by exercise, emitting entity, System
+Type and System Designator): `layer-bits` (Information Layers vs the layers sent),
+`layer-order`, `mode5-missing` / `modes-missing` (types 6, 7, 9, 10 need Layer 3; 9 and 11
+Layer 4, while on; Annex B layer tables), `layer2-no-parameters`, `initial-unflagged`,
+`change-unflagged`, `heartbeat-unflagged` (types 6 and up), `mode-mismatch` (System On/Off vs
+System Mode), `after-deactivated` / `destroyed-on` (still On past IFF_PDU_FINAL, 10 s). The
+heartbeat, continuing while off, is the `heartbeat` rule's. Enumerations: System Type, Name
+and Mode (UIDs 82-84). Generator: `--iff-every SECS` (a Mark XIIA transponder), eight faults,
+`--all-iff-faults`. Left: mode codes per system type (Annex B), types 12-14's layers, and
+v6 (1278.1a layers differ).
+
 ### Underwater Acoustic (29) and SEES (30)
 
 - **UA:** heartbeat HBT_PDU_UA (3 min); the emitter/beam rules mirror EE (names and numbers
@@ -304,7 +315,7 @@ silence and exact-detection tests, coverage-table update and docs.
    Wave 1 wrap-up added the field checks and rule `attribute`.
 6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations. *Done*:
    rule `emission`, repeated-field enumerations.
-7. **Designator, IFF.** *Designator done:* rule `designator`.
+7. **Designator, IFF.** *Done:* rules `designator`, `iff`.
 8. **Logistics**, built on the SIMAN tracker.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.
 10. **Timestamps and PDU Status bits** (cross-cutting).

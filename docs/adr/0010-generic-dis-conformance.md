@@ -99,8 +99,8 @@ defects, for one-process reproducible runs. Two acceptance tests hold the line:
    structure-checked so far.
 3. Generate SISO-REF-010 enumerations (tier E), with enumeration defects. *Done, read at run
    time rather than generated:* `serve --siso FILE` loads the XML SISO publishes, so the
-   repository carries no SISO data and sites keep their enumerations current. 59 fixed-offset
-   fields across 40 PDU types, plus entity type and munition fields of the deep-decoded
+   repository carries no SISO data and sites keep their enumerations current. 63 fixed-offset
+   fields across 41 PDU types, plus entity type and munition fields of the deep-decoded
    types; `--defect bad-enum`. Fields inside variable records come with tier D.
 4. Vendor profiles and the multi-process harness: the silence and exact-detection tests.
    *Done:* `--profile` (standard, legacy, body-axis, gateway), `scripts/multi-vendor.sh`, and

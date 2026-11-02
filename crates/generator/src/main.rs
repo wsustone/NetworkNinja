@@ -56,6 +56,8 @@ EXERCISE
     --de-every SECS         A 3 s directed-energy shot (default off)
     --emission-every SECS   An entity's radar emits for 30 s, tracking another (default off)
     --designator-every SECS An entity lases another for 30 s (default off)
+    --iff-every SECS        Site 1's first entity carries a Mark XIIA transponder
+                            whose Mode 3/A code changes every SECS (default off)
     --bundle                Pack several PDUs per datagram
     --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
@@ -136,6 +138,19 @@ DESIGNATOR FAULTS (on the next designation; need --designator-every)
     --designator-gone T     Its entity is deactivated; it stops without Power 0
     --all-designator-faults One of each (turns on --designator-every 30 if not set)
 
+IFF FAULTS (on the transponder; need --iff-every)
+    --iff-missing-layer T   The next PDU leaves out Layer 3 (Mode 5)
+    --iff-layer-bits T      The next PDU's Information Layers also claim Layer 5
+    --iff-layer-order T     The next PDU sends Layer 4 before Layer 3
+    --iff-empty-layer2 T    The next Layer 2 has no Fundamental Parameter record
+    --iff-unflagged-change T
+                            The Mode 3/A code changes, Change Indicator clear
+    --iff-heartbeat-unflagged T
+                            A change, then a heartbeat that clears the flag
+    --iff-mode-mismatch T   The next PDU says System On with System Mode Off
+    --iff-destroyed-on T    Its entity is destroyed; the transponder stays on
+    --all-iff-faults        One of each (turns on --iff-every 60 if not set)
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -188,6 +203,7 @@ fn parse_args() -> Result<Options, String> {
     let (mut all_handshake, mut all_radio, mut all_lifecycle) = (false, false, false);
     let (mut all_warfare, mut all_interaction, mut all_emission) = (false, false, false);
     let mut all_designator = false;
+    let mut all_iff = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -296,6 +312,16 @@ fn parse_args() -> Result<Options, String> {
             "--target-gone" => pending.push((EventKind::TargetGone, format!("@{}", val()?))),
             "--designator-gone" => pending.push((EventKind::DesignatorGone, format!("@{}", val()?))),
             "--all-designator-faults" => all_designator = true,
+            "--iff-every" => cfg.iff_every = Some(num(val()?)?),
+            "--iff-missing-layer" => pending.push((EventKind::IffMissingLayer, format!("@{}", val()?))),
+            "--iff-layer-bits" => pending.push((EventKind::IffLayerBits, format!("@{}", val()?))),
+            "--iff-layer-order" => pending.push((EventKind::IffLayerOrder, format!("@{}", val()?))),
+            "--iff-empty-layer2" => pending.push((EventKind::IffEmptyLayer2, format!("@{}", val()?))),
+            "--iff-unflagged-change" => pending.push((EventKind::IffUnflaggedChange, format!("@{}", val()?))),
+            "--iff-heartbeat-unflagged" => pending.push((EventKind::IffHeartbeatUnflagged, format!("@{}", val()?))),
+            "--iff-mode-mismatch" => pending.push((EventKind::IffModeMismatch, format!("@{}", val()?))),
+            "--iff-destroyed-on" => pending.push((EventKind::IffDestroyedOn, format!("@{}", val()?))),
+            "--all-iff-faults" => all_iff = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -325,6 +351,7 @@ fn parse_args() -> Result<Options, String> {
         interaction: all_interaction,
         emission: all_emission,
         designator: all_designator,
+        iff: all_iff,
     };
     nn_generator::presets::schedule(&mut cfg, &presets, pending, defects)?;
     Ok(Options {

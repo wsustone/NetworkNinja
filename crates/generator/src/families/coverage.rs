@@ -67,6 +67,9 @@ fn minimal(w: &World, tick: &Tick, site: u16, pdu_type: u8) -> Option<Pdu> {
         COLLISION => body[20..24].copy_from_slice(&2f32.to_be_bytes()),
         // At least one record set with at least one record (5.3.6.3 a 2 iv).
         ATTRIBUTE => minimal_attribute(&mut body, site, app, header.protocol_version),
+        // Layer 1 is always present, and its Information Layers say so
+        // (6.2.45: bit 1).
+        IFF => body[46 - HEADER_LEN] = 0b10,
         _ => {}
     }
     Some(Pdu {
@@ -77,6 +80,7 @@ fn minimal(w: &World, tick: &Tick, site: u16, pdu_type: u8) -> Option<Pdu> {
 
 const COLLISION: u8 = 4;
 const ATTRIBUTE: u8 = 72;
+const IFF: u8 = 28;
 const ELECTROMAGNETIC_EMISSION: u8 = 23;
 
 /// Fill a minimal Attribute body (offsets less the header) with one record

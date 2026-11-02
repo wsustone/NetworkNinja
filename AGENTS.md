@@ -228,6 +228,24 @@ it switches off properly when either entity goes; faults `--spot-offset`,
 `--unknown-designated`, `--target-gone`, `--designator-gone`, preset
 `--all-designator-faults`. Entities "cease to exist" via `final_due`.
 
+IFF (`nn_rules::iff`, rule `iff`, **v7 only**): systems keyed by (exercise,
+entity, System Type, System Designator). Layer 1 bytes: entity @12, System
+Type @36, Name @38, Mode @40, Change/Options @41 (bit 0 change, 3 heartbeat,
+5 interactive), System Designator @42, System Status @44 (bit 0 on), Information
+Layers @46 (bit n = layer n), parameters @48-59; layers from 60, each with a
+4-byte header (number, info, length). Findings: layer-bits, layer-order,
+mode5-missing (types 6/7/9/10) / modes-missing (9/11), layer2-no-parameters
+(count @+26), initial-unflagged (after grace), change-unflagged (Layer 1 from
+@24, @41 and @46 left out), heartbeat-unflagged (types ≥ 6), mode-mismatch,
+after-deactivated / destroyed-on (`[rules.iff] final_window`, IFF_PDU_FINAL
+10 s). Interactive PDUs don't count as changes. Coverage's minimal IFF sets
+Information Layers bit 1. Generator `--iff-every SECS` (Mark XIIA transponder
+on the first site's first moving entity, heartbeat 10 s), faults
+`--iff-missing-layer`, `--iff-layer-bits`, `--iff-layer-order`,
+`--iff-empty-layer2`, `--iff-unflagged-change`, `--iff-heartbeat-unflagged`,
+`--iff-mode-mismatch`, `--iff-destroyed-on`, preset `--all-iff-faults`. A mode
+switch is a change: the generator flags it and the PDU after.
+
 Explanations (alerts work): every `Alert` carries `kind` (the finding type)
 and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and
 `facts` (`[[name, value], ...]`). **Not `kind`** in JSON: log entries already
