@@ -46,6 +46,8 @@ pub struct ServeConfig {
     pub users: Option<String>,
     pub cert: Option<String>,
     pub key: Option<String>,
+    /// `[[sender]]` blocks: friendly names for senders and simulations.
+    pub senders: crate::names::Names,
 }
 
 const SERVE_KEYS: &[&str] = &[
@@ -63,6 +65,7 @@ const SERVE_KEYS: &[&str] = &[
     "cert",
     "key",
 ];
+const SENDER_KEYS: &[&str] = &["name", "address", "simulation"];
 const LISTEN_KEYS: &[&str] = &[
     "name",
     "port",
@@ -120,6 +123,24 @@ pub fn groups(specs: &[String]) -> Result<Vec<Ipv4Addr>, String> {
             Ok(ip)
         })
         .collect()
+}
+
+/// A `[[sender]]` block: a name and exactly one of `address`, `simulation`.
+fn sender(t: &Table, n: usize) -> Result<(crate::names::Target, String), String> {
+    use crate::names::Target;
+    let what = format!("[[sender]] #{n}");
+    check_keys(t, SENDER_KEYS, &what)?;
+    let name = string(
+        t.get("name").ok_or(format!("{what} needs a name"))?,
+        &format!("{what} name"),
+    )?;
+    let target = match (t.get("address"), t.get("simulation")) {
+        (Some(a), None) => Target::address(&string(a, &format!("{what} address"))?),
+        (None, Some(s)) => Target::simulation(&string(s, &format!("{what} simulation"))?),
+        _ => Err("give either address or simulation".to_string()),
+    }
+    .map_err(|e| format!("{what} ('{name}'): {e}"))?;
+    Ok((target, name))
 }
 
 fn listener(t: &Table, n: usize) -> Result<UdpConfig, String> {
@@ -180,7 +201,7 @@ fn set_interfaces(c: &mut UdpConfig, names: Vec<String>) -> Result<(), String> {
 /// Parse a config file's text.
 pub fn parse(src: &str) -> Result<ServeConfig, String> {
     let root = minitoml::parse(src).map_err(|e| e.to_string())?;
-    check_keys(&root, &["serve", "listen"], "the config file")?;
+    check_keys(&root, &["serve", "listen", "sender"], "the config file")?;
     let mut cfg = ServeConfig::default();
     if let Some(v) = root.get("serve") {
         let Value::Table(t) = v else {
@@ -213,6 +234,16 @@ pub fn parse(src: &str) -> Result<ServeConfig, String> {
             }
         }
         Some(_) => return Err("listeners are [[listen]] blocks".into()),
+    }
+    match root.get("sender") {
+        None => {}
+        Some(Value::Tables(ts)) => {
+            for (i, t) in ts.iter().enumerate() {
+                let (target, name) = sender(t, i + 1)?;
+                cfg.senders.set(target, &name);
+            }
+        }
+        Some(_) => return Err("sender names are [[sender]] blocks".into()),
     }
     let mut names: Vec<&str> = cfg.listeners.iter().map(|l| l.name.as_str()).collect();
     names.sort();
@@ -347,26 +378,37 @@ pub fn to_toml(listeners: &[UdpConfig]) -> String {
 /// Comments inside the old listener blocks are dropped. The result is
 /// re-parsed before it is written, and the old file kept as FILE.bak.
 pub fn save_listeners(path: &str, listeners: &[UdpConfig]) -> Result<(), String> {
+    save_blocks(path, "[[listen]]", &to_toml(listeners))
+}
+
+/// Rewrite a config file's `[[sender]]` blocks as `names`, the same way.
+pub fn save_senders(path: &str, names: &crate::names::Names) -> Result<(), String> {
+    save_blocks(path, "[[sender]]", &names.to_toml())
+}
+
+/// Replace every `header` block of a config file with `blocks`, keeping the
+/// rest; check the result parses, keep the old file as FILE.bak.
+fn save_blocks(path: &str, header: &str, blocks: &str) -> Result<(), String> {
     let old = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let mut kept = Vec::new();
-    let mut in_listen = false;
+    let mut inside = false;
     for line in old.lines() {
         let t = line.trim_start();
-        if t.starts_with("[[listen]]") {
-            in_listen = true;
+        if t.starts_with(header) {
+            inside = true;
             continue;
         }
         if t.starts_with('[') {
-            in_listen = false;
+            inside = false;
         }
-        if !in_listen {
+        if !inside {
             kept.push(line);
         }
     }
     while kept.last().is_some_and(|l| l.trim().is_empty()) {
         kept.pop();
     }
-    let new = format!("{}\n\n{}", kept.join("\n"), to_toml(listeners));
+    let new = format!("{}\n\n{}", kept.join("\n"), blocks);
     parse(&new).map_err(|e| format!("the saved file wouldn't parse ({e}); not written"))?;
     std::fs::write(format!("{path}.bak"), &old).map_err(|e| format!("{path}.bak: {e}"))?;
     std::fs::write(path, new.trim_start()).map_err(|e| format!("{path}: {e}"))
@@ -375,6 +417,32 @@ pub fn save_listeners(path: &str, listeners: &[UdpConfig]) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sender_names_parse_save_and_keep_the_rest() {
+        let src = "# exercise box\n[serve]\nhttp = \"0.0.0.0:8080\"\n\n[[sender]]\nname = \"VBS4 host\"\naddress = \"10.0.5.10\"\n\n[[listen]]\nname = \"dis\"\nport = 3000\n";
+        let c = parse(src).unwrap();
+        assert_eq!(c.senders.of_sender("10.0.5.10:3000"), Some("VBS4 host"));
+        assert_eq!(c.listeners.len(), 1);
+        let path = std::env::temp_dir().join(format!("nn-senders-{}.toml", std::process::id()));
+        let path = path.to_str().unwrap();
+        std::fs::write(path, src).unwrap();
+        let mut names = c.senders.clone();
+        names.set(crate::names::Target::simulation("9:9").unwrap(), "JSAF \"B\"");
+        save_senders(path, &names).unwrap();
+        let back = load(path).unwrap();
+        assert_eq!(back.senders, names);
+        assert_eq!(back.listeners.len(), 1, "listeners untouched");
+        assert_eq!(back.http.as_deref(), Some("0.0.0.0:8080"));
+        assert!(std::fs::read_to_string(path).unwrap().starts_with("# exercise box"));
+        for ext in ["", ".bak"] {
+            let _ = std::fs::remove_file(format!("{path}{ext}"));
+        }
+        assert!(parse("[[sender]]\nname = \"x\"\n")
+            .unwrap_err()
+            .contains("either address or simulation"));
+        assert!(parse("[[sender]]\nname = \"x\"\naddress = \"nope\"\n").is_err());
+    }
 
     #[test]
     fn parses_serve_settings_and_listeners() {
