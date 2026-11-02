@@ -120,6 +120,17 @@ pub enum EventKind {
     /// Emission fault: the next emitter's entity is destroyed and keeps
     /// emitting.
     DestroyedEmitting,
+    /// Designator fault: the next spot is on no entity but has an offset.
+    SpotOffset,
+    /// Designator fault: the next designation names an entity that doesn't
+    /// exist.
+    UnknownDesignated,
+    /// Designator fault: the next target is deactivated and the designator
+    /// stays on.
+    TargetGone,
+    /// Designator fault: the next designating entity is deactivated and its
+    /// designator stops with no Power 0 report.
+    DesignatorGone,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -199,6 +210,10 @@ impl EventKind {
             EventKind::NoSiteTarget => "no-site-target",
             EventKind::RepeatDeactivated => "repeat-deactivated",
             EventKind::DestroyedEmitting => "destroyed-emitting",
+            EventKind::SpotOffset => "spot-offset",
+            EventKind::UnknownDesignated => "unknown-designated",
+            EventKind::TargetGone => "target-gone",
+            EventKind::DesignatorGone => "designator-gone",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -266,6 +281,10 @@ impl EventKind {
                 | EventKind::NoSiteTarget
                 | EventKind::RepeatDeactivated
                 | EventKind::DestroyedEmitting
+                | EventKind::SpotOffset
+                | EventKind::UnknownDesignated
+                | EventKind::TargetGone
+                | EventKind::DesignatorGone
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
                 | EventKind::StaleAppearance
@@ -347,6 +366,8 @@ pub struct Config {
     pub de_every: Option<f64>,
     /// Seconds between 30 s radar emissions (`families::emission`).
     pub emission_every: Option<f64>,
+    /// Seconds between 30 s laser designations (`families::designator`).
+    pub designator_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -395,6 +416,7 @@ impl Default for Config {
             damage_every: None,
             de_every: None,
             emission_every: None,
+            designator_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,

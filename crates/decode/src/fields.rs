@@ -62,7 +62,7 @@ const fn v(field: EnumField, valid: u32) -> EnumField {
     EnumField { valid, ..field }
 }
 
-static FIELDS: [EnumField; 59] = [
+static FIELDS: [EnumField; 60] = [
     f(4, "collision.collision_type", 30, 1, 189),
     f(5, "service-request.service_type", 24, 1, 63),
     f(9, "repair-complete.repair", 24, 2, 64),
@@ -75,6 +75,7 @@ static FIELDS: [EnumField; 59] = [
     f(23, "electromagnetic-emission.state_update_indicator", 24, 1, 77),
     f(24, "designator.code_name", 18, 2, 80),
     f(24, "designator.designator_code", 26, 2, 81),
+    f(24, "designator.dead_reckoning_algorithm", 72, 1, 44),
     // On and transmitting: the minimal Signal PDU that follows belongs to it.
     v(f(25, "transmitter.transmit_state", 28, 1, 164), 2),
     f(25, "transmitter.input_source", 29, 1, 165),

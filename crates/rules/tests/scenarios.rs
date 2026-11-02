@@ -1508,3 +1508,50 @@ fn alerts_carry_the_pdu_that_raised_them() {
         .expect("timeout raised");
     assert!(timeout.pdu.is_none(), "silence has no PDU");
 }
+
+#[test]
+fn designations_told_right_are_silent_and_each_fault_fires_on_its_own() {
+    let base = Config {
+        duration: 400.0,
+        sites: 2,
+        entities_per_site: 4,
+        designator_every: Some(40.0),
+        all_types: Some(10.0),
+        ..Default::default()
+    };
+    for version in [6, 7] {
+        let (_, events) = monitor(&generate(&Config {
+            version,
+            ..base.clone()
+        }));
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+    }
+    let faults = [
+        (EventKind::SpotOffset, 30.0, "D-SPOT_NO_ENTITY"),
+        // After the monitor's stationary-timeout grace (144 s).
+        (EventKind::UnknownDesignated, 200.0, "isn't an entity in the exercise"),
+        (EventKind::TargetGone, 30.0, "after it ceased to exist"),
+        (EventKind::DesignatorGone, 30.0, "with its designator on"),
+    ];
+    for (kind, at, phrase) in faults {
+        let cfg = Config {
+            events: vec![Event {
+                kind,
+                target: Target::Exercise,
+                at,
+            }],
+            ..base.clone()
+        };
+        let (_, events) = monitor(&generate(&cfg));
+        let fired = firing(&events);
+        assert!(
+            !fired.is_empty()
+                && fired
+                    .iter()
+                    .all(|e| e.alert.rule == Rule::Designator && e.reason.contains(phrase)),
+            "{}: {}",
+            kind.name(),
+            describe(&events)
+        );
+    }
+}

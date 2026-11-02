@@ -8,6 +8,7 @@ use crate::{Event, Sender};
 use nn_decode::Pdu;
 
 pub(crate) mod coverage;
+pub(crate) mod designator;
 pub(crate) mod emission;
 pub(crate) mod entity_info;
 pub(crate) mod handshakes;
@@ -65,5 +66,6 @@ pub(crate) fn all(w: &World) -> Vec<Box<dyn Family>> {
         Box::new(radio::Radio::default()),
         Box::new(interactions::Interactions::default()),
         Box::new(emission::Emission::default()),
+        Box::new(designator::Designator::default()),
     ]
 }

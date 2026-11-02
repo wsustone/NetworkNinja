@@ -48,7 +48,8 @@ heartbeat = 5.0              # threshold overrides; each rule has its own set
 #        directed-energy (de_heartbeat), entity-damage (repair_window),
 #        collision (collision_window, collision_speed),
 #        attribute (no thresholds),
-#        emission (ee_heartbeat, high_density_threshold)
+#        emission (ee_heartbeat, high_density_threshold),
+#        designator (final_report_window)
 
 [[enum]]
 field = "entity-state.force_id"   # a field from the registry below
