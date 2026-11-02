@@ -51,6 +51,38 @@ pub struct Finding {
     pub key: EntityKey,
     pub sender: SocketAddr,
     pub message: String,
+    pub facts: crate::engine::Facts,
+}
+
+impl Finding {
+    /// More evidence, after the PDU's own.
+    fn with(mut self, more: crate::engine::Facts) -> Self {
+        self.facts.extend(more);
+        self
+    }
+}
+
+/// The evidence every Fire / Detonation finding carries.
+fn shot_facts(
+    pdu: &str,
+    firer: EntityId,
+    ev: &EventId,
+    munition: &EntityType,
+    ind: Option<u8>,
+) -> crate::engine::Facts {
+    let mut f = vec![
+        ("PDU", pdu.to_string()),
+        ("firing entity", firer.to_string()),
+        ("Event ID", event(ev)),
+        ("munition type", munition.to_string()),
+    ];
+    if let Some(i) = ind {
+        f.push((
+            "PDU Status type indicator",
+            format!("{i} ({})", if i == 0 { "munition" } else { "expendable" }),
+        ));
+    }
+    f
 }
 
 #[derive(Debug, Default)]
@@ -96,14 +128,15 @@ impl Warfare {
             id: f.firing_entity,
         };
         let mut out = Vec::new();
+        let fti = indicator(version, status);
         let finding = |kind, message: String| Finding {
             kind,
             key,
             sender: source,
             message: format!("{} fire, event {}: {message}", f.firing_entity, event(&f.event_id)),
+            facts: shot_facts("Fire", f.firing_entity, &f.event_id, &f.descriptor.munition_type, fti),
         };
         let kind = f.descriptor.munition_type.kind;
-        let fti = indicator(version, status);
         match fti {
             Some(0) if kind == KIND_EXPENDABLE => out.push(finding(
                 "type-indicator",
@@ -180,6 +213,7 @@ impl Warfare {
             id: d.firing_entity,
         };
         let mut out = Vec::new();
+        let dti = indicator(version, status);
         let finding = |kind, message: String| Finding {
             kind,
             key,
@@ -189,9 +223,15 @@ impl Warfare {
                 d.firing_entity,
                 event(&d.event_id)
             ),
+            facts: shot_facts(
+                "Detonation",
+                d.firing_entity,
+                &d.event_id,
+                &d.descriptor.munition_type,
+                dti,
+            ),
         };
         let kind = d.descriptor.munition_type.kind;
-        let dti = indicator(version, status);
         match dti {
             Some(0) if kind == KIND_EXPENDABLE => out.push(finding(
                 "type-indicator",
@@ -239,7 +279,11 @@ impl Warfare {
                             d.target_entity,
                             cite("5.4.4")
                         ),
-                    ));
+                    ).with(vec![
+                        ("target", d.target_entity.to_string()),
+                        ("off by", format!("{off:.0} m")),
+                        ("allowed", format!("{allowed:.0} m ({tolerance:.0} m + {speed:.0} m/s × 1 s)")),
+                    ]));
                     }
                 }
             }
@@ -255,7 +299,7 @@ impl Warfare {
                     out.push(finding(
                         "mismatch",
                         format!("its Fire came from {}{}", s.firing, cite("5.4.4")),
-                    ));
+                    ).with(vec![("Fire's firing entity", s.firing.to_string())]));
                 }
                 if s.munition_type != d.descriptor.munition_type {
                     out.push(finding(
@@ -266,7 +310,7 @@ impl Warfare {
                             s.munition_type,
                             cite("5.4.4")
                         ),
-                    ));
+                    ).with(vec![("Fire's munition type", s.munition_type.to_string())]));
                 }
             }
             None if real(&d.firing_entity) && d.event_id.event_number != 0 && now - started > max_flight => {
@@ -302,6 +346,13 @@ impl Warfare {
                         event(&ev),
                         cite("5.4.4.3")
                     ),
+                    facts: vec![
+                        ("firing entity", s.firing.to_string()),
+                        ("Event ID", event(&ev)),
+                        ("munition type", s.munition_type.to_string()),
+                        ("fired", format!("{age:.0} s ago")),
+                        ("max flight", format!("{max_flight:.0} s")),
+                    ],
                 });
             }
             false

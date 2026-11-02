@@ -15,6 +15,7 @@ pub struct Finding {
     pub key: EntityKey,
     pub sender: SocketAddr,
     pub message: String,
+    pub facts: crate::engine::Facts,
 }
 
 fn cite(clause: &str) -> String {
@@ -151,6 +152,12 @@ impl DirectedEnergy {
                             ev(&event),
                             cite("7.3.4, 6.2.21")
                         ),
+                        facts: vec![
+                            ("engagement", ev(&event)),
+                            ("record type", t.to_string()),
+                            ("record length", format!("{len} bytes")),
+                            ("expected", "4000 (88 bytes) or 4001".into()),
+                        ],
                     });
                 }
             }
@@ -172,6 +179,7 @@ impl DirectedEnergy {
                                 ev(&event),
                                 cite("5.4.5.3 f)")
                             ),
+                            facts: vec![("engagement", ev(&event)), ("Fire PDUs", s.fires.to_string()), ("expected", "1".into())],
                         });
                     }
                 } else {
@@ -190,14 +198,16 @@ impl DirectedEnergy {
         let timeout = heartbeat * multiplier;
         self.shots.retain(|&(exercise, event), s| {
             let key = EntityKey { exercise, id: s.firer };
-            let mut report = |s: &mut Shot, kind: &'static str, message: String| {
+            let mut report = |s: &mut Shot, kind: &'static str, message: String, mut facts: crate::engine::Facts| {
                 if !s.reported.contains(&kind) {
                     s.reported.push(kind);
+                    facts.insert(0, ("engagement", ev(&event)));
                     out.push(Finding {
                         kind,
                         key,
                         sender: s.source,
                         message: format!("{} DE engagement {}: {message}", s.firer, ev(&event)),
+                        facts,
                     });
                 }
             };
@@ -210,6 +220,10 @@ impl DirectedEnergy {
                         "weapon on, but no DE Fire for {gap:.1} s (heartbeat HBT_PDU_DE_FIRE {heartbeat} s × {multiplier}); receivers mark the shot off{}",
                         cite("5.4.5.3 b)")
                     ),
+                    vec![
+                        ("silent for", format!("{gap:.1} s")),
+                        ("timeout", format!("{timeout:.1} s ({heartbeat} s × {multiplier})")),
+                    ],
                 );
             }
             if s.ever_on && s.fires == 0 && now - s.started > DE_PAIR_WINDOW {
@@ -217,6 +231,10 @@ impl DirectedEnergy {
                     s,
                     "no-fire",
                     format!("no Fire PDU followed its first DE Fire{}", cite("5.4.5.3 f)")),
+                    vec![
+                        ("first DE Fire", format!("{:.1} s ago", now - s.started)),
+                        ("Fire due within", format!("{DE_PAIR_WINDOW} s")),
+                    ],
                 );
             }
             if let Some(end) = s.ended {
@@ -228,6 +246,10 @@ impl DirectedEnergy {
                             "no Detonation followed its final DE Fire (weapon off){}",
                             cite("5.4.5.3 f)")
                         ),
+                        vec![
+                            ("weapon off", format!("{:.1} s ago", now - end)),
+                            ("Detonation due within", format!("{DE_PAIR_WINDOW} s")),
+                        ],
                     );
                 }
             }
@@ -270,6 +292,12 @@ impl Damage {
                     "{id}: a damage record of type {t}, {len} bytes; Entity Damage Status carries DE Damage Description records (4500, 40 bytes){}",
                     cite("7.3.5, 6.2.16.2")
                 ),
+                facts: vec![
+                    ("damage records", n.to_string()),
+                    ("record type", t.to_string()),
+                    ("record length", format!("{len} bytes")),
+                    ("expected", "4500 (40 bytes)".into()),
+                ],
             });
         }
         let rec = table.get(&key);
@@ -282,6 +310,10 @@ impl Damage {
                     "{id}: Entity Damage Status after the entity's Deactivated Entity State{}",
                     cite("5.4.6.3")
                 ),
+                facts: vec![
+                    ("entity appearance", "Deactivated".into()),
+                    ("damage records", n.to_string()),
+                ],
             });
             return out;
         }
@@ -315,6 +347,20 @@ impl Damage {
                     now - *at,
                     cite("5.4.6.3 e)")
                 ),
+                facts: vec![
+                    ("repaired", format!("{:.0} s ago", now - *at)),
+                    ("appearance", format!("0x{:08x}", rec.appearance)),
+                    (
+                        "damage bits",
+                        format!(
+                            "Damage {} · mobility kill {} · firepower kill {}",
+                            (rec.appearance >> 3) & 0b11,
+                            (rec.appearance >> 1) & 1,
+                            (rec.appearance >> 2) & 1
+                        ),
+                    ),
+                    ("allowed", format!("{window:.0} s (repair_window)")),
+                ],
             });
             false
         });
@@ -375,6 +421,12 @@ impl Collisions {
                         ev(&event),
                         cite("5.3.3.4")
                     ),
+                    facts: vec![
+                        ("PDU", name.to_string()),
+                        ("collision event", ev(&event)),
+                        ("colliding with", colliding.to_string()),
+                        ("first report", format!("{:.1} s earlier", now - t)),
+                    ],
                 });
             }
         }
@@ -408,6 +460,11 @@ impl Collisions {
                             "{issuing}: a Collision with {colliding}, but neither is moving faster than COLLISION_THRSH {threshold} m/s ({own:.2} and {other:.2} m/s){}",
                             cite("5.3.3.2 c)")
                         ),
+                        facts: vec![
+                            ("issuer's speed", format!("{own:.2} m/s")),
+                            ("other party's speed", format!("{other:.2} m/s")),
+                            ("COLLISION_THRSH", format!("{threshold} m/s")),
+                        ],
                     });
                 }
             }
@@ -453,6 +510,12 @@ impl Collisions {
                             "{colliding}: {issuing} reported a {name} with it, but it sent none within {window:.0} s; both parties report a collision{}",
                             cite(if r.pdu_type == 4 { "5.3.3.4" } else { "5.3.4" })
                         ),
+                        facts: vec![
+                            ("PDU", name.to_string()),
+                            ("reported by", issuing.to_string()),
+                            ("silent party", colliding.to_string()),
+                            ("waited", format!("{window:.0} s")),
+                        ],
                     });
                 }
             }
