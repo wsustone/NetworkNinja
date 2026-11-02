@@ -277,6 +277,14 @@ runtime, timestamp) from a throwaway keychain and notarizes them with
 It runs only when the `MACOS_CERT_P12` … `APPLE_API_ISSUER` secrets exist,
 else the run warns that the Mac build is unsigned. Bare binaries can't be
 stapled, so Gatekeeper checks notarization online on first run.
+Windows: `packaging/winres.rs` (included by the server and generator
+`build.rs`) writes a VS_VERSIONINFO `.res` by hand (ProductName NetworkNinja,
+ProductVersion = workspace version) and links it on MSVC; the workflow checks
+it, then signs through SignPath Foundation (`SIGNPATH_API_TOKEN` secret +
+`SIGNPATH_ORGANIZATION_ID` variable; tags → release-signing with manual
+approval, else test-signing). The SignPath artifact configuration is
+`packaging/signpath/artifact-configuration.xml`; the README's "Code signing
+policy" section is required by their terms.
 
 User monitors (ADR 0008 slice 3, `nn_rules::monitors`): `[[monitor]]`
 (type threshold | absence | event-count; metric or event; `where.DIM`;
