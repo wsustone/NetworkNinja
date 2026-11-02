@@ -278,6 +278,17 @@ It runs only when the `MACOS_CERT_P12` … `APPLE_API_ISSUER` secrets exist,
 else the run warns that the Mac build is unsigned. Bare binaries can't be
 stapled, so Gatekeeper checks notarization online on first run.
 
+User monitors (ADR 0008 slice 3, `nn_rules::monitors`): `[[monitor]]`
+(type threshold | absence | event-count; metric or event; `where.DIM`;
+`by`; agg; window; condition; for; severity), `MonitorDef::parse_all` /
+`to_toml`. `Monitor::set_monitors(defs)` installs them (resolving alerts of
+removed or changed ones); `Monitor::tick` evaluates them every second over
+`m.metrics` (memory: windows ≤ `MAX_WINDOW` 600 s) and the firings
+`record_for_monitors` keeps. Alerts: rule `UserMonitor` ("monitor"),
+`rule_id` = id or `id@dim=v,...`, stored in `Engine::monitor_active`
+(`monitor_change`), included in `active()`, ack; `mute_rule(id)` mutes all
+groups. `Monitors::preview(def, metrics, (from, to, step))`.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

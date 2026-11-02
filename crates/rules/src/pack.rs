@@ -935,6 +935,7 @@ impl Merged {
                 Rule::Attribute,
                 Rule::Emission,
                 Rule::Designator,
+                Rule::UserMonitor,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -958,6 +959,7 @@ impl Merged {
                 (Rule::Attribute, Severity::Warning),
                 (Rule::Emission, Severity::Warning),
                 (Rule::Designator, Severity::Warning),
+                (Rule::UserMonitor, Severity::Warning),
             ]
             .into_iter()
             .collect(),
