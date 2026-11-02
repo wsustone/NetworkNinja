@@ -55,6 +55,7 @@ EXERCISE
     --damage-every SECS     An entity is damaged, then repaired 30 s later (default off)
     --de-every SECS         A 3 s directed-energy shot (default off)
     --emission-every SECS   An entity's radar emits for 30 s, tracking another (default off)
+    --designator-every SECS An entity lases another for 30 s (default off)
     --bundle                Pack several PDUs per datagram
     --silent-when-frozen    Simulators stop sending while frozen (default: heartbeat with frozen bit)
     --seed N                RNG seed (default 1)
@@ -128,6 +129,13 @@ EMISSION FAULTS (on the next emitter; need --emission-every)
     --destroyed-emitting T  Its entity is destroyed and keeps emitting
     --all-emission-faults   One of each (turns on --emission-every 40 if not set)
 
+DESIGNATOR FAULTS (on the next designation; need --designator-every)
+    --spot-offset T         Its spot is on no entity but has an offset
+    --unknown-designated T  It designates an entity that doesn't exist
+    --target-gone T         Its target is deactivated; it stays on
+    --designator-gone T     Its entity is deactivated; it stops without Power 0
+    --all-designator-faults One of each (turns on --designator-every 30 if not set)
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -179,6 +187,7 @@ fn parse_args() -> Result<Options, String> {
     let (mut all_faults, mut all_controls, mut all_defects) = (false, false, false);
     let (mut all_handshake, mut all_radio, mut all_lifecycle) = (false, false, false);
     let (mut all_warfare, mut all_interaction, mut all_emission) = (false, false, false);
+    let mut all_designator = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -281,6 +290,12 @@ fn parse_args() -> Result<Options, String> {
             "--repeat-deactivated" => pending.push((EventKind::RepeatDeactivated, format!("@{}", val()?))),
             "--destroyed-emitting" => pending.push((EventKind::DestroyedEmitting, format!("@{}", val()?))),
             "--all-emission-faults" => all_emission = true,
+            "--designator-every" => cfg.designator_every = Some(num(val()?)?),
+            "--spot-offset" => pending.push((EventKind::SpotOffset, format!("@{}", val()?))),
+            "--unknown-designated" => pending.push((EventKind::UnknownDesignated, format!("@{}", val()?))),
+            "--target-gone" => pending.push((EventKind::TargetGone, format!("@{}", val()?))),
+            "--designator-gone" => pending.push((EventKind::DesignatorGone, format!("@{}", val()?))),
+            "--all-designator-faults" => all_designator = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -309,6 +324,7 @@ fn parse_args() -> Result<Options, String> {
         warfare: all_warfare,
         interaction: all_interaction,
         emission: all_emission,
+        designator: all_designator,
     };
     nn_generator::presets::schedule(&mut cfg, &presets, pending, defects)?;
     Ok(Options {

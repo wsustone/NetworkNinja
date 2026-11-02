@@ -177,6 +177,17 @@ ee_heartbeat = 5.0
 high_density_threshold = 10.0
 severity = "warning"
 
+# --- Designator (5.7.4) -----------------------------------------------------
+
+[rules.designator]
+# A spot on no entity (D-SPOT_NO_ENTITY, 0:0:0) has no offset from it; a
+# designated entity is one the exercise knows; a designator left on after its
+# designating or designated entity ceases to exist owes a final Designator
+# PDU with Power 0 within final_report_window seconds. (Its heartbeat, and
+# Power 0 as final, are the heartbeat rule's.)
+final_report_window = 12.0
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]

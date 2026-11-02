@@ -61,6 +61,8 @@ pub enum Rule {
     /// An emitter system's EE PDUs break the issuance rules
     /// (`crate::emission`).
     Emission,
+    /// A designator's spot or its final report (`crate::designator`).
+    Designator,
 }
 
 impl Rule {
@@ -84,6 +86,7 @@ impl Rule {
             Rule::Collision => "collision",
             Rule::Attribute => "attribute",
             Rule::Emission => "emission",
+            Rule::Designator => "designator",
         }
     }
 
@@ -107,6 +110,7 @@ impl Rule {
             "collision" => Some(Rule::Collision),
             "attribute" => Some(Rule::Attribute),
             "emission" => Some(Rule::Emission),
+            "designator" => Some(Rule::Designator),
             _ => None,
         }
     }
@@ -218,6 +222,9 @@ pub struct RuleConfig {
     pub ee_heartbeat: f64,
     /// EE_HIGH_DENSITY_THRSH: most targets a beam lists one by one.
     pub high_density_threshold: f64,
+    /// Seconds a designator has to send its final Power 0 report after its
+    /// designating or designated entity ceases to exist.
+    pub designator_window: f64,
 }
 
 impl Default for RuleConfig {
@@ -246,6 +253,7 @@ impl Default for RuleConfig {
             impact_tolerance: 100.0,
             ee_heartbeat: 5.0,
             high_density_threshold: 10.0,
+            designator_window: 12.0,
         }
     }
 }
@@ -359,6 +367,7 @@ pub struct Engine {
     damage: Damage,
     collisions: Collisions,
     emissions: crate::emission::Emissions,
+    designators: crate::designator::Designators,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -398,6 +407,7 @@ impl Engine {
             damage: Damage::default(),
             collisions: Collisions::default(),
             emissions: crate::emission::Emissions::default(),
+            designators: crate::designator::Designators::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             acks: BTreeMap::new(),
@@ -818,6 +828,15 @@ impl Engine {
                     .map(|f| (Rule::Collision, f)),
             );
         }
+        if self.enabled(Rule::Designator) {
+            let grace = self.config.stationary_heartbeat * self.config.timeout_multiplier;
+            found.extend(
+                self.designators
+                    .observe(now, source, raw, table, grace)
+                    .into_iter()
+                    .map(|f| (Rule::Designator, f)),
+            );
+        }
         if self.enabled(Rule::Emission) {
             let limits = self.emission_limits();
             found.extend(
@@ -1144,6 +1163,12 @@ impl Engine {
                 .into_iter()
                 .map(|f| (Rule::Emission, f)),
         );
+        found.extend(
+            self.designators
+                .expire(now, self.config.designator_window, table, frozen)
+                .into_iter()
+                .map(|f| (Rule::Designator, f)),
+        );
         for (rule, f) in found {
             self.point_event(now, (rule, f.kind), f.key, Some(f.sender), f.message, f.facts, &mut out);
         }
@@ -1260,7 +1285,8 @@ impl Engine {
                 | Rule::EntityDamage
                 | Rule::Collision
                 | Rule::Attribute
-                | Rule::Emission => {}
+                | Rule::Emission
+                | Rule::Designator => {}
             }
         }
         out
