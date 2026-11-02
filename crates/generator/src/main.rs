@@ -119,6 +119,7 @@ INTERACTION FAULTS (on the next interaction)
 EMISSION FAULTS (on the next emitter; need --emission-every)
     --emitter-dropout T     Its EE PDUs stop with the beam still on
     --emitter-rename T      Its Emitter Name changes after the first report
+    --bad-emitter-enums T   Its Emitter Name and Beam Function aren't SISO values (serve --siso)
     --reserved-beam T       Its beam is numbered NO_BEAM (0)
     --dense-targets T       High Density Track/Jam selected, target still listed
     --half-pulsed T         A PRF with no pulse width
@@ -272,6 +273,7 @@ fn parse_args() -> Result<Options, String> {
             "--emission-every" => cfg.emission_every = Some(num(val()?)?),
             "--emitter-dropout" => pending.push((EventKind::EmitterDropout, format!("@{}", val()?))),
             "--emitter-rename" => pending.push((EventKind::EmitterRename, format!("@{}", val()?))),
+            "--bad-emitter-enums" => pending.push((EventKind::BadEmitterEnums, format!("@{}", val()?))),
             "--reserved-beam" => pending.push((EventKind::ReservedBeam, format!("@{}", val()?))),
             "--dense-targets" => pending.push((EventKind::DenseTargets, format!("@{}", val()?))),
             "--half-pulsed" => pending.push((EventKind::HalfPulsed, format!("@{}", val()?))),

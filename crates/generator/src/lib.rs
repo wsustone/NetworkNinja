@@ -103,6 +103,9 @@ pub enum EventKind {
     EmitterDropout,
     /// Emission fault: the next emitter's Emitter Name changes.
     EmitterRename,
+    /// Emission fault: the next emitter's Emitter Name and Beam Function are
+    /// values SISO-REF-010 doesn't define.
+    BadEmitterEnums,
     /// Emission fault: the next emitter's beam is numbered NO_BEAM.
     ReservedBeam,
     /// Emission fault: the next emitter selects High Density Track/Jam and
@@ -189,6 +192,7 @@ impl EventKind {
             EventKind::MissingExtension => "missing-extension",
             EventKind::EmitterDropout => "emitter-dropout",
             EventKind::EmitterRename => "emitter-rename",
+            EventKind::BadEmitterEnums => "bad-emitter-enums",
             EventKind::ReservedBeam => "reserved-beam",
             EventKind::DenseTargets => "dense-targets",
             EventKind::HalfPulsed => "half-pulsed",
@@ -255,6 +259,7 @@ impl EventKind {
                 | EventKind::MissingExtension
                 | EventKind::EmitterDropout
                 | EventKind::EmitterRename
+                | EventKind::BadEmitterEnums
                 | EventKind::ReservedBeam
                 | EventKind::DenseTargets
                 | EventKind::HalfPulsed

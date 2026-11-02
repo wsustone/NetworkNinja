@@ -10,7 +10,7 @@
 
 use crate::engine::{Rule, RuleConfig, Severity};
 use crate::minitoml::{self, Table, Value};
-use nn_decode::fields::{enum_fields, EnumField};
+use nn_decode::fields::{enum_fields, repeated_fields, EnumField, RepeatedField};
 use nn_decode::{pdu_type, Detonation, EntityState, EntityType, Fire, Pdu, PduBody, StopFreeze};
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
@@ -66,15 +66,27 @@ pub struct FieldSpec {
     /// A field read from the raw bytes of a PDU type that isn't deep
     /// decoded; `get` is unused for these.
     pub raw: Option<&'static EnumField>,
+    /// A field that repeats inside the PDU's records (per beam, per
+    /// system): every occurrence is checked.
+    pub repeated: Option<&'static RepeatedField>,
 }
 
 impl FieldSpec {
-    /// The field's value in `pdu`, or `None` if it isn't there.
+    /// The field's value in `pdu`, or `None` if it isn't there. For a
+    /// repeated field, its first occurrence.
     pub fn value(&self, pdu: &Pdu) -> Option<u64> {
-        match (self.raw, &pdu.body) {
-            (Some(f), PduBody::Other(body)) => f.read_body(body),
-            (Some(_), _) => None,
-            (None, _) => (self.get)(pdu),
+        self.values(pdu).into_iter().next()
+    }
+
+    /// Every value of the field in `pdu`: none if it isn't there, one for an
+    /// ordinary field, one per record for a repeated one.
+    pub fn values(&self, pdu: &Pdu) -> Vec<u64> {
+        match (self.repeated, self.raw, &pdu.body) {
+            (Some(r), _, PduBody::Other(body)) => (r.values)(body),
+            (Some(_), _, _) => Vec::new(),
+            (None, Some(f), PduBody::Other(body)) => f.read_body(body).into_iter().collect(),
+            (None, Some(_), _) => Vec::new(),
+            (None, None, _) => (self.get)(pdu).into_iter().collect(),
         }
     }
 }
@@ -87,6 +99,7 @@ const fn spec(name: &'static str, scope: Option<u8>, uid: Option<u16>, get: fn(&
         get,
         uid,
         raw: None,
+        repeated: None,
     }
 }
 
@@ -275,6 +288,15 @@ pub(crate) fn registry() -> Vec<FieldSpec> {
         get: |_| None,
         uid: Some(f.uid),
         raw: Some(f),
+        repeated: None,
+    }));
+    v.extend(repeated_fields().iter().map(|f| FieldSpec {
+        name: f.name,
+        scope: Some(f.pdu_type),
+        get: |_| None,
+        uid: Some(f.uid),
+        raw: None,
+        repeated: Some(f),
     }));
     v
 }
@@ -301,12 +323,12 @@ impl EnumCheck {
         if self.spec.scope.is_some_and(|t| t != pdu.header.pdu_type) {
             return None;
         }
-        let v = self.spec.value(pdu)?;
-        if self.allowed.iter().any(|r| r.contains(&v)) {
-            None
-        } else {
-            Some(v)
-        }
+        // The first value outside the allowed set: one beam's bad function
+        // is a violation even if the others are fine.
+        self.spec
+            .values(pdu)
+            .into_iter()
+            .find(|v| !self.allowed.iter().any(|r| r.contains(v)))
     }
 
     /// Allowed set for messages: `"0-8, 12"`.

@@ -84,6 +84,10 @@ defined in SISO-REF-010 UID 164 (Transmitter-Transmit State)`.
 - Fields of PDU types that aren't deep decoded, read from their raw bytes, e.g.
   `transmitter.transmit_state`, `acknowledge.acknowledge_flag`, `receiver.receiver_state`:
   the full list with offsets and UIDs is `crates/decode/src/fields.rs`
+- Fields that repeat inside a PDU's records, every occurrence checked:
+  `electromagnetic-emission.emitter_name` (UID 75) and `.emitter_function` (76), once per
+  emitter system, and `.beam_function` (78), once per beam (`repeated_fields()` in the same
+  file)
 
 ## PDU capture tiers
 
