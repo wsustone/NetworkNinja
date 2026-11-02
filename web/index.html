@@ -235,17 +235,22 @@
   #dTpl { color:var(--warn); font-size:11px; font-weight:400; }
   #dgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:1em; margin-top:.6em; }
   .wcard { background:var(--panel); border:1px solid var(--line); border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
-  .wcard.wide { grid-column:span 2; }
+  #dgrid { grid-auto-rows:240px; grid-auto-flow:dense; }
+  .wcard { position:relative; grid-column:span var(--c,1); grid-row:span var(--r,1); min-height:0; }
+  .wcard.dragging { opacity:.4; } .wcard.drop { outline:2px dashed var(--ok); outline-offset:-2px; }
+  #dgrid.edit .whead { cursor:grab; }
+  .rsz { display:none; position:absolute; right:3px; bottom:3px; width:14px; height:14px; cursor:nwse-resize; border-right:2px solid var(--dim); border-bottom:2px solid var(--dim); border-radius:0 0 4px 0; }
+  #dgrid.edit .rsz { display:block; } .rsz:hover { border-color:var(--fg); }
   .whead { display:flex; gap:.5em; align-items:baseline; padding:.45em .8em .1em; }
   .whead b { font-size:12px; font-weight:600; }
   .whead .u { color:var(--dim); font-size:10px; }
   .whead .ctl { margin-left:auto; display:none; gap:.3em; }
   .wctl { display:none; margin:0 0 0 .8em; }
   #dgrid.edit .whead .ctl, #dgrid.edit .wctl { display:flex; }
-  .wbody { flex:1; padding:.1em .6em .5em; min-height:110px; position:relative; }
-  .wbody svg { display:block; width:100%; height:150px; }
+  .wbody { flex:1; padding:.1em .6em .5em; min-height:0; position:relative; overflow:auto; }
+  .wbody svg { display:block; width:100%; }
   .wbody .empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:11px; }
-  .wnum { font-size:34px; font-weight:600; font-variant-numeric:tabular-nums; padding:.3em .3em 0; }
+  .wnum { font-size:34px; font-weight:600; font-variant-numeric:tabular-nums; padding:.3em .3em 0; display:flex; align-items:center; justify-content:center; flex-wrap:wrap; height:calc(100% - .3em); box-sizing:border-box; }
   .wnum small { font-size:12px; color:var(--dim); font-weight:400; margin-left:.4em; }
   .wlist { font-size:12px; padding:.3em 0; width:100%; }
   .wlist td { padding:.18em .2em; }
@@ -282,11 +287,11 @@
   #wePrev svg { display:block; width:100%; height:120px; }
   #dashEd [hidden] { display:none !important; }
   /* Status tiles, event streams, summary tables, thresholds, click-through. */
-  .wstat { display:flex; flex-direction:column; justify-content:center; align-items:center; min-height:110px; border-radius:6px; margin:.2em 0 .3em; }
+  .wstat { display:flex; flex-direction:column; justify-content:center; align-items:center; min-height:100px; height:calc(100% - .5em); box-sizing:border-box; border-radius:6px; margin:.2em 0 .3em; }
   .wstat.ok { background:rgba(63,185,80,.12); color:var(--ok); } .wstat.warn { background:rgba(210,153,34,.14); color:var(--warn); } .wstat.crit { background:rgba(248,81,73,.16); color:var(--crit); }
   .wstat b { font-size:30px; font-weight:600; font-variant-numeric:tabular-nums; } .wstat span { font-size:11px; opacity:.85; }
   .wnum.warn { color:var(--warn); } .wnum.crit { color:var(--crit); }
-  .wev { list-style:none; margin:0; padding:.2em 0; font-size:11px; max-height:280px; overflow-y:auto; }
+  .wev { list-style:none; margin:0; padding:.2em 0; font-size:11px; }
   .wev li { padding:.25em .4em; border-left:3px solid var(--dim); margin:.15em 0; background:rgba(255,255,255,.02); cursor:pointer; line-height:1.4; }
   .wev li.crit { border-color:var(--crit); } .wev li.warn { border-color:var(--warn); } .wev li.err { border-color:#b35cff; } .wev li.res { border-color:var(--ok); opacity:.7; }
   .wev .t { color:var(--dim); float:right; margin-left:.6em; } .wev .r { color:var(--dim); margin-right:.4em; } .wev .albtn { margin-left:.5em; }
@@ -300,7 +305,7 @@
   #dvars { gap:.8em; flex-wrap:wrap; }
   #dbar select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.2em .4em; font:inherit; font-size:12px; }
   #dvSeek { width:220px; margin:0 .2em; } #dvAt { min-width:9em; } #dvAt.paused { color:var(--warn); }
-  @media (max-width:700px) { #dgrid { grid-template-columns:1fr; } .wcard.wide { grid-column:span 1; } }
+  @media (max-width:700px) { #dgrid { grid-template-columns:1fr; } .wcard { grid-column:span 1 !important; } }
 </style>
 
 <header>
@@ -457,7 +462,7 @@
       <select id="weEvSev"><option value="">any severity</option><option value="critical">critical only</option></select>
       <input type="text" id="weEvText" placeholder="match words: rule, sender, entity…" style="min-width:15em">
       <select id="weEvN"><option value="10">10 rows</option><option value="25">25 rows</option><option value="50">50 rows</option></select></div>
-    <label style="flex-direction:row;align-items:center;gap:.4em;color:var(--fg)"><input type="checkbox" id="weWide"> double width</label>
+    <label>size<span class="row"><select id="weCols"><option value="1">1 column</option><option value="2">2 columns</option><option value="3">3 columns</option></select><select id="weRows"><option value="1">1 row</option><option value="2">2 rows</option><option value="3">3 rows</option></select></span></label>
     <div class="ifs"><button type="submit" id="weSubmit">add widget</button><button type="button" class="plain" id="wePrevB">preview</button><span class="msg" id="weMsg"></span></div>
   </form>
   <div id="wePrev"></div>
@@ -1624,7 +1629,7 @@ const DIM_LABEL = {exercise: "exercise", pdu_type: "PDU type", site: "site", kin
   sender: "sender", force: "force", entity: "entity", pack: "pack", rule: "rule", severity: "severity"};
 const KIND_LABEL = {timeseries: "time series", toplist: "top list", counter: "counter", status: "status tile", events: "event stream", table: "violations table"};
 const SDIMS = ["sender", "rule", "site", "entity", "pack", "severity", "exercise"];
-const W = (title, kind, name, agg, span, extra = {}) => Object.assign({title, kind, q: Object.assign({name, agg, by: [], where: {}, span, window: 0}, extra.q || {}), wide: !!extra.wide},
+const W = (title, kind, name, agg, span, extra = {}) => Object.assign({title, kind, q: Object.assign({name, agg, by: [], where: {}, span, window: 0}, extra.q || {}), cols: extra.cols || (extra.wide ? 2 : 1), rows: extra.rows || 1},
   extra.th ? {th: extra.th} : {}, extra.tab ? {tab: extra.tab} : {}, extra.ev ? {ev: extra.ev} : {});
 // Thresholds {dir:"above"|"below", warn, crit}: the level a value is at.
 const thSet = x => x !== undefined && x !== null && x !== "";
@@ -1659,12 +1664,15 @@ const TEMPLATES = {
     W("Open alerts", "status", "alerts.open", "sum", 60, {th: {dir: "above", warn: 0, crit: 5}}),
     W("Decode errors, 10 min", "status", "decode.errors", "sum", 600, {th: {dir: "above", warn: 0, crit: 10}}),
     W("Traffic flowing", "status", "pdu.count", "rate", 60, {th: {dir: "below", warn: 1, crit: 0.01}}),
-    W("Firing alerts", "events", "", "", 3600, {wide: true, ev: {alert: true, err: true, info: false, state: "firing", sev: "", text: "", n: 25}}),
-    W("Violations: sender × rule", "table", "", "", 3600, {wide: true, tab: {by: ["sender", "rule"]}}),
+    W("Firing alerts", "events", "", "", 3600, {wide: true, rows: 2, ev: {alert: true, err: true, info: false, state: "firing", sev: "", text: "", n: 25}}),
+    W("Violations: sender × rule", "table", "", "", 3600, {wide: true, rows: 2, tab: {by: ["sender", "rule"]}}),
     W("Open alerts by rule", "toplist", "alerts.open", "sum", 60, {q: {by: ["rule"]}}),
     W("Open alerts by severity", "timeseries", "alerts.open", "sum", 3600, {q: {by: ["severity"]}}),
   ]},
 };
+// A widget's size in grid cells (older saves have `wide` instead of `cols`).
+const sizeOf = w => ({c: Math.min(3, Math.max(1, +w.cols || (w.wide ? 2 : 1))), r: Math.min(3, Math.max(1, +w.rows || 1))});
+const gridCols = () => Math.max(1, Math.floor(($("dgrid").clientWidth + 16) / 356));
 const dash = {list: null, name: null, tpl: null, def: null, dirty: false, edit: false, data: [], editing: null,
   view: {span: "", to: null}, vals: {}, varOpts: {}, tick: 0};
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -1877,12 +1885,13 @@ function renderDash() {
   grid.classList.toggle("edit", dash.edit);
   renderViewBar(); renderVars();
   if (!dash.def) { grid.innerHTML = ""; return; }
-  const ws = dash.def.widgets, n = ws.length;
+  const ws = dash.def.widgets, n = ws.length, maxc = gridCols();
   grid.innerHTML = ws.map((w, i) => {
-    return `<div class="wcard${w.wide ? " wide" : ""}" data-i="${i}">
-      <div class="whead"><b>${esc(w.title)}</b><span class="u" title="${esc(KIND_LABEL[w.kind] || w.kind)}">${esc(widgetDesc(w))}</span>
-        <span class="ctl">${i > 0 ? '<button class="albtn" data-act="left" title="move earlier">◀</button>' : ""}${i < n - 1 ? '<button class="albtn" data-act="right" title="move later">▶</button>' : ""}<button class="albtn" data-act="edit">edit</button><button class="albtn" data-act="dup">copy</button><button class="albtn" data-act="del">remove</button></span></div>
-      <div class="wbody"></div></div>`;
+    const {c, r} = sizeOf(w);
+    return `<div class="wcard" data-i="${i}" style="--c:${Math.min(c, maxc)};--r:${r}">
+      <div class="whead"${dash.edit ? ' draggable="true" title="drag to move"' : ""}><b>${esc(w.title)}</b><span class="u" title="${esc(KIND_LABEL[w.kind] || w.kind)}">${esc(widgetDesc(w))}</span>
+        <span class="ctl"><button class="albtn" data-act="edit">edit</button><button class="albtn" data-act="dup">copy</button><button class="albtn" data-act="del">remove</button></span></div>
+      <div class="wbody"></div><span class="rsz" title="drag to resize"></span></div>`;
   }).join("") + (dash.edit || !n ? '<button class="wadd" id="wAdd" title="add a widget">+</button>' : "");
   if (!n) {
     grid.insertAdjacentHTML("afterbegin", `<div class="wempty">This dashboard has no widgets. Click + to add one, or start from a template:
@@ -1989,7 +1998,7 @@ function drawWidget(box, w, d) {
   S = S.slice(0, SERIES.length);
   const vals = S.flatMap(s => s.points.map(p => p[1]).filter(v => v !== null));
   if (!vals.length) { box.innerHTML = '<div class="empty">no data in this range</div>'; return; }
-  const Wd = box.clientWidth - 4 || 400, H = 150, L = 40, R = 6, T = 6, B = 18;
+  const Wd = box.clientWidth - 4 || 400, H = Math.max(110, box.clientHeight - 30), L = 40, R = 6, T = 6, B = 18;
   const ths = w.th ? [[w.th.warn, "#d29922"], [w.th.crit, "#f85149"]].filter(([v]) => thSet(v)) : [];
   const ymax = niceMax(Math.max(...vals, ...ths.map(([v]) => +v)) * 1.05);
   const x = t => L + (t - d.from) / (d.to - d.from) * (Wd - L - R);
@@ -2017,7 +2026,7 @@ function drawWidget(box, w, d) {
   };
   const lines = S.map((s, i) => ({s, c: SERIES[i]})).reverse().map(({s, c}) => `<path fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round" d="${path(s)}"><title>${esc(s.label)}</title></path>`).join("");
   const last = s => { for (let i = s.points.length - 1; i >= 0; i--) if (s.points[i][1] !== null) return s.points[i][1]; return null; };
-  box.innerHTML = `<svg viewBox="0 0 ${Wd} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(w.title)}">${g}${lines}</svg>`
+  box.innerHTML = `<svg viewBox="0 0 ${Wd} ${H}" style="height:${H}px" preserveAspectRatio="none" role="img" aria-label="${esc(w.title)}">${g}${lines}</svg>`
     + `<div class="wleg">${S.map((s, i) => `<span ${goAttrs(s.tags, by)}><i style="background:${SERIES[i]}"></i>${esc(s.label)} <b style="color:var(--fg);font-weight:500">${fmtVal(last(s), d.unit)}</b></span>`).join("")}${hidden ? `<span>+${hidden} more</span>` : ""}<span style="margin-left:auto">${esc(unit)}</span></div>`;
 }
 
@@ -2096,14 +2105,62 @@ $("dgrid").onclick = ev => {
     return;
   }
   const i = +btn.closest(".wcard").dataset.i, ws = dash.def.widgets, act = btn.dataset.act;
-  const swap = j => { [ws[i], ws[j]] = [ws[j], ws[i]]; [dash.data[i], dash.data[j]] = [dash.data[j], dash.data[i]]; };
   if (act === "edit") { openWidgetEditor(i); return; }
-  if (act === "left") swap(i - 1);
-  else if (act === "right") swap(i + 1);
-  else if (act === "dup") { ws.splice(i + 1, 0, clone(ws[i])); dash.data.splice(i + 1, 0, dash.data[i]); }
+  if (act === "dup") { ws.splice(i + 1, 0, clone(ws[i])); dash.data.splice(i + 1, 0, dash.data[i]); }
   else if (act === "del") { ws.splice(i, 1); dash.data.splice(i, 1); }
   dash.dirty = true; renderDash();
 };
+// --- edit mode: drag a widget's title bar to move it, its corner to resize ---
+function moveWidget(from, to) {
+  const ws = dash.def.widgets, [w] = ws.splice(from, 1), [d] = dash.data.splice(from, 1);
+  ws.splice(to, 0, w); dash.data.splice(to, 0, d);
+  dash.dirty = true; renderDash();
+}
+$("dgrid").addEventListener("dragstart", ev => {
+  const card = ev.target.closest(".wcard");
+  if (!card || !dash.edit || !ev.target.closest(".whead")) { ev.preventDefault(); return; }
+  dash.drag = +card.dataset.i; card.classList.add("dragging");
+  ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/plain", card.dataset.i);
+});
+$("dgrid").addEventListener("dragover", ev => {
+  if (dash.drag == null) return;
+  ev.preventDefault(); ev.dataTransfer.dropEffect = "move";
+  const over = ev.target.closest(".wcard");
+  for (const c of $("dgrid").querySelectorAll(".wcard.drop")) if (c !== over) c.classList.remove("drop");
+  if (over && +over.dataset.i !== dash.drag) over.classList.add("drop");
+});
+$("dgrid").addEventListener("drop", ev => {
+  const over = ev.target.closest(".wcard");
+  if (dash.drag == null || !over) return;
+  ev.preventDefault();
+  const from = dash.drag, to = +over.dataset.i;
+  dash.drag = null;
+  if (from !== to) moveWidget(from, to); else renderDash();
+});
+$("dgrid").addEventListener("dragend", () => {
+  dash.drag = null;
+  for (const c of $("dgrid").querySelectorAll(".dragging,.drop")) c.classList.remove("dragging", "drop");
+});
+$("dgrid").addEventListener("pointerdown", ev => {
+  const h = ev.target.closest(".rsz");
+  if (!h || !dash.edit) return;
+  ev.preventDefault();
+  const card = h.closest(".wcard"), w = dash.def.widgets[+card.dataset.i], {c, r} = sizeOf(w);
+  const rect = card.getBoundingClientRect(), colW = (rect.width + 16) / Math.min(c, gridCols()), rowH = 256;
+  const x0 = ev.clientX, y0 = ev.clientY;
+  let nc = c, nr = r;
+  const move = e => {
+    nc = Math.max(1, Math.min(3, Math.round((rect.width + e.clientX - x0 + 16) / colW)));
+    nr = Math.max(1, Math.min(3, Math.round((rect.height + e.clientY - y0 + 16) / rowH)));
+    card.style.setProperty("--c", Math.min(nc, gridCols())); card.style.setProperty("--r", nr);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+    if (nc !== c || nr !== r) { w.cols = nc; w.rows = nr; delete w.wide; dash.dirty = true; }
+    renderDash();
+  };
+  window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+});
 
 // --- widget editor: pickers only, previewed against live data ---
 function openWidgetEditor(i) {
@@ -2121,7 +2178,7 @@ function openWidgetEditor(i) {
   $("weEvState").value = ev.state === "all" ? "all" : "firing"; $("weEvSev").value = ev.sev || ""; $("weEvText").value = ev.text || ""; $("weEvN").value = String(ev.n || 25);
   $("weSpan").value = String(w.q.span); if (!$("weSpan").value) $("weSpan").value = "3600";
   $("weWin").value = String(w.q.window || 0); if (!$("weWin").value) $("weWin").value = "0";
-  $("weWide").checked = w.wide;
+  const sz = sizeOf(w); $("weCols").value = sz.c; $("weRows").value = sz.r;
   weMetricChanged(w);
   $("weMsg").textContent = ""; $("wePrev").innerHTML = "";
   $("dashEd").classList.add("on");
@@ -2159,7 +2216,7 @@ function weRead() {
   const where = {};
   for (const row of $("weWhere").querySelectorAll(".wrow")) { const v = row.querySelector("input").value.trim(); if (v) where[row.querySelector("select").value] = v; }
   const span = $("weSpan").value;
-  const w = {title: $("weName").value.trim() || (kind === "events" ? "Events" : kind === "table" ? "Violations" : METRICS[metric].label), kind, wide: $("weWide").checked,
+  const w = {title: $("weName").value.trim() || (kind === "events" ? "Events" : kind === "table" ? "Violations" : METRICS[metric].label), kind, cols: +$("weCols").value, rows: +$("weRows").value,
     q: {name: metric, agg: $("weAgg").value, by, where, span: span === "run" ? "run" : +span, window: +$("weWin").value}};
   const th = {dir: $("weThDir").value, warn: $("weThWarn").value, crit: $("weThCrit").value};
   if (TH_KINDS.includes(kind) && (th.warn !== "" || th.crit !== "")) w.th = th;
