@@ -102,6 +102,11 @@ licence and freshness); tests use `crates/rules/tests/fixtures/siso-mini.xml`,
 and `NN_SISO=path cargo test -p nn-rules --test siso` runs the full-file check.
 Raw enumerated fields of undecoded types: `nn_decode::fields` (offset, UID,
 a SISO-valid default the generator writes). `--defect bad-enum:TYPE`.
+Fields that repeat per record (EE Emitter Name / Function per system, Beam
+Function per beam) are `fields::repeated_fields()`, each a `values(body)`
+walker; `FieldSpec::values` returns every occurrence and an enum check flags
+the first outside its set. The siso-mini fixture defines the generator's
+emitter (1800 / 4 / 4); `--bad-emitter-enums` writes 65535 / 255.
 
 SIMAN handshakes (ADR 0010 step 5): `nn_rules::siman::Handshakes` pairs
 requests with answers on raw bytes (`Engine::check_siman` per PDU, overdue

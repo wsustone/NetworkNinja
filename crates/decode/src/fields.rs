@@ -130,7 +130,166 @@ pub fn enum_fields() -> &'static [EnumField] {
     &FIELDS
 }
 
+/// An enumerated field that repeats inside a PDU's records (one per emitter
+/// system or beam, say), so it has no single offset: `values` walks the PDU
+/// body (the bytes after the header) and returns every occurrence, in order.
+#[derive(Clone, Copy)]
+pub struct RepeatedField {
+    pub pdu_type: u8,
+    /// Field path as rule packs write it, e.g. "electromagnetic-emission.beam_function".
+    pub name: &'static str,
+    pub uid: u16,
+    pub values: fn(&[u8]) -> Vec<u64>,
+}
+
+impl std::fmt::Debug for RepeatedField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RepeatedField({})", self.name)
+    }
+}
+
+/// EE (7.6.2) systems and beams, offsets within the body: each system's
+/// 20-byte header (Emitter Name at 4, Function at 6), then its beams, 52
+/// bytes plus 8 per Track/Jam target (Beam Function at 44, targets at 45).
+/// Stops where the PDU does: tier S reports a short one.
+fn ee_walk(body: &[u8], mut each: impl FnMut(Option<usize>, usize)) {
+    const SYSTEMS_AT: usize = 28 - crate::HEADER_LEN;
+    let Some(&n) = body.get(25 - crate::HEADER_LEN) else {
+        return;
+    };
+    let mut at = SYSTEMS_AT;
+    for _ in 0..n {
+        let Some(&beams) = body.get(at + 1) else { return };
+        if body.len() < at + 20 {
+            return;
+        }
+        each(None, at);
+        let mut b = at + 20;
+        for _ in 0..beams {
+            let Some(&targets) = body.get(b + 45) else { return };
+            each(Some(b), at);
+            b += 52 + 8 * targets as usize;
+        }
+        at = b;
+    }
+}
+
+fn ee_emitter_names(body: &[u8]) -> Vec<u64> {
+    let mut v = Vec::new();
+    ee_walk(body, |beam, sys| {
+        if beam.is_none() {
+            v.push(u16::from_be_bytes([body[sys + 4], body[sys + 5]]) as u64);
+        }
+    });
+    v
+}
+
+fn ee_emitter_functions(body: &[u8]) -> Vec<u64> {
+    let mut v = Vec::new();
+    ee_walk(body, |beam, sys| {
+        if beam.is_none() {
+            v.push(body[sys + 6] as u64);
+        }
+    });
+    v
+}
+
+fn ee_beam_functions(body: &[u8]) -> Vec<u64> {
+    let mut v = Vec::new();
+    ee_walk(body, |beam, _| {
+        if let Some(b) = beam {
+            v.push(body[b + 44] as u64);
+        }
+    });
+    v
+}
+
+static REPEATED: [RepeatedField; 3] = [
+    RepeatedField {
+        pdu_type: 23,
+        name: "electromagnetic-emission.emitter_name",
+        uid: 75,
+        values: ee_emitter_names,
+    },
+    RepeatedField {
+        pdu_type: 23,
+        name: "electromagnetic-emission.emitter_function",
+        uid: 76,
+        values: ee_emitter_functions,
+    },
+    RepeatedField {
+        pdu_type: 23,
+        name: "electromagnetic-emission.beam_function",
+        uid: 78,
+        values: ee_beam_functions,
+    },
+];
+
+/// Every repeated enumerated field.
+pub fn repeated_fields() -> &'static [RepeatedField] {
+    &REPEATED
+}
+
 /// The enumerated fields of one PDU type.
 pub fn enum_fields_of(pdu_type: u8) -> impl Iterator<Item = &'static EnumField> {
     FIELDS.iter().filter(move |f| f.pdu_type == pdu_type)
+}
+
+#[cfg(test)]
+mod repeated_tests {
+    use super::*;
+
+    /// One system: Emitter Name, Function, and (Beam Function, targets) per beam.
+    type System<'a> = (u16, u8, &'a [(u8, u8)]);
+
+    /// An EE body holding these systems.
+    fn ee_body(systems: &[System]) -> Vec<u8> {
+        let mut b = vec![0u8; 28 - crate::HEADER_LEN];
+        b[25 - crate::HEADER_LEN] = systems.len() as u8;
+        for (name, function, beams) in systems {
+            let mut s = vec![0u8; 20];
+            s[1] = beams.len() as u8;
+            s[4..6].copy_from_slice(&name.to_be_bytes());
+            s[6] = *function;
+            for (beam_function, targets) in *beams {
+                let mut r = vec![0u8; 52 + 8 * *targets as usize];
+                r[44] = *beam_function;
+                r[45] = *targets;
+                s.extend(r);
+            }
+            b.extend(s);
+        }
+        b
+    }
+
+    #[test]
+    fn ee_fields_are_read_from_every_system_and_beam() {
+        let body = ee_body(&[(1800, 4, &[(4, 1), (1, 0)]), (2000, 2, &[(5, 0)])]);
+        let get = |name: &str| {
+            (repeated_fields()
+                .iter()
+                .find(|f| f.name.ends_with(name))
+                .unwrap()
+                .values)(&body)
+        };
+        assert_eq!(get("emitter_name"), [1800, 2000]);
+        assert_eq!(get("emitter_function"), [4, 2]);
+        assert_eq!(
+            get("beam_function"),
+            [4, 1, 5],
+            "past the first beam's Track/Jam record"
+        );
+        // Cut short: what is there is read, nothing past the end.
+        let short = &body[..body.len() - 10];
+        assert_eq!(get_from(short, "emitter_name"), [1800, 2000]);
+        assert_eq!(get_from(short, "beam_function"), [4, 1]);
+    }
+
+    fn get_from(body: &[u8], name: &str) -> Vec<u64> {
+        (repeated_fields()
+            .iter()
+            .find(|f| f.name.ends_with(name))
+            .unwrap()
+            .values)(body)
+    }
 }

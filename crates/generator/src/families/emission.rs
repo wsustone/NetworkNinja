@@ -12,7 +12,9 @@
 //! (`dense-targets`); it gives a PRF with no pulse width (`half-pulsed`);
 //! its target is 0:A:E (`no-site-target`); it reports the beam Deactivated
 //! twice (`repeat-deactivated`); its entity is destroyed a second in and
-//! keeps emitting (`destroyed-emitting`).
+//! keeps emitting (`destroyed-emitting`); its Emitter Name and Beam Function
+//! are values SISO-REF-010 doesn't define (`bad-emitter-enums`, 65535 and
+//! 255: caught with `serve --siso`).
 
 use super::{Family, Out};
 use crate::world::{Tick, World};
@@ -33,6 +35,7 @@ const BEAM_FUNCTION: u8 = 4;
 struct Faults {
     dropout: bool,
     rename: bool,
+    bad_enums: bool,
     reserved_beam: bool,
     dense: bool,
     half_pulsed: bool,
@@ -80,7 +83,11 @@ fn ee(tick: &Tick, entity: EntityId, event: u16, e: &Emitter, on: bool) -> Pdu {
     }
     b[at(25)] = 1;
     let f = e.faults;
-    let name = if f.rename && e.reports > 0 { RENAMED } else { NAME };
+    let name = match (f.bad_enums, f.rename && e.reports > 0) {
+        (true, _) => 0xffff,
+        (false, true) => RENAMED,
+        (false, false) => NAME,
+    };
     // Emitter system: lengths, Emitter System record, location on the entity.
     let mut s = vec![0u8; 20];
     s[1] = 1;
@@ -100,7 +107,7 @@ fn ee(tick: &Tick, entity: EntityId, event: u16, e: &Emitter, on: bool) -> Pdu {
     {
         beam[4 + 4 * i..8 + 4 * i].copy_from_slice(&v.to_be_bytes());
     }
-    beam[44] = BEAM_FUNCTION;
+    beam[44] = if f.bad_enums { 0xff } else { BEAM_FUNCTION };
     beam[45] = 1;
     beam[46] = f.dense as u8;
     beam[47] = (!on) as u8;
@@ -129,6 +136,7 @@ impl Family for Emission {
         match ev.kind {
             EventKind::EmitterDropout => p.dropout = true,
             EventKind::EmitterRename => p.rename = true,
+            EventKind::BadEmitterEnums => p.bad_enums = true,
             EventKind::ReservedBeam => p.reserved_beam = true,
             EventKind::DenseTargets => p.dense = true,
             EventKind::HalfPulsed => p.half_pulsed = true,

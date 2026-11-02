@@ -24,6 +24,16 @@
     <enumrow value="1" description="Create &amp; Entity"/>
     <enumrow value="2" description="Remove Entity"/>
   </enum>
+  <enum uid="75" name="Emitter Name" size="16">
+    <enumrow value="1800" description="Test radar A"/>
+    <enumrow value="1805" description="Test radar A, mod 1"/>
+  </enum>
+  <enum uid="76" name="Emitter System Function" size="8">
+    <enumrow value="4" description="Fire Control"/>
+  </enum>
+  <enum uid="78" name="Electromagnetic Emission-Beam Function" size="8">
+    <enumrow value="4" description="Tracking"/>
+  </enum>
   <enum uid="164" name="Transmitter-Transmit State" size="8">
     <enumrow value="0" description="Off"/>
     <enumrow value="1" description="On but not transmitting"/>
