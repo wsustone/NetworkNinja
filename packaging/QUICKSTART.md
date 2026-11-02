@@ -14,6 +14,9 @@ x86_64 Linux. Neither program needs any extra libraries, runtimes or drivers: no
 Redistributable, and no Npcap, WinPcap or libpcap (DIS is read from ordinary UDP sockets, and
 pcap files are read directly).
 
+**First launch:** the builds aren't signed yet, so macOS and Windows block them the first
+time. That's expected; [If it won't start](#if-it-wont-start) below has the one-step fix.
+
 ## 1. Watch an exercise
 
 On a machine that can see the exercise's DIS traffic (DIS usually uses UDP port 3000):
@@ -58,10 +61,16 @@ The dashboard fills with entities, and with the faults the generator injects. Ru
 
 ## If it won't start
 
-- **macOS: "cannot be opened because the developer cannot be verified".** These builds aren't
-  signed yet. Run `xattr -d com.apple.quarantine nn-server nn-generator` in this folder, or
-  right-click the program, choose Open, then Open again.
-- **Windows: "Windows protected your PC".** Choose More info, then Run anyway.
+- **macOS: "“nn-server” Not Opened. Apple could not verify “nn-server” is free of malware…"**
+  (older macOS: "cannot be opened because the developer cannot be verified"). These builds
+  aren't signed yet, so macOS stops them the first time. Click Done, then in Terminal, in this
+  folder, run `xattr -d com.apple.quarantine nn-server nn-generator` and start it again. Or
+  open System Settings → Privacy & Security, scroll to the message about nn-server, click
+  **Open Anyway** and confirm (once for each program).
+- **Windows: "Windows protected your PC".** Choose More info, then Run anyway. If Windows
+  blocks the programs when you start them from PowerShell, run
+  `Unblock-File .\nn-server.exe, .\nn-generator.exe` in this folder first. Antivirus may also
+  flag unsigned new programs; allow them, or add this folder as an exception.
 - **Linux: "Permission denied".** Run `chmod +x nn-server nn-generator`.
 - **"Address already in use".** Another program (often a simulator on the same machine) holds
   the port. Add `--share` to share it, or choose another port.
