@@ -287,9 +287,14 @@ approval, else test-signing). The SignPath artifact configuration is
 policy" section is required by their terms.
 
 User monitors (ADR 0008 slice 3, `nn_rules::monitors`): `[[monitor]]`
-(type threshold | absence | event-count; metric or event; `where.DIM`;
-`by`; agg; window; condition; for; severity), `MonitorDef::parse_all` /
-`to_toml`. `Monitor::set_monitors(defs)` installs them (resolving alerts of
+(type threshold | absence | event-count | composite; metric or event or
+`of`; `where.DIM`; `by`; agg; window; condition; for; severity),
+`MonitorDef::parse_all` (= `parse_blocks` + `check_composites`) / `to_toml`.
+Composite `of` is an `Expr` (`&&`, `||`, `!`, parens) over non-composite
+ids; its `by` ⊆ each named monitor's `by`; evaluated after the others from
+their firing state (`measure_composite`). The API checks composites on put,
+refuses deleting a monitor one names; a dashboard metric widget's "monitor"
+button prefills the builder (`monFromWidget`). `Monitor::set_monitors(defs)` installs them (resolving alerts of
 removed or changed ones); `Monitor::tick` evaluates them every second over
 `m.metrics` (memory: windows ≤ `MAX_WINDOW` 600 s) and the firings
 `record_for_monitors` keeps. Alerts: rule `UserMonitor` ("monitor"),

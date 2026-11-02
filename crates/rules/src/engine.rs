@@ -544,6 +544,7 @@ impl Engine {
                 "{value:.0} firings, {}",
                 def.condition.map(|c| c.to_string()).unwrap_or_default()
             ),
+            Kind::Composite => "its expression holds".into(),
         };
         let message = format!("{}{who}: {what} [{}]", def.name, def.describe());
         let mut facts: Facts = vec![

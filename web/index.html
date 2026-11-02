@@ -87,6 +87,10 @@
   #mon td .bad { color:var(--crit); font-weight:600; } #mon td .good { color:var(--ok); }
   #monEd { margin-top:1em; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.8em .9em; }
   #monEd .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:.6em 1em; }
+  #mOfL { grid-column:1/-1; display:flex; flex-direction:column; gap:.3em; }
+  #mOfIds { display:flex; flex-wrap:wrap; gap:.3em; } #mOfIds .albtn { font-size:11px; }
+  .whead .wmon { margin-left:auto; font-size:10px; opacity:.35; } .wcard:hover .wmon, .wmon:focus { opacity:1; }
+  #dgrid.edit .wmon { display:none; }
   #monEd label { display:flex; flex-direction:column; gap:.2em; font-size:11px; color:var(--dim); }
   #monEd input, #monEd select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.35em .5em; font:inherit; font-size:13px; }
   #monEd .row { display:flex; gap:.5em; align-items:center; flex-wrap:wrap; margin-top:.6em; font-size:12px; }
@@ -377,16 +381,17 @@
     <div class="grid">
       <label>name<input id="mName" placeholder="e.g. Site 7 federate silent"></label>
       <label>id<input id="mId" placeholder="from the name"></label>
-      <label>type<select id="mType"><option value="absence">absence: a group goes quiet</option><option value="threshold">threshold: a value out of range</option><option value="event-count">event count: a check fires too often</option></select></label>
+      <label>type<select id="mType"><option value="absence">absence: a group goes quiet</option><option value="threshold">threshold: a value out of range</option><option value="event-count">event count: a check fires too often</option><option value="composite">composite: a combination of monitors</option></select></label>
       <label id="mMetricL">metric<select id="mMetric"></select></label>
       <label id="mEventL">rule or check<input id="mEvent" list="mEvents" placeholder="* for any"><datalist id="mEvents"></datalist></label>
+      <div id="mOfL" hidden><label>monitors combined (&amp;&amp; and, || or, ! not)<input id="mOf" placeholder="e.g. site7-silent &amp;&amp; !noisy-sender"></label><div id="mOfIds"></div></div>
       <label id="mAggL">aggregation<select id="mAgg"></select></label>
       <label id="mWindowL">window (s)<input id="mWindow" type="number" min="1" value="60"></label>
       <label id="mCondL">condition<span style="display:flex;gap:.3em"><select id="mOp"><option>&gt;</option><option>&gt;=</option><option>&lt;</option><option>&lt;=</option></select><input id="mVal" type="number" step="any" value="1" style="flex:1"></span></label>
       <label><span id="mForLabel">for (s)</span><input id="mFor" type="number" min="0" value="15"></label>
       <label>severity<select id="mSev"><option>warning</option><option>critical</option></select></label>
     </div>
-    <div class="row" style="align-items:flex-start"><span style="color:var(--dim);min-width:4.5em">where</span><div id="mWhere" style="flex:1"></div><button class="plain" id="mAddWhere">+ filter</button></div>
+    <div class="row" id="mWhereRow" style="align-items:flex-start"><span style="color:var(--dim);min-width:4.5em">where</span><div id="mWhere" style="flex:1"></div><button class="plain" id="mAddWhere">+ filter</button></div>
     <div class="row"><span style="color:var(--dim);min-width:4.5em">one alert per</span><div class="bys" id="mBy"></div></div>
     <pre id="mToml"></pre>
     <div class="row"><button id="mSave">save</button><button class="plain" id="mPreview">preview</button><button class="plain" id="mCancel">cancel</button><span id="monMsg"></span></div>
@@ -1393,7 +1398,8 @@ function monLoad() {
 }
 function monRender() {
   $("monRows").innerHTML = mon.list.map(m => {
-    const fires = m.type === "absence" ? `silent for ${m.for} s` : `${esc(m.condition || "")}${m.for ? ` for ${m.for} s` : ""}`;
+    const fires = m.type === "absence" ? `silent for ${m.for} s`
+      : `${m.type === "composite" ? "holds" : esc(m.condition || "")}${m.for ? ` for ${m.for} s` : ""}`;
     const now = m.firing.length
       ? `<span class="bad">FIRING ${m.firing.length}</span> ${m.firing.slice(0, 4).map(f => esc(f.group || "all")).join("; ")}${m.firing.length > 4 ? " …" : ""}`
       : `<span class="good">ok</span>`;
@@ -1407,6 +1413,12 @@ const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, 
 function monToml() {
   const t = $("mType").value, q = v => JSON.stringify(String(v));
   let s = `[[monitor]]\nid = ${q($("mId").value || slug($("mName").value))}\nname = ${q($("mName").value || $("mId").value || "monitor")}\ntype = ${q(t)}\n`;
+  if (t === "composite") {
+    s += `of = ${q($("mOf").value.trim())}\n`;
+    const by = [...$("mBy").querySelectorAll("input:checked")].map(i => q(i.value));
+    if (by.length) s += `by = [${by.join(", ")}]\n`;
+    return s + `for = ${+$("mFor").value || 0}\nseverity = ${q($("mSev").value)}\n`;
+  }
   if (t === "event-count") s += `event = ${q($("mEvent").value || "*")}\n`;
   else s += `metric = ${q($("mMetric").value)}\n`;
   for (const row of $("mWhere").querySelectorAll(".wh")) {
@@ -1420,8 +1432,16 @@ function monToml() {
   s += `for = ${+$("mFor").value || 0}\nseverity = ${q($("mSev").value)}\n`;
   return s;
 }
+// The monitors a composite's expression names.
+const monRefs = () => [...new Set($("mOf").value.match(/[A-Za-z0-9_-]+/g) || [])];
 function monDims() {
-  return $("mType").value === "event-count" ? MON_EVENT_DIMS : (MON_METRICS[$("mMetric").value] || []);
+  const t = $("mType").value;
+  if (t === "composite") {
+    // Only what every monitor it names groups by.
+    const named = monRefs().map(id => mon.list.find(m => m.id === id)).filter(Boolean);
+    return named.length ? named[0].by.filter(d => named.every(m => m.by.includes(d))) : [];
+  }
+  return t === "event-count" ? MON_EVENT_DIMS : (MON_METRICS[$("mMetric").value] || []);
 }
 function monWhereRow(d = "", v = "") {
   const dims = monDims();
@@ -1434,13 +1454,20 @@ function monWhereRow(d = "", v = "") {
 }
 // Show the fields the type uses; keep the TOML view current.
 function monSync(refresh) {
-  const t = $("mType").value, metric = $("mMetric").value, gauge = MON_GAUGES.has(metric);
-  $("mMetricL").hidden = t === "event-count";
+  const t = $("mType").value, metric = $("mMetric").value, gauge = MON_GAUGES.has(metric), comp = t === "composite";
+  $("mMetricL").hidden = t === "event-count" || comp;
   $("mEventL").hidden = t !== "event-count";
   $("mAggL").hidden = t !== "threshold";
-  $("mWindowL").hidden = $("mCondL").hidden = t === "absence";
+  $("mWindowL").hidden = $("mCondL").hidden = t === "absence" || comp;
+  $("mOfL").hidden = !comp;
+  $("mWhereRow").hidden = comp;
   $("mForLabel").textContent = t === "absence" ? "silent for (s)" : "must hold for (s)";
   if (refresh) {
+    // Click an id to add it to the expression; composites can't be combined.
+    const me = $("mId").value;
+    $("mOfIds").innerHTML = mon.list.filter(m => m.type !== "composite" && m.id !== me)
+      .map(m => `<button class="albtn" type="button" data-ofid="${esc(m.id)}" title="${esc(m.name)}: ${esc(m.describe)}">${esc(m.id)}</button>`).join("")
+      || '<span class="chk">no other monitors yet: make the ones to combine first</span>';
     const aggs = gauge ? ["avg", "min", "max", "sum"] : ["rate", "sum", "count", "max", "min", "avg"];
     const was = $("mAgg").value;
     $("mAgg").innerHTML = aggs.map(a => `<option${a === was ? " selected" : ""}>${a}</option>`).join("");
@@ -1453,13 +1480,17 @@ function monSync(refresh) {
   }
   $("mToml").textContent = monToml();
 }
+// `m` is a listed monitor to edit, or a new one's starting fields
+// ({isNew: true, ...}, e.g. from a dashboard widget), or nothing.
 function monEdit(m) {
-  mon.editing = m ? m.id : null;
+  const isNew = !m || m.isNew;
+  mon.editing = isNew ? null : m.id;
   $("monEd").hidden = false;
   $("monMsg").textContent = ""; $("monMsg").className = "";
   $("mMetric").innerHTML = Object.keys(MON_METRICS).map(k => `<option>${k}</option>`).join("");
   $("mEvents").innerHTML = ["*", ...new Set(Object.values(EXPLAIN).map(x => x.rule))].map(r => `<option value="${esc(r)}">`).join("");
-  $("mName").value = m ? m.name : ""; $("mId").value = m ? m.id : ""; $("mId").disabled = !!m;
+  $("mName").value = m ? m.name : ""; $("mId").value = m ? m.id || slug(m.name) : ""; $("mId").disabled = !isNew;
+  $("mOf").value = (m && m.of) || "";
   $("mType").value = m ? m.type : "absence";
   $("mMetric").value = (m && m.metric) || "pdu.count";
   $("mEvent").value = (m && m.event) || "";
@@ -1485,7 +1516,14 @@ function monSay(msg, bad) { $("monMsg").textContent = msg; $("monMsg").className
 $("monNew").onclick = () => monEdit(null);
 $("mCancel").onclick = () => { $("monEd").hidden = true; };
 $("mAddWhere").onclick = () => { monWhereRow(); monSync(); };
-$("mType").onchange = $("mMetric").onchange = () => monSync(true);
+$("mType").onchange = $("mMetric").onchange = $("mOf").oninput = () => monSync(true);
+$("mOfIds").onclick = ev => {
+  const b = ev.target.closest("[data-ofid]");
+  if (!b) return;
+  const cur = $("mOf").value.trim();
+  $("mOf").value = cur ? `${cur} && ${b.dataset.ofid}` : b.dataset.ofid;
+  monSync(true);
+};
 $("monEd").oninput = () => monSync();
 $("mBy").onchange = () => monSync();
 $("mName").oninput = () => { if (!mon.editing) $("mId").value = slug($("mName").value); monSync(); };
@@ -2086,6 +2124,7 @@ function renderDash() {
     const {c, r} = sizeOf(w);
     return `<div class="wcard" data-i="${i}" style="--c:${Math.min(c, maxc)};--r:${r}">
       <div class="whead"${dash.edit ? ' draggable="true" title="drag to move"' : ""}><b>${esc(w.title)}</b><span class="u" title="${esc(KIND_LABEL[w.kind] || w.kind)}">${esc(widgetDesc(w))}</span>
+        ${METRIC_KINDS.has(w.kind) ? '<button class="albtn wmon" data-act="mon" title="alert on this: a monitor on the same query">monitor</button>' : ""}
         <span class="ctl"><button class="albtn" data-act="edit">edit</button><button class="albtn" data-act="dup">copy</button><button class="albtn" data-act="del">remove</button></span></div>
       <div class="wbody"></div><span class="rsz" title="drag to resize"></span></div>`;
   }).join("") + (dash.edit || !n ? '<button class="wadd" id="wAdd" title="add a widget">+</button>' : "");
@@ -2301,11 +2340,27 @@ $("dgrid").onclick = ev => {
     return;
   }
   const i = +btn.closest(".wcard").dataset.i, ws = dash.def.widgets, act = btn.dataset.act;
+  if (act === "mon") { monFromWidget(ws[i]); return; }
   if (act === "edit") { openWidgetEditor(i); return; }
   if (act === "dup") { ws.splice(i + 1, 0, clone(ws[i])); dash.data.splice(i + 1, 0, dash.data[i]); }
   else if (act === "del") { ws.splice(i, 1); dash.data.splice(i, 1); }
   dash.dirty = true; renderDash();
 };
+// "Create monitor from widget": a threshold monitor on the widget's query
+// (board variables as they're set now), its threshold as the condition.
+const METRIC_KINDS = new Set(["timeseries", "toplist", "counter", "status"]);
+function monFromWidget(w) {
+  const q = w.q, th = w.th || {}, below = th.dir === "below";
+  const lim = thSet(th.crit) ? +th.crit : thSet(th.warn) ? +th.warn : null;
+  const win = w.kind === "timeseries" && +q.window ? +q.window : 60;
+  showView("mon");
+  monEdit({isNew: true, name: w.title, type: "threshold", metric: q.name, agg: q.agg,
+    window: Math.min(600, Math.max(1, win)), for: 30,
+    condition: lim === null ? (below ? "< 1" : "> 0") : `${below ? "<" : ">"} ${lim}`,
+    severity: thSet(th.crit) ? "critical" : "warning",
+    where: Object.entries(whereOf(q)).map(([k, v]) => [k, String(v)]), by: q.by.slice()});
+  monSay(lim === null ? "From the widget: set the condition, preview, then save." : "From the widget's threshold: preview, then save.");
+}
 // --- edit mode: drag a widget's title bar to move it, its corner to resize ---
 function moveWidget(from, to) {
   const ws = dash.def.widgets, [w] = ws.splice(from, 1), [d] = dash.data.splice(from, 1);
