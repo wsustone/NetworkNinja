@@ -490,11 +490,12 @@ impl Hub {
     fn violations(
         &self,
         since: f64,
+        until: f64,
         exercise: Option<u8>,
         entity: Option<&str>,
     ) -> Result<Vec<crate::store::Violation>, String> {
         if let Some((store, _)) = self.store.lock().unwrap().as_ref() {
-            return store.violations(since, exercise, entity);
+            return store.violations(since, until, exercise, entity);
         }
         let q = self.log_buf.lock().unwrap();
         Ok(q.iter()
@@ -513,6 +514,7 @@ impl Hub {
                 };
                 let keep = firing
                     && v.at >= since
+                    && v.at <= until
                     && exercise.is_none_or(|x| v.exercise == Some(x))
                     && entity.is_none_or(|x| v.entity.as_deref() == Some(x));
                 keep.then_some(v)
@@ -539,12 +541,20 @@ impl Hub {
             None => None,
         };
         let entity = get("entity");
-        let rows = self.violations(since, exercise, entity.as_deref())?;
+        let until = match get("until") {
+            Some(v) => v
+                .parse::<f64>()
+                .map_err(|_| format!("until must be epoch seconds, got '{v}'"))?,
+            None => f64::MAX,
+        };
+        let rows = self.violations(since, until, exercise, entity.as_deref())?;
         let (open, senders) = self.conformance.lock().unwrap().clone();
+        // Alerts open right now only count for a window that reaches the present.
+        let live = until >= now_secs() - 5.0;
         let open: Vec<_> = open
             .into_iter()
             .filter(|v| {
-                exercise.is_none_or(|x| v.exercise == Some(x))
+                live && exercise.is_none_or(|x| v.exercise == Some(x))
                     && entity.as_deref().is_none_or(|x| v.entity.as_deref() == Some(x))
             })
             .collect();
@@ -1232,6 +1242,7 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                     .find_map(|kv| kv.strip_prefix(name).and_then(|v| v.parse().ok()))
             };
             let arg_s = |name: &str| qparam(name.trim_end_matches('='));
+            let arg_f = |name: &str| -> Option<f64> { arg_s(name).and_then(|v| v.parse().ok()) };
             let body = match hub.db_query(&crate::store::EventQuery {
                 after: arg("after=").unwrap_or(0),
                 kind: arg_s("kind="),
@@ -1239,6 +1250,8 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                 entity: arg_s("entity="),
                 sender: arg_s("sender="),
                 text: arg_s("q="),
+                from: arg_f("from="),
+                to: arg_f("to="),
                 limit: arg("limit=").unwrap_or(500) as usize,
             }) {
                 Some(entries) => format!(
