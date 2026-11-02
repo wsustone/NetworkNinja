@@ -677,6 +677,9 @@ fn serve(
         None => Hub::listen(http),
     }
     .map_err(|e| format!("cannot bind dashboard on {http}: {e}"))?;
+    if let Some(path) = config_file {
+        hub.set_names(nn_server::config::load(path)?.senders);
+    }
     let desc = match &src {
         Src::Udp(l) => format!(
             "live on {}",
