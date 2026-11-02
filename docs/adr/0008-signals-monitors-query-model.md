@@ -291,9 +291,16 @@ broken down.
    recent alert firings. Each group opens one alert, rule `monitor`,
    `rule_id` = monitor id (+ `@tags`), through the engine's normal path
    (active list, ack, mute by monitor id, event log). `Monitors::preview`
-   replays a monitor over memory for "would have fired N times". Still
-   open: composite monitors, the `monitors.toml` file, `/api/monitors`, the
-   builder UI.
+   replays a monitor over memory for "would have fired N times". Then
+   `serve --monitors FILE` (or `[serve] monitors`) loads and saves them
+   (`nn_server::monitors_api`, FILE.bak kept; without it they last until
+   restart); `GET /api/monitors` lists them with their open groups and
+   `POST /api/monitors` takes `{"cmd": "put" | "delete" | "preview", ...}`
+   (a put or preview carries one `[[monitor]]` block as `toml`), answered by
+   the serve loop over a channel like `/api/query`. The dashboard's Monitors
+   tab lists them and builds one from pickers, with a live TOML view, preview
+   and save; a firing monitor is a "Monitor: NAME" problem card. Still open:
+   composite monitors and "create monitor from widget".
 4. Standard rules by PDU family, starting with SISO-REF-010 generation
    and the behavioural rules listed in §3.
 5. Dashboard builder, saved dashboards, templates; alert routes.
