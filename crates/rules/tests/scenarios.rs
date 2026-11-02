@@ -1466,3 +1466,45 @@ fn emitters_told_right_are_silent_and_each_fault_fires_on_its_own() {
         );
     }
 }
+
+#[test]
+fn alerts_carry_the_pdu_that_raised_them() {
+    // A wrong Protocol Family on site 1's IFF at 30 s, and entity 1:1:1
+    // falling silent: the first is raised by a PDU, the second by silence.
+    let cfg = Config {
+        duration: 90.0,
+        all_types: Some(10.0),
+        events: vec![
+            Event {
+                kind: EventKind::WrongFamily,
+                target: Target::Pdu { site: 1, pdu_type: 28 },
+                at: 30.0,
+            },
+            Event {
+                kind: EventKind::DropHeartbeat,
+                target: Target::Entity(EntityId::new(1, 1, 1)),
+                at: 30.0,
+            },
+        ],
+        ..Default::default()
+    };
+    let datagrams = generate(&cfg);
+    let (_, events) = monitor(&datagrams);
+    let family = firing(&events)
+        .into_iter()
+        .find(|e| e.alert.rule == Rule::PduFamily)
+        .expect("wrong family raised");
+    let pdu = family.pdu.as_ref().expect("the family alert carries its PDU");
+    assert_eq!(pdu[2], 28, "the IFF PDU itself");
+    assert!(
+        datagrams
+            .iter()
+            .any(|d| d.payload.windows(pdu.len()).any(|w| w == &pdu[..])),
+        "byte for byte as it was received"
+    );
+    let timeout = firing(&events)
+        .into_iter()
+        .find(|e| e.alert.rule == Rule::EntityTimeout)
+        .expect("timeout raised");
+    assert!(timeout.pdu.is_none(), "silence has no PDU");
+}

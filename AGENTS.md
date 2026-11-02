@@ -245,6 +245,13 @@ Fix report (`nn_server::report`): `GET /api/report?sim=S:A[&exercise=&since=
 its senders' decode errors (senders whose claims include it) by check and
 finding, from the store (`alert_entries`) or the in-memory log. Card button
 "fix report for S:A" opens it (copy Markdown, download .md / .csv).
+PDU evidence: `AlertEvent::pdu` (`Arc<[u8]>`) is the PDU that raised a firing;
+`Monitor::ingest` attaches it to every firing raised while checking that PDU
+(`attach_pdu`), none for timeouts (silence). `Hub::log_alert` logs and keeps
+it by seq (ring of `LOG_CAP`, plus the store's `evidence` table with --db);
+alert JSON gets `"pdu": LEN`. `GET /api/evidence?seq=N` (`nn_server::evidence`)
+returns named header fields, enumerated fields or the decoder's view, and a
+hex dump. Log alerts with `hub.log_alert(e)`, not `log("alert", ...)`.
 
 ## Timing and identity semantics (October 2026 review fixes)
 
