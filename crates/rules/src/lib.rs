@@ -24,6 +24,7 @@ mod interactions;
 mod lifecycle;
 pub mod minitoml;
 mod monitor;
+pub mod monitors;
 pub mod pack;
 pub mod radio;
 pub mod siman;

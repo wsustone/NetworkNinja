@@ -41,7 +41,7 @@ impl Fold {
         }
     }
 
-    fn from_name(s: &str) -> Option<Fold> {
+    pub fn from_name(s: &str) -> Option<Fold> {
         [Fold::Sum, Fold::Avg, Fold::Min, Fold::Max, Fold::Count, Fold::Rate]
             .into_iter()
             .find(|f| f.name() == s)
