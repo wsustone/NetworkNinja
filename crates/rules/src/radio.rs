@@ -94,6 +94,7 @@ pub struct Finding {
     pub id: EntityId,
     pub sender: SocketAddr,
     pub message: String,
+    pub facts: crate::engine::Facts,
 }
 
 #[derive(Debug, Default)]
@@ -153,12 +154,16 @@ impl Radios {
             return Vec::new();
         };
         let (exercise, id, number) = key;
-        let finding = |kind, message: String| Finding {
-            kind,
-            exercise,
-            id,
-            sender: source,
-            message: format!("radio {id}/{number}: {message}"),
+        let finding = |kind, message: String, mut facts: crate::engine::Facts| {
+            facts.insert(0, ("radio", format!("{id} / {number}")));
+            Finding {
+                kind,
+                exercise,
+                id,
+                sender: source,
+                message: format!("radio {id}/{number}: {message}"),
+                facts,
+            }
         };
         let mut out = Vec::new();
         match pdu_type {
@@ -214,6 +219,7 @@ impl Radios {
                     None if now - started > cfg.stationary_heartbeat * cfg.timeout_multiplier => out.push(finding(
                         "signal-without-transmitter",
                         format!("Signal with no Transmitter PDU for this radio{}", cite("5.8.4.4")),
+                        vec![("Transmitter PDUs seen", "none".into())],
                     )),
                     None => {}
                     Some(tx) => {
@@ -227,6 +233,10 @@ impl Radios {
                                     tx.state,
                                     cite("5.8.4.3.1")
                                 ),
+                                vec![
+                                    ("Transmit State", format!("{} (2 = on and transmitting)", tx.state)),
+                                    ("state since", format!("{:.1} s ago", now - tx.since)),
+                                ],
                             ));
                         }
                     }
@@ -237,6 +247,11 @@ impl Radios {
                     out.push(finding(
                         "signal-fields",
                         bad(format!("is a database index but has Sample Rate {rate} and Data Length {length} (must be 0 and 96)")),
+                        vec![
+                            ("encoding class", "3 (database index)".into()),
+                            ("Sample Rate", format!("{rate} (expected 0)")),
+                            ("Data Length", format!("{length} bits (expected 96)")),
+                        ],
                     ));
                 }
                 if class != 0 && samples != 0 {
@@ -245,12 +260,21 @@ impl Radios {
                         bad(format!(
                             "of encoding class {class} has Samples {samples} (must be 0 unless encoded audio)"
                         )),
+                        vec![
+                            ("encoding class", class.to_string()),
+                            ("Samples", format!("{samples} (expected 0)")),
+                        ],
                     ));
                 }
                 if class != 0 && tdl == 0 && low != 0 {
                     out.push(finding(
                         "signal-fields",
                         bad(format!("of encoding class {class} with TDL Type Other has {low} in the Encoding Scheme's low 14 bits (must be 0)")),
+                        vec![
+                            ("encoding class", class.to_string()),
+                            ("TDL Type", "0 (Other)".into()),
+                            ("Encoding Scheme low bits", format!("{low} (expected 0)")),
+                        ],
                     ));
                 }
                 if class == 0 {
@@ -262,6 +286,11 @@ impl Radios {
                                 bad(format!(
                                     "Data Length {length} bits, but {samples} samples of encoding type {low} ({bits} bits each) are {want}"
                                 )),
+                                vec![
+                                    ("Data Length", format!("{length} bits")),
+                                    ("expected", format!("{want} bits ({samples} samples × {bits} bits)")),
+                                    ("encoding type", low.to_string()),
+                                ],
                             ));
                         }
                     }
@@ -273,6 +302,7 @@ impl Radios {
                                     "encoded-audio Encoding Type changed from {prev} to {low}{}",
                                     cite("5.8.4.3.1")
                                 ),
+                                vec![("was", prev.to_string()), ("now", low.to_string())],
                             ));
                         }
                     }
@@ -324,6 +354,12 @@ impl Radios {
                         "radio {id}/{number}: transmitting, but no Transmitter PDU for {silent:.1} s (timeout {timeout:.1} s){}",
                         cite("5.8.3.3")
                     ),
+                    facts: vec![
+                        ("radio", format!("{id} / {number}")),
+                        ("silent for", format!("{silent:.1} s")),
+                        ("timeout", format!("{timeout:.1} s ({heartbeat} s × {})", cfg.timeout_multiplier)),
+                        ("antenna", if tx.moving { "moving" } else { "stationary" }.into()),
+                    ],
                 });
             }
             let quiet_since = tx.last_signal.map_or(tx.since, |s| s.max(tx.since));
@@ -344,6 +380,11 @@ impl Radios {
                         now - quiet_since,
                         cite("5.8.4.3.1")
                     ),
+                    facts: vec![
+                        ("radio", format!("{id} / {number}")),
+                        ("keyed with no Signal for", format!("{:.0} s", now - quiet_since)),
+                        ("allowed", format!("{:.0} s (idle_transmit)", cfg.idle_transmit)),
+                    ],
                 });
             }
         }
@@ -365,6 +406,11 @@ impl Radios {
                         "radio {id}/{number}: receiver on, but no Receiver PDU for {silent:.1} s (timeout {rx_timeout:.1} s){}",
                         cite("5.8.5.3")
                     ),
+                    facts: vec![
+                        ("radio", format!("{id} / {number}")),
+                        ("silent for", format!("{silent:.1} s")),
+                        ("timeout", format!("{rx_timeout:.1} s")),
+                    ],
                 });
             }
         }

@@ -126,6 +126,7 @@ pub struct Finding {
     /// can look up its address.
     pub owes: Option<SimAddr>,
     pub message: String,
+    pub facts: crate::engine::Facts,
 }
 
 #[derive(Debug, Default)]
@@ -223,6 +224,13 @@ impl Handshakes {
                         requester.1,
                         clause(pdu_type)
                     ),
+                    facts: vec![
+                        ("answer", name(pdu_type).to_string()),
+                        ("from", orig.to_string()),
+                        ("to", recv.to_string()),
+                        ("Request ID", request_id.to_string()),
+                        ("matching request", "none seen".into()),
+                    ],
                 }];
             }
             return Vec::new();
@@ -259,6 +267,11 @@ impl Handshakes {
                 name(p.pdu_type),
                 p.expect.ack_flag.unwrap_or(0)
             ),
+            facts: vec![
+                ("request", format!("{} (Request ID {request_id})", name(p.pdu_type))),
+                ("Acknowledge Flag", flag.unwrap_or(0).to_string()),
+                ("expected", p.expect.ack_flag.unwrap_or(0).to_string()),
+            ],
         }]
     }
 
@@ -288,6 +301,13 @@ impl Handshakes {
                             name(p.expect.pdu_type),
                             clause(p.pdu_type)
                         ),
+                        facts: vec![
+                            ("request", format!("{} (Request ID {request_id})", name(p.pdu_type))),
+                            ("from", p.originating.to_string()),
+                            ("to", p.receiving.to_string()),
+                            ("expected answer", name(p.expect.pdu_type).to_string()),
+                            ("waited", format!("{timeout:.0} s")),
+                        ],
                     });
                 }
                 // Keep settled and broadcast requests a little longer, so

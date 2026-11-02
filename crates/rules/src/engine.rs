@@ -657,7 +657,8 @@ impl Engine {
                 exercise: f.exercise,
                 id: f.id,
             };
-            self.point_event(now, Rule::SimanHandshake, f.kind, key, f.sender, f.message, &mut out);
+            let at = (Rule::SimanHandshake, f.kind);
+            self.point_event(now, at, key, f.sender, f.message, f.facts, &mut out);
         }
         out
     }
@@ -690,11 +691,11 @@ impl Engine {
         for f in findings {
             self.point_event(
                 now,
-                Rule::EntityLifecycle,
-                f.kind,
+                (Rule::EntityLifecycle, f.kind),
                 f.key,
                 Some(f.sender),
                 f.message,
+                f.facts,
                 &mut out,
             );
         }
@@ -729,11 +730,11 @@ impl Engine {
         for f in findings {
             self.point_event(
                 now,
-                Rule::FireDetonation,
-                f.kind,
+                (Rule::FireDetonation, f.kind),
                 f.key,
                 Some(f.sender),
                 f.message,
+                f.facts,
                 &mut out,
             );
         }
@@ -764,7 +765,15 @@ impl Engine {
         }
         let mut out = Vec::new();
         for f in crate::attribute::check(source, pdu, prev, next) {
-            self.point_event(now, Rule::Attribute, f.kind, f.key, Some(f.sender), f.message, &mut out);
+            self.point_event(
+                now,
+                (Rule::Attribute, f.kind),
+                f.key,
+                Some(f.sender),
+                f.message,
+                f.facts,
+                &mut out,
+            );
         }
         out
     }
@@ -814,7 +823,7 @@ impl Engine {
         }
         let mut out = Vec::new();
         for (rule, f) in found {
-            self.point_event(now, rule, f.kind, f.key, Some(f.sender), f.message, &mut out);
+            self.point_event(now, (rule, f.kind), f.key, Some(f.sender), f.message, f.facts, &mut out);
         }
         out
     }
@@ -835,7 +844,15 @@ impl Engine {
                 exercise: f.exercise,
                 id: f.id,
             };
-            self.point_event(now, Rule::Radio, f.kind, key, Some(f.sender), f.message, &mut out);
+            self.point_event(
+                now,
+                (Rule::Radio, f.kind),
+                key,
+                Some(f.sender),
+                f.message,
+                f.facts,
+                &mut out,
+            );
         }
         out
     }
@@ -843,23 +860,10 @@ impl Engine {
     /// A finding of a stateless rule as a point event, at most one of each
     /// kind per entity every `enum_repeat` seconds.
     #[allow(clippy::too_many_arguments)]
+    /// A one-off finding (not an alert that stays open), with its evidence
+    /// as named facts; repeats within `enum_repeat` are dropped.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn point_event(
-        &mut self,
-        at: f64,
-        rule: Rule,
-        kind: &'static str,
-        key: EntityKey,
-        sender: Option<SocketAddr>,
-        message: String,
-        out: &mut Vec<AlertEvent>,
-    ) {
-        self.point_event_with(at, (rule, kind), key, sender, message, Vec::new(), out);
-    }
-
-    /// A point event with its evidence as named facts.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn point_event_with(
         &mut self,
         at: f64,
         (rule, kind): (Rule, &'static str),
@@ -1088,15 +1092,8 @@ impl Engine {
                 exercise: f.exercise,
                 id: f.id,
             };
-            self.point_event(
-                now,
-                Rule::SimanHandshake,
-                f.kind,
-                key,
-                f.sender.or(owner),
-                f.message,
-                &mut out,
-            );
+            let at = (Rule::SimanHandshake, f.kind);
+            self.point_event(now, at, key, f.sender.or(owner), f.message, f.facts, &mut out);
         }
         let frozen = |exercise, id| table.state_for(&EntityKey { exercise, id }).frozen;
         let gone = |exercise, id| {
@@ -1109,7 +1106,8 @@ impl Engine {
                 exercise: f.exercise,
                 id: f.id,
             };
-            self.point_event(now, Rule::Heartbeat, f.kind, key, Some(f.sender), f.message, &mut out);
+            let at = (Rule::Heartbeat, f.kind);
+            self.point_event(now, at, key, Some(f.sender), f.message, f.facts, &mut out);
         }
         let mult = self.config.heartbeats.timeout_multiplier;
         let mut found: Vec<(Rule, crate::interactions::Finding)> = Vec::new();
@@ -1139,27 +1137,27 @@ impl Engine {
                 .map(|f| (Rule::Emission, f)),
         );
         for (rule, f) in found {
-            self.point_event(now, rule, f.kind, f.key, Some(f.sender), f.message, &mut out);
+            self.point_event(now, (rule, f.kind), f.key, Some(f.sender), f.message, f.facts, &mut out);
         }
         for f in self.warfare.expire(now, self.config.max_flight) {
             self.point_event(
                 now,
-                Rule::FireDetonation,
-                f.kind,
+                (Rule::FireDetonation, f.kind),
                 f.key,
                 Some(f.sender),
                 f.message,
+                f.facts,
                 &mut out,
             );
         }
         for f in self.lifecycle.expire(now, self.config.final_report_window) {
             self.point_event(
                 now,
-                Rule::EntityLifecycle,
-                f.kind,
+                (Rule::EntityLifecycle, f.kind),
                 f.key,
                 Some(f.sender),
                 f.message,
+                f.facts,
                 &mut out,
             );
         }
@@ -1168,7 +1166,15 @@ impl Engine {
                 exercise: f.exercise,
                 id: f.id,
             };
-            self.point_event(now, Rule::Radio, f.kind, key, Some(f.sender), f.message, &mut out);
+            self.point_event(
+                now,
+                (Rule::Radio, f.kind),
+                key,
+                Some(f.sender),
+                f.message,
+                f.facts,
+                &mut out,
+            );
         }
 
         if self.enabled(Rule::EntityTimeout) {
