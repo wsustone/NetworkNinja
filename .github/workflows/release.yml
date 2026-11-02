@@ -79,7 +79,7 @@ jobs:
           for t in ${{ matrix.targets }}; do
             cargo build --release --locked --target "$t" -p nn-server -p nn-generator
           done
-      - name: Package
+      - name: Stage
         shell: bash
         run: |
           set -euo pipefail
@@ -98,6 +98,33 @@ jobs:
           done
           cp packaging/QUICKSTART.md README.md LICENSE NOTICE nn.example.toml "$dir/"
           cp -r rulepacks "$dir/"
+      # Developer ID signing and Apple notarization, so Gatekeeper opens the
+      # binaries without a warning (packaging/SIGNING.md). Until the secrets
+      # are set the Mac build stays unsigned, with a warning on the run.
+      - name: Sign and notarize (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          dir="dist/networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          if [[ -z "$MACOS_CERT_P12" ]]; then
+            echo "::warning::macOS signing secrets aren't set: this Mac build is unsigned, and testers will see Apple's warning (packaging/SIGNING.md)"
+            exit 0
+          fi
+          bash packaging/macos-sign.sh "$dir"
+      - name: Archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="networkninja-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          dir="dist/$name"
+          ext=""
+          [[ "${{ matrix.os }}" == windows-* ]] && ext=".exe"
           # Smoke test: the packaged binaries start on this runner.
           "$dir/nn-server$ext" --version
           "$dir/nn-generator$ext" --help > /dev/null
