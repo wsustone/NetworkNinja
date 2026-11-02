@@ -72,7 +72,7 @@ Update this table in the same change that adds support. What comes next for each
 | 21 | Event Report | Simulation Management (5) | 5.6.5.12 | 7.5.12 | ✓ | ✓ | ✓ | – | min |
 | 22 | Comment | Simulation Management (5) | 5.6.5.13 | 7.5.13 | ✓ | ✓ | – | – | min |
 | 23 | Electromagnetic Emission | Distributed Emission Regeneration (6) | 5.7.3 | 7.6.2 | ✓ | ✓ | ✓ | partial | ✓ |
-| 24 | Designator | Distributed Emission Regeneration (6) | 5.7.4 | 7.6.3 | ✓ | ✓ | ✓ | – | min |
+| 24 | Designator | Distributed Emission Regeneration (6) | 5.7.4 | 7.6.3 | ✓ | ✓ | ✓ | ✓ | ✓ |
 | 29 | Underwater Acoustic | Distributed Emission Regeneration (6) | 5.7.5 | 7.6.4 | ✓ | ✓ v7 | ✓ | – | min |
 | 28 | IFF | Distributed Emission Regeneration (6) | 5.7.6 | 7.6.5 | ✓ | ✓ v7 | – | – | min |
 | 30 | Supplemental Emission/Entity State | Distributed Emission Regeneration (6) | 5.7.7 | 7.6.6 | ✓ | ✓ v7 | – | – | min |

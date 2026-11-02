@@ -18,6 +18,7 @@ pub struct Presets {
     pub warfare: bool,
     pub interaction: bool,
     pub emission: bool,
+    pub designator: bool,
 }
 
 impl Presets {
@@ -33,6 +34,7 @@ impl Presets {
             warfare: true,
             interaction: true,
             emission: true,
+            designator: true,
         }
     }
 }
@@ -121,6 +123,19 @@ pub fn schedule(
         .enumerate()
         {
             pending.push((kind, format!("@{}", d * (0.05 + 0.1 * i as f64))));
+        }
+    }
+    if p.designator {
+        cfg.designator_every.get_or_insert(30.0);
+        // Late, so the monitor has watched a stationary timeout before
+        // judging the unknown target.
+        for (kind, at) in [
+            (EventKind::SpotOffset, 0.10),
+            (EventKind::TargetGone, 0.25),
+            (EventKind::DesignatorGone, 0.40),
+            (EventKind::UnknownDesignated, 0.60),
+        ] {
+            pending.push((kind, format!("@{}", d * at)));
         }
     }
     if p.warfare {
@@ -234,6 +249,10 @@ pub fn schedule(
             | EventKind::NoSiteTarget
             | EventKind::RepeatDeactivated
             | EventKind::DestroyedEmitting
+            | EventKind::SpotOffset
+            | EventKind::UnknownDesignated
+            | EventKind::TargetGone
+            | EventKind::DesignatorGone
             | EventKind::OneSidedCollision
             | EventKind::DuplicateCollision
             | EventKind::StaleAppearance

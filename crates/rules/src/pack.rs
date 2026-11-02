@@ -523,6 +523,7 @@ fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (FireDetonation, "impact_tolerance") => |c, v| c.impact_tolerance = v,
         (Emission, "ee_heartbeat") => |c, v| c.ee_heartbeat = v,
         (Emission, "high_density_threshold") => |c, v| c.high_density_threshold = v,
+        (Designator, "final_report_window") => |c, v| c.designator_window = v,
         _ => return None,
     })
 }
@@ -933,6 +934,7 @@ impl Merged {
                 Rule::Collision,
                 Rule::Attribute,
                 Rule::Emission,
+                Rule::Designator,
             ]
             .into_iter()
             .map(|r| (r, true))
@@ -955,6 +957,7 @@ impl Merged {
                 (Rule::Collision, Severity::Warning),
                 (Rule::Attribute, Severity::Warning),
                 (Rule::Emission, Severity::Warning),
+                (Rule::Designator, Severity::Warning),
             ]
             .into_iter()
             .collect(),

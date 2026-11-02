@@ -15,6 +15,7 @@
 
 mod attribute;
 pub mod capture;
+mod designator;
 mod emission;
 mod engine;
 pub mod explain;
