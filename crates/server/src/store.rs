@@ -67,6 +67,10 @@ pub struct EventQuery {
     pub sender: Option<String>,
     /// Substring match against entity, rule and message.
     pub text: Option<String>,
+    /// Time window (epoch seconds, inclusive). With `to`, the newest
+    /// `limit` entries in the window are returned rather than the oldest.
+    pub from: Option<f64>,
+    pub to: Option<f64>,
     pub limit: usize,
 }
 
@@ -174,17 +178,23 @@ impl EventStore {
         );
     }
 
-    /// Alert firings and decode errors since `since`, optionally for one
-    /// exercise or entity. Rows written before the `state` column existed
+    /// Alert firings and decode errors from `since` to `until`, optionally
+    /// for one exercise or entity. Rows written before the `state` column existed
     /// are recognised from their JSON.
-    pub fn violations(&self, since: f64, exercise: Option<u8>, entity: Option<&str>) -> Result<Vec<Violation>, String> {
+    pub fn violations(
+        &self,
+        since: f64,
+        until: f64,
+        exercise: Option<u8>,
+        entity: Option<&str>,
+    ) -> Result<Vec<Violation>, String> {
         let mut st = self
             .conn
             .prepare_cached(
                 "SELECT at, kind, rule, pack, entity, COALESCE(sender, json_extract(json, '$.source')),
                         severity, exercise
                  FROM events
-                 WHERE at >= ?1
+                 WHERE at >= ?1 AND at <= ?4
                    AND (kind = 'error'
                         OR (kind = 'alert' AND (state = 'firing'
                             OR (state IS NULL AND json LIKE '%\"state\":\"firing\"%'))))
@@ -194,7 +204,7 @@ impl EventStore {
             )
             .map_err(|e| e.to_string())?;
         let rows = st
-            .query_map(params![since, exercise, entity], |r| {
+            .query_map(params![since, exercise, entity, until], |r| {
                 Ok(Violation {
                     at: r.get(0)?,
                     kind: r.get(1)?,
@@ -278,7 +288,20 @@ impl EventStore {
             );
             sql.push_str(" || '%'");
         }
-        sql.push_str(&format!(" ORDER BY id LIMIT {}", q.limit.min(5000)));
+        if let Some(f) = q.from {
+            args.push(Box::new(f));
+            sql.push_str(&format!(" AND at >= ?{}", args.len()));
+        }
+        if let Some(t) = q.to {
+            args.push(Box::new(t));
+            sql.push_str(&format!(" AND at <= ?{}", args.len()));
+        }
+        // A window ending in the past wants its newest entries by time.
+        sql.push_str(&format!(
+            " ORDER BY {} LIMIT {}",
+            if q.to.is_some() { "at DESC, id DESC" } else { "id" },
+            q.limit.min(5000)
+        ));
         let refs: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|a| a.as_ref()).collect();
         let mut st = match self.conn.prepare(&sql) {
             Ok(s) => s,
@@ -288,7 +311,11 @@ impl EventStore {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        rows.flatten().collect()
+        let mut out: Vec<String> = rows.flatten().collect();
+        if q.to.is_some() {
+            out.reverse();
+        }
+        out
     }
 
     fn series_id(&self, name: &str, tags: &str) -> rusqlite::Result<i64> {

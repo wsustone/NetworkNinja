@@ -699,6 +699,34 @@ fn events_summary_groups_violations_by_sender_and_migrates_old_stores() {
     );
     assert!(!j.contains("unknown"), "since filters out the old alert: {j}");
 
+    // `until` closes the window (a paused dashboard): only the first two
+    // firings, and alerts open *now* don't count for a window in the past.
+    let j = body("by=sender&since=0&until=215");
+    assert!(
+        j.contains(&format!(
+            "{{\"tags\":{{\"sender\":\"{a}\"}},\"total\":2,\"critical\":0,\"warning\":2,\"errors\":0,\"open\":0,"
+        )),
+        "{j}"
+    );
+    assert!(!j.contains(&format!("\"sender\":\"{b}\"")), "{j}");
+    // /api/log takes the same window; with `to`, the cap keeps the newest.
+    let r = http_get(addr, "/api/log?from=205&to=230&limit=2");
+    let log = r.split("\r\n\r\n").nth(1).unwrap();
+    assert!(
+        log.contains("1:1:2") && log.contains("2:1:1") && !log.contains("1:1:4") && !log.contains("1:1:3"),
+        "{log}"
+    );
+    let r = http_get(addr, "/api/log?from=205&to=230");
+    assert_eq!(
+        r.split("\r\n\r\n")
+            .nth(1)
+            .unwrap()
+            .matches("\"kind\":\"alert\"")
+            .count(),
+        4,
+        "{r}"
+    );
+
     let j = body("by=rule&since=0&entity=1:1:2");
     assert!(
         j.contains(
