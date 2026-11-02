@@ -184,6 +184,8 @@ fn all_types(events: Vec<Event>) -> Config {
         duration: 30.0,
         all_types: Some(5.0),
         fire_every: Some(5.0),
+        // Emitters, so their systems' and beams' enumerations are read too.
+        emission_every: Some(10.0),
         events,
         ..Default::default()
     }
@@ -240,4 +242,40 @@ fn real_siso_file_when_given() {
         let v = enum_alerts(&check(&siso, &all_types(vec![bad_enum_on(t)])));
         assert_eq!(v.len(), 1, "type {t}: {v:?}");
     }
+}
+
+#[test]
+fn emitter_enumerations_inside_systems_and_beams_are_checked() {
+    let emitters = |events| Config {
+        duration: 120.0,
+        emission_every: Some(20.0),
+        events,
+        ..Default::default()
+    };
+    // The generator's AN/APG-63 (Emitter Name 1800, Fire Control, a
+    // Tracking beam) is defined in the fixture: nothing to report.
+    let clean = enum_alerts(&check(&fixture(), &emitters(vec![])));
+    assert!(clean.is_empty(), "{clean:?}");
+    let bad = Event {
+        kind: EventKind::BadEmitterEnums,
+        target: Target::Exercise,
+        at: 10.0,
+    };
+    let mut fields: Vec<String> = enum_alerts(&check(&fixture(), &emitters(vec![bad])))
+        .into_iter()
+        .map(|(field, why)| {
+            assert!(why.contains("is not defined in SISO-REF-010 UID 7"), "{why}");
+            field
+        })
+        .collect();
+    fields.sort();
+    fields.dedup();
+    assert_eq!(
+        fields,
+        [
+            "electromagnetic-emission.beam_function",
+            "electromagnetic-emission.emitter_name"
+        ],
+        "the Emitter Function (4) is fine"
+    );
 }
