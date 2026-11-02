@@ -62,7 +62,7 @@ const fn v(field: EnumField, valid: u32) -> EnumField {
     EnumField { valid, ..field }
 }
 
-static FIELDS: [EnumField; 60] = [
+static FIELDS: [EnumField; 63] = [
     f(4, "collision.collision_type", 30, 1, 189),
     f(5, "service-request.service_type", 24, 1, 63),
     f(9, "repair-complete.repair", 24, 2, 64),
@@ -84,6 +84,9 @@ static FIELDS: [EnumField; 60] = [
     f(25, "transmitter.modulation_system", 94, 2, 163),
     f(25, "transmitter.crypto_system", 96, 2, 166),
     f(27, "receiver.receiver_state", 20, 2, 179),
+    v(f(28, "iff.system_type", 36, 2, 82), 1),
+    v(f(28, "iff.system_name", 38, 2, 83), 1),
+    f(28, "iff.system_mode", 40, 1, 84),
     f(29, "underwater-acoustic.state_update_indicator", 24, 1, 143),
     f(32, "intercom-control.control_type", 12, 1, 180),
     f(32, "intercom-control.transmit_line_state", 24, 1, 183),

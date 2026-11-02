@@ -63,6 +63,8 @@ pub enum Rule {
     Emission,
     /// A designator's spot or its final report (`crate::designator`).
     Designator,
+    /// An IFF system's layers, Change Indicator or status (`crate::iff`).
+    Iff,
     /// A user monitor's condition held (`crate::monitors`): one alert per
     /// monitor and group; `rule_id` is the monitor id, with `@tags` for a
     /// group.
@@ -91,6 +93,7 @@ impl Rule {
             Rule::Attribute => "attribute",
             Rule::Emission => "emission",
             Rule::Designator => "designator",
+            Rule::Iff => "iff",
             Rule::UserMonitor => "monitor",
         }
     }
@@ -116,6 +119,7 @@ impl Rule {
             "attribute" => Some(Rule::Attribute),
             "emission" => Some(Rule::Emission),
             "designator" => Some(Rule::Designator),
+            "iff" => Some(Rule::Iff),
             "monitor" => Some(Rule::UserMonitor),
             _ => None,
         }
@@ -231,6 +235,9 @@ pub struct RuleConfig {
     /// Seconds a designator has to send its final Power 0 report after its
     /// designating or designated entity ceases to exist.
     pub designator_window: f64,
+    /// IFF_PDU_FINAL: seconds an IFF system has to report Off after its
+    /// entity is deactivated, removed or destroyed.
+    pub iff_final: f64,
 }
 
 impl Default for RuleConfig {
@@ -260,6 +267,7 @@ impl Default for RuleConfig {
             ee_heartbeat: 5.0,
             high_density_threshold: 10.0,
             designator_window: 12.0,
+            iff_final: 10.0,
         }
     }
 }
@@ -374,6 +382,7 @@ pub struct Engine {
     collisions: Collisions,
     emissions: crate::emission::Emissions,
     designators: crate::designator::Designators,
+    iffs: crate::iff::Systems,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -416,6 +425,7 @@ impl Engine {
             collisions: Collisions::default(),
             emissions: crate::emission::Emissions::default(),
             designators: crate::designator::Designators::default(),
+            iffs: crate::iff::Systems::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             monitor_active: BTreeMap::new(),
@@ -979,6 +989,18 @@ impl Engine {
                     .map(|f| (Rule::Designator, f)),
             );
         }
+        if self.enabled(Rule::Iff) {
+            let limits = (
+                self.config.stationary_heartbeat * self.config.timeout_multiplier,
+                self.config.iff_final,
+            );
+            found.extend(
+                self.iffs
+                    .observe(now, source, raw, table, limits)
+                    .into_iter()
+                    .map(|f| (Rule::Iff, f)),
+            );
+        }
         if self.enabled(Rule::Emission) {
             let limits = self.emission_limits();
             found.extend(
@@ -1311,6 +1333,7 @@ impl Engine {
                 .into_iter()
                 .map(|f| (Rule::Designator, f)),
         );
+        self.iffs.expire(now);
         for (rule, f) in found {
             self.point_event(now, (rule, f.kind), f.key, Some(f.sender), f.message, f.facts, &mut out);
         }
@@ -1429,6 +1452,7 @@ impl Engine {
                 | Rule::Attribute
                 | Rule::Emission
                 | Rule::Designator
+                | Rule::Iff
                 | Rule::UserMonitor => {}
             }
         }

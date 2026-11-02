@@ -20,6 +20,7 @@ mod emission;
 mod engine;
 pub mod explain;
 mod heartbeats;
+mod iff;
 mod interactions;
 mod lifecycle;
 pub mod minitoml;

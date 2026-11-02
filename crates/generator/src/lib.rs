@@ -131,6 +131,22 @@ pub enum EventKind {
     /// Designator fault: the next designating entity is deactivated and its
     /// designator stops with no Power 0 report.
     DesignatorGone,
+    /// IFF fault: the next PDU leaves out Layer 3 (Mode 5).
+    IffMissingLayer,
+    /// IFF fault: the next PDU's Information Layers also claim Layer 5.
+    IffLayerBits,
+    /// IFF fault: the next PDU sends Layer 4 before Layer 3.
+    IffLayerOrder,
+    /// IFF fault: the next PDU's Layer 2 has no Fundamental Parameter record.
+    IffEmptyLayer2,
+    /// IFF fault: the Mode 3/A code changes now with the Change Indicator clear.
+    IffUnflaggedChange,
+    /// IFF fault: the code changes now, and the next heartbeat clears the Change Indicator.
+    IffHeartbeatUnflagged,
+    /// IFF fault: the next PDU says System On with System Mode Off.
+    IffModeMismatch,
+    /// IFF fault: the transponder's entity is destroyed and the transponder stays on.
+    IffDestroyedOn,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -214,6 +230,14 @@ impl EventKind {
             EventKind::UnknownDesignated => "unknown-designated",
             EventKind::TargetGone => "target-gone",
             EventKind::DesignatorGone => "designator-gone",
+            EventKind::IffMissingLayer => "iff-missing-layer",
+            EventKind::IffLayerBits => "iff-layer-bits",
+            EventKind::IffLayerOrder => "iff-layer-order",
+            EventKind::IffEmptyLayer2 => "iff-empty-layer2",
+            EventKind::IffUnflaggedChange => "iff-unflagged-change",
+            EventKind::IffHeartbeatUnflagged => "iff-heartbeat-unflagged",
+            EventKind::IffModeMismatch => "iff-mode-mismatch",
+            EventKind::IffDestroyedOn => "iff-destroyed-on",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -285,6 +309,14 @@ impl EventKind {
                 | EventKind::UnknownDesignated
                 | EventKind::TargetGone
                 | EventKind::DesignatorGone
+                | EventKind::IffMissingLayer
+                | EventKind::IffLayerBits
+                | EventKind::IffLayerOrder
+                | EventKind::IffEmptyLayer2
+                | EventKind::IffUnflaggedChange
+                | EventKind::IffHeartbeatUnflagged
+                | EventKind::IffModeMismatch
+                | EventKind::IffDestroyedOn
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
                 | EventKind::StaleAppearance
@@ -368,6 +400,9 @@ pub struct Config {
     pub emission_every: Option<f64>,
     /// Seconds between 30 s laser designations (`families::designator`).
     pub designator_every: Option<f64>,
+    /// Seconds between Mode 3/A code changes of a Mark XIIA transponder on
+    /// the first site (`families::iff`); `None` sends no IFF from it.
+    pub iff_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -417,6 +452,7 @@ impl Default for Config {
             de_every: None,
             emission_every: None,
             designator_every: None,
+            iff_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,
