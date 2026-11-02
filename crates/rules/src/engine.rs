@@ -159,6 +159,9 @@ pub struct AlertEvent {
     pub alert: Alert,
     /// Why it fired or resolved, for the alert log.
     pub reason: String,
+    /// The PDU that raised it, when one did (most checks; not a timeout,
+    /// which is raised by silence). Attached by `Monitor::ingest`.
+    pub pdu: Option<std::sync::Arc<[u8]>>,
 }
 
 #[derive(Debug, Clone)]
@@ -518,6 +521,7 @@ impl Engine {
             state: AlertState::Firing,
             alert,
             reason: message,
+            pdu: None,
         });
     }
 
@@ -575,6 +579,7 @@ impl Engine {
                 facts,
             },
             reason: message,
+            pdu: None,
         });
     }
 
@@ -643,6 +648,7 @@ impl Engine {
                         .collect(),
                 },
                 reason: message,
+                pdu: None,
             });
         }
         out
@@ -900,6 +906,7 @@ impl Engine {
                 facts,
             },
             reason: message,
+            pdu: None,
         });
     }
 
@@ -911,6 +918,7 @@ impl Engine {
                 state: AlertState::Resolved,
                 alert,
                 reason,
+                pdu: None,
             });
         }
     }

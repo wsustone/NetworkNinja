@@ -8,7 +8,7 @@ use nn_capture::{Datagram, Listeners, PcapReader, UdpConfig};
 use nn_decode::{Pdu, PduBody};
 use nn_rules::{AlertEvent, AlertState, Merged, Monitor, Severity};
 use nn_server::web::{
-    alert_json, delta_json, entity_baseline, entity_details, error_json, info_json, now_secs, state_json, Hub, Switch,
+    delta_json, entity_baseline, entity_details, error_json, info_json, now_secs, state_json, Hub, Switch,
 };
 use nn_server::{describe, Tally};
 use nn_state::metrics::slot_of;
@@ -799,7 +799,7 @@ fn serve(
             match nn_server::web::apply_command_by(&mut m, &c, &user) {
                 Ok(out) => {
                     for e in &out.events {
-                        let j = hub.log("alert", &alert_json(e));
+                        let j = hub.log_alert(e);
                         if recent.len() >= 100 {
                             recent.pop_front();
                         }
@@ -976,7 +976,7 @@ fn serve(
             }
         };
         for e in &events {
-            let j = hub.log("alert", &alert_json(e));
+            let j = hub.log_alert(e);
             if recent.len() >= 100 {
                 recent.pop_front();
             }

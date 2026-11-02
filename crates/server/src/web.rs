@@ -34,6 +34,14 @@ const MAX_HTTP_HEAD: usize = 16 * 1024;
 const MAX_HTTP_BODY: usize = 64 * 1024;
 const MAX_WS_PAYLOAD: u64 = 1 << 20;
 
+/// The PDU behind one logged alert.
+struct KeptPdu {
+    seq: u64,
+    at: f64,
+    source: String,
+    pdu: Arc<[u8]>,
+}
+
 /// The dashboard feed hub: WebSocket clients, the latest state push and the
 /// event log (alerts, decode errors, server events) behind `/api/log`.
 pub struct Hub {
@@ -79,6 +87,8 @@ pub struct Hub {
     input_result: Mutex<(u64, bool, String)>,
     /// Friendly names for senders and simulations (`[[sender]]`).
     names: Mutex<crate::names::Names>,
+    /// The PDUs behind recent alerts, by log seq (the store keeps them all).
+    evidence: Mutex<VecDeque<KeptPdu>>,
     /// Saved dashboards when there is no `--db` store: name →
     /// (updated unix second, JSON definition).
     dashboards: Mutex<BTreeMap<String, (i64, String)>>,
@@ -131,6 +141,7 @@ impl Hub {
             config_file: Mutex::new(None),
             input_result: Mutex::new((0, true, String::new())),
             names: Mutex::new(crate::names::Names::default()),
+            evidence: Mutex::new(VecDeque::new()),
             conformance: Mutex::new((Vec::new(), BTreeMap::new())),
             dashboards: Mutex::new(BTreeMap::new()),
         }
@@ -222,6 +233,40 @@ impl Hub {
         }
         self.broadcast(&entry);
         entry
+    }
+
+    /// Log an alert event, keeping the PDU that raised it (if one did) for
+    /// `/api/evidence?seq=`. Returns the entry, as `log` does.
+    pub fn log_alert(&self, e: &nn_rules::AlertEvent) -> String {
+        let entry = self.log("alert", &alert_json(e));
+        if let Some(pdu) = &e.pdu {
+            let seq = seq_of(&entry);
+            let source = e.alert.sender.map(|s| s.to_string()).unwrap_or_default();
+            if let Some((store, _)) = self.store.lock().unwrap().as_ref() {
+                store.insert_evidence(seq, e.at, &source, pdu);
+            }
+            let mut q = self.evidence.lock().unwrap();
+            if q.len() >= LOG_CAP {
+                q.pop_front();
+            }
+            q.push_back(KeptPdu {
+                seq,
+                at: e.at,
+                source,
+                pdu: pdu.clone(),
+            });
+        }
+        entry
+    }
+
+    /// `/api/evidence` body for the alert logged as `seq`, if its PDU is kept.
+    pub fn evidence_json(&self, seq: u64) -> Option<String> {
+        if let Some(k) = self.evidence.lock().unwrap().iter().find(|k| k.seq == seq) {
+            return Some(crate::evidence::json(seq, k.at, &k.source, &k.pdu));
+        }
+        let store = self.store.lock().unwrap();
+        let (at, source, pdu) = store.as_ref()?.0.evidence(seq)?;
+        Some(crate::evidence::json(seq, at, &source, &pdu))
     }
 
     /// `{"entries":[...],"latest":N}` — entries with seq > `after`, capped.
@@ -1106,6 +1151,18 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
         ("GET", "/api/explain") => {
             let _ = respond(s, "200 OK", "application/json", &explain_json());
         }
+        ("GET", "/api/evidence") => {
+            let seq = param(query, "seq").and_then(|v| v.parse::<u64>().ok());
+            let _ = match seq.and_then(|n| hub.evidence_json(n)) {
+                Some(body) => respond(s, "200 OK", "application/json", &body),
+                None => respond(
+                    s,
+                    "404 Not Found",
+                    "application/json",
+                    "{\"error\":\"no PDU kept for that alert (seq=N)\"}",
+                ),
+            };
+        }
         ("GET", "/api/senders") => {
             let _ = respond(s, "200 OK", "application/json", &hub.senders_json());
         }
@@ -1597,7 +1654,8 @@ pub fn alert_json(e: &AlertEvent) -> String {
         esc(&e.alert.key.id.to_string()),
         e.alert.key.exercise,
         esc(&e.alert.message),
-        finding_json(&e.alert),
+        finding_json(&e.alert)
+            + &e.pdu.as_ref().map_or(String::new(), |p| format!(",\"pdu\":{}", p.len())),
     )
 }
 

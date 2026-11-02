@@ -1,7 +1,7 @@
 //! The monitor: decode → rules → state → metrics, for one stream of datagrams.
 
 use crate::capture::Capture;
-use crate::engine::{AlertEvent, Engine, RuleConfig};
+use crate::engine::{AlertEvent, AlertState, Engine, RuleConfig};
 use nn_capture::Datagram;
 use nn_decode::{decode_datagram_spans, structure, EntityType, Pdu, PduBody};
 use nn_state::metrics::entity_of;
@@ -97,6 +97,8 @@ impl Monitor {
             if result.is_ok() {
                 self.pdus += 1;
             }
+            // Alerts raised from here on are about this PDU: they carry it.
+            let (first_event, range) = (events.len(), span.clone());
             // A relay's copy, or a second delivery of one send, skips every
             // check, malformed or not: a gateway can't pose as a second
             // simulator, and nothing is counted twice.
@@ -119,6 +121,7 @@ impl Monitor {
                 if let Ok(pdu) = result {
                     pdus.push(pdu);
                 }
+                attach_pdu(&mut events[first_event..], &d.payload[range]);
                 continue;
             }
             // Tier S (ADR 0010): structure is checked on the raw bytes, so a
@@ -169,6 +172,7 @@ impl Monitor {
                     self.metrics.record_error(now, d.source);
                 }
             }
+            attach_pdu(&mut events[first_event..], &d.payload[range]);
         }
         events.extend(self.tick(now));
         (pdus, events)
@@ -453,5 +457,16 @@ impl Monitor {
             .values()
             .filter(|r| !r.removed && self.now - r.last_seen <= cfg.timeout_of(r))
             .count()
+    }
+}
+
+/// Give the firings among `events` the PDU that raised them, sharing one copy.
+fn attach_pdu(events: &mut [AlertEvent], pdu: &[u8]) {
+    let mut shared: Option<Arc<[u8]>> = None;
+    for e in events
+        .iter_mut()
+        .filter(|e| e.state == AlertState::Firing && e.pdu.is_none())
+    {
+        e.pdu = Some(shared.get_or_insert_with(|| Arc::from(pdu)).clone());
     }
 }
