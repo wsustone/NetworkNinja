@@ -154,7 +154,7 @@ jobs:
           else
             echo "policy=test-signing" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: unsigned
         if: steps.winsign.outputs.enabled == 'true'
         with:
@@ -226,7 +226,7 @@ jobs:
           if [[ "${{ matrix.os }}" == macos-* ]] && arch -x86_64 /usr/bin/true 2> /dev/null; then
             arch -x86_64 "$dir/nn-server" --version
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: |
@@ -243,7 +243,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -257,6 +257,8 @@ jobs:
           rm *.sha256
           pre=""
           [[ "$GITHUB_REF_NAME" == *-* ]] && pre="--prerelease"
-          gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" \
+          # Only the archives and their sums: the signing step's unsigned
+          # upload (windows-unsigned) lands here too.
+          gh release create "$GITHUB_REF_NAME" *.tar.gz *.zip SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" \
             --draft $pre --generate-notes --title "NetworkNinja $GITHUB_REF_NAME" \
             --notes "Unpack an archive and follow its QUICKSTART.md; check downloads against SHA256SUMS.txt. [Code signing policy](https://github.com/wsustone/NetworkNinja#code-signing-policy)."
