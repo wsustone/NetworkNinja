@@ -297,9 +297,17 @@ broken down.
    violations table over `/api/events/summary` (one or two dimensions).
    Every group, row and event clicks through to the entity or the
    filtered log. Shipped templates: "Exercise overview", "Conformance &
-   health" and "Error hunt". Still open: alert routes, the map widget,
-   drag-resize, dashboard-level time range and template variables, and
-   "create monitor from widget" once slice 3 lands.
+   health" and "Error hunt". The board has one time range and point in
+   time for every widget (a range select, step buttons and a scrubber
+   that pauses the board in the past; metric widgets re-query the
+   rollups, the event stream reads the store through `/api/log?from&to`,
+   and the violations table passes `until` so alerts open *now* don't
+   count for a window that ended earlier). Template variables (a
+   dimension per variable, e.g. sender or site, with values from live
+   data) filter every widget whose metric carries that dimension and
+   substitute `$name` in where-filters. Still open: alert routes,
+   drag-resize, and "create monitor from widget" once slice 3 lands.
+   The map stays its own view, not a widget.
 
 ## Consequences
 
