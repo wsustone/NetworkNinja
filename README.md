@@ -59,16 +59,15 @@ rulepacks/    base DIS rule pack (dis-base.toml, compiled into nn-server)
 ## Download
 
 Ready-to-run builds for Linux (x86_64, static), Windows (x86_64) and macOS (universal) are on
-the [Releases](https://github.com/wsustone/networkninja-releases/releases) page: unpack one and follow
+the [Releases](https://github.com/wsustone/NetworkNinja/releases) page
+([latest](https://github.com/wsustone/NetworkNinja/releases/latest)): unpack one and follow
 its `QUICKSTART.md` ([packaging/QUICKSTART.md](packaging/QUICKSTART.md)). Builds aren't signed
 yet, so the quick start explains the macOS and Windows warnings.
 
 To cut a release, set the workspace version in `Cargo.toml`, then push a matching tag
 (`git tag v0.1.0 && git push origin v0.1.0`). The Release workflow builds every platform and
 creates a draft release with the archives and `SHA256SUMS.txt`; check it, then publish it.
-Publishing runs the Publish public release workflow, which copies the archives to the public
-[networkninja-releases](https://github.com/wsustone/networkninja-releases) repo that
-wsustone.com links to.
+The published release is what the Releases page (and wsustone.com's download link) serves.
 
 ## Get the code
 
