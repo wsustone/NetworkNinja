@@ -115,6 +115,7 @@ pub fn schedule(
             EventKind::NoSiteTarget,
             EventKind::RepeatDeactivated,
             EventKind::DestroyedEmitting,
+            EventKind::BadEmitterEnums,
         ]
         .into_iter()
         .enumerate()
@@ -226,6 +227,7 @@ pub fn schedule(
             | EventKind::MissingExtension
             | EventKind::EmitterDropout
             | EventKind::EmitterRename
+            | EventKind::BadEmitterEnums
             | EventKind::ReservedBeam
             | EventKind::DenseTargets
             | EventKind::HalfPulsed

@@ -180,9 +180,10 @@ or an unknown entity after the startup grace), `repeat-deactivated` (5.7.3.6), a
 `destroyed-emitting` (5.7.3.3.3 b). EE left the generic `heartbeat` rule, which timed out an
 entity rather than a system. Generator `--emission-every SECS`, faults `--emitter-dropout`,
 `--emitter-rename`, `--reserved-beam`, `--dense-targets`, `--half-pulsed`, `--no-site-target`,
-`--repeat-deactivated`, `--destroyed-emitting`, preset `--all-emission-faults`. Still to do: the
-beam enumerations (they sit in repeated records, which tier E's fixed-offset fields can't reach
-yet) and jamming's Track/Jam emitter and beam numbers.
+`--repeat-deactivated`, `--destroyed-emitting`, preset `--all-emission-faults`. The repeated
+enumerations are checked with `--siso`: Emitter Name (UID 75) and Function (76) per system,
+Beam Function (78) per beam (`nn_decode::fields::repeated_fields`); fault
+`--bad-emitter-enums`. Still to do: jamming's Track/Jam emitter and beam numbers.
 
 ### Designator (24)
 
@@ -293,8 +294,8 @@ silence and exact-detection tests, coverage-table update and docs.
    `directed-energy`.
 5. **Entity Damage Status and Collision.** *Done:* rules `entity-damage`, `collision`; the
    Wave 1 wrap-up added the field checks and rule `attribute`.
-6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations. *Done*
-   except the beam enumerations: rule `emission`.
+6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations. *Done*:
+   rule `emission`, repeated-field enumerations.
 7. **Designator, IFF.**
 8. **Logistics**, built on the SIMAN tracker.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.
