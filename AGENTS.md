@@ -269,6 +269,15 @@ alert JSON gets `"pdu": LEN`. `GET /api/evidence?seq=N` (`nn_server::evidence`)
 returns named header fields, enumerated fields or the decoder's view, and a
 hex dump. Log alerts with `hub.log_alert(e)`, not `log("alert", ...)`.
 
+Release signing (packaging/SIGNING.md): the Release workflow's build is
+Stage → Sign and notarize (macOS) → Archive → Check runtime dependencies.
+`packaging/macos-sign.sh DIR` signs both binaries (Developer ID, hardened
+runtime, timestamp) from a throwaway keychain and notarizes them with
+`notarytool` (App Store Connect API key); it fails the build on rejection.
+It runs only when the `MACOS_CERT_P12` … `APPLE_API_ISSUER` secrets exist,
+else the run warns that the Mac build is unsigned. Bare binaries can't be
+stapled, so Gatekeeper checks notarization online on first run.
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock
