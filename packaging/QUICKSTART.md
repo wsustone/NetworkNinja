@@ -14,8 +14,10 @@ x86_64 Linux. Neither program needs any extra libraries, runtimes or drivers: no
 Redistributable, and no Npcap, WinPcap or libpcap (DIS is read from ordinary UDP sockets, and
 pcap files are read directly).
 
-**First launch:** the builds aren't signed yet, so macOS and Windows block them the first
-time. That's expected; [If it won't start](#if-it-wont-start) below has the one-step fix.
+**First launch:** the macOS programs are signed and notarized by Apple, so they open
+normally (the Mac checks with Apple online the first time). The Windows build isn't signed
+yet, so Windows warns the first time; [If it won't start](#if-it-wont-start) below has the
+one-step fix.
 
 ## 1. Watch an exercise
 
@@ -62,9 +64,9 @@ The dashboard fills with entities, and with the faults the generator injects. Ru
 ## If it won't start
 
 - **macOS: "“nn-server” Not Opened. Apple could not verify “nn-server” is free of malware…"**
-  (older macOS: "cannot be opened because the developer cannot be verified"). These builds
-  aren't signed yet, so macOS stops them the first time. Click Done, then in Terminal, in this
-  folder, run `xattr -d com.apple.quarantine nn-server nn-generator` and start it again. Or
+  (older macOS: "cannot be opened because the developer cannot be verified"). The Mac couldn't
+  reach Apple to confirm the notarization (offline machines), or this is an older unsigned
+  build. Click Done, then in Terminal, in this folder, run `xattr -d com.apple.quarantine nn-server nn-generator` and start it again. Or
   open System Settings → Privacy & Security, scroll to the message about nn-server, click
   **Open Anyway** and confirm (once for each program).
 - **Windows: "Windows protected your PC".** Choose More info, then Run anyway. If Windows
