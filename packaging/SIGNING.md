@@ -47,9 +47,14 @@ and `source=Notarized Developer ID` for both programs. On a Mac, after downloadi
 a browser:
 
 ```sh
-spctl --assess --type execute --verbose=2 nn-server   # accepted, source=Notarized Developer ID
+./nn-server --version                                 # runs, no "Apple could not verify" dialog
+spctl -a -vv -t open --context context:primary-signature nn-server
+                                                      # accepted, source=Notarized Developer ID
 codesign -dv --verbose=2 nn-server                    # Authority=Developer ID Application: …
 ```
+
+(`spctl --type execute` judges app bundles only: for a bare program it says "rejected (the code
+is valid but does not seem to be an app)" whether or not it's notarized.)
 
 The certificate lasts five years; the API key until you revoke it. Rotate either by replacing
 its secret.

@@ -66,8 +66,9 @@ if [[ "$status" != "Accepted" ]]; then
     exit 1
 fi
 
-# What Gatekeeper will say on a tester's Mac.
+# What Gatekeeper will say on a tester's Mac. (`--type execute` only judges
+# app bundles; the open context assesses a bare program's signature.)
 for b in "${bins[@]}"; do
-    spctl --assess --type execute --verbose=2 "$b" 2>&1 || true
+    spctl --assess --verbose=2 --type open --context context:primary-signature "$b" 2>&1 || true
 done
 echo "signed and notarized: ${bins[*]}"
