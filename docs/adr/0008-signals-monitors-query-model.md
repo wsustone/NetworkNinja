@@ -305,8 +305,10 @@ broken down.
    count for a window that ended earlier). Template variables (a
    dimension per variable, e.g. sender or site, with values from live
    data) filter every widget whose metric carries that dimension and
-   substitute `$name` in where-filters. Still open: alert routes,
-   drag-resize, and "create monitor from widget" once slice 3 lands.
+   substitute `$name` in where-filters. In edit mode a widget's title
+   bar drags it to a new place and its corner resizes it (1–3 columns ×
+   1–3 rows of a fixed-height grid; charts fill their cell). Still open:
+   alert routes, and "create monitor from widget" once slice 3 lands.
    The map stays its own view, not a widget.
 
 ## Consequences
