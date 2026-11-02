@@ -221,8 +221,11 @@ impact, causes, fix) per (rule name, finding), `*` for a rule-wide entry
 `tests/explain.rs` runs every preset on all four vendor profiles and fails on
 any unexplained finding: add a catalog entry with every new finding type.
 Fault presets live in `nn_generator::presets` (`Presets::all()`, `schedule`)
-so tests build the same runs as the CLI. Engine-level rules and tier S fill
-`facts`; tracker findings don't yet (their message is the detail).
+so tests build the same runs as the CLI. Every finding fills `facts`: each
+tracker's `Finding` has a `facts` field (warfare's helper adds the shot's
+firer / Event ID / munition / indicator, attribute's wrapper the PDU's own
+fields) and `Engine::point_event` takes them. `tests/explain.rs` also fails
+on any preset alert raised without facts.
 Dashboard Issues panel: tabs Problems (default) / Entities / Log
 (`boardView` in localStorage). A problem groups per-entity issues by
 (exercise, check `rule`, `finding`, simulation = entity site:app); its card

@@ -113,12 +113,13 @@ impl Emissions {
         let started = *self.started.get_or_insert(now);
         let key = EntityKey { exercise, id: entity };
         let mut out = Vec::new();
-        let mut finding = |kind, message: String| {
+        let mut finding = |kind, message: String, facts: crate::engine::Facts| {
             out.push(Finding {
                 kind,
                 key,
                 sender: source,
                 message: format!("{entity} emitter {message}"),
+                facts,
             })
         };
         let mut numbers = HashSet::new();
@@ -136,6 +137,7 @@ impl Emissions {
                         "number {number}: NO_EMITTER (0) and ALL_EMITTERS (255) can't number a system{}",
                         cite("5.7.3.3.3 e)4)")
                     ),
+                    vec![("Emitter Number", number.to_string()), ("allowed", "1-254".into())],
                 );
             }
             if !numbers.insert(number) {
@@ -145,6 +147,7 @@ impl Emissions {
                         "number {number}: two emitter systems with this number in one EE PDU; each is unique for the entity{}",
                         cite("5.7.3.3.3 e)4)")
                     ),
+                    vec![("Emitter Number", number.to_string()), ("systems in this PDU", n_systems.to_string())],
                 );
             }
             let sys = self.systems.entry((exercise, entity, number)).or_insert(System {
@@ -166,6 +169,7 @@ impl Emissions {
                         sys.function,
                         cite("5.7.3.3.3 e)2-3)")
                     ),
+                    vec![("Emitter Number", number.to_string()), ("Emitter Name", format!("{} → {name}", sys.name)), ("Emitter Function", format!("{} → {function}", sys.function))],
                 );
                 sys.name = name;
                 sys.function = function;
@@ -195,12 +199,21 @@ impl Emissions {
                             "{tag}: NO_BEAM (0) and ALL_BEAMS (255) can't number a beam{}",
                             cite("5.7.3.3.3 e)6)")
                         ),
+                        vec![
+                            ("Emitter Number", number.to_string()),
+                            ("Beam Number", beam.to_string()),
+                            ("allowed", "1-254".into()),
+                        ],
                     );
                 }
                 if !beam_numbers.insert(beam) {
                     finding(
                         "duplicate-number",
                         format!("{tag}: two beams with this number in one system{}", cite("7.6.2")),
+                        vec![
+                            ("Emitter Number", number.to_string()),
+                            ("Beam Number", beam.to_string()),
+                        ],
                     );
                 }
                 if dense == 1 && targets != 0 {
@@ -210,6 +223,7 @@ impl Emissions {
                             "{tag}: High Density Track/Jam is Selected, so Number of Targets must be 0 and no Track/Jam records follow, but it lists {targets}{}",
                             cite("5.7.3.7 a)")
                         ),
+                        vec![("emitter, beam", format!("{number}, {beam}")), ("High Density Track/Jam", "1 (Selected)".into()), ("Number of Targets", format!("{targets} (expected 0)"))],
                     );
                 } else if dense == 0 && targets > limits.high_density {
                     finding(
@@ -219,6 +233,7 @@ impl Emissions {
                             limits.high_density,
                             cite("5.7.3.3.3 c)")
                         ),
+                        vec![("emitter, beam", format!("{number}, {beam}")), ("Number of Targets", targets.to_string()), ("EE_HIGH_DENSITY_THRSH", limits.high_density.to_string())],
                     );
                 }
                 if (prf == 0.0) != (pw == 0.0) {
@@ -228,6 +243,7 @@ impl Emissions {
                             "{tag}: PRF {prf} Hz with pulse width {pw} µs; continuous wave is both 0.0, a pulsed beam has both{}",
                             cite("5.7.3.3.3 d)")
                         ),
+                        vec![("emitter, beam", format!("{number}, {beam}")), ("PRF", format!("{prf} Hz")), ("pulse width", format!("{pw} µs"))],
                     );
                 }
                 for t in 0..targets as usize {
@@ -241,6 +257,10 @@ impl Emissions {
                                 "{tag}: Track/Jam target {target} uses NO_SITE, NO_APPLIC or NO_ENTITY{}",
                                 cite("5.7.3.3.3 e)10)")
                             ),
+                            vec![
+                                ("emitter, beam", format!("{number}, {beam}")),
+                                ("Track/Jam target", target.to_string()),
+                            ],
                         );
                     } else if now - started >= limits.grace && table.get(&EntityKey { exercise, id: target }).is_none()
                     {
@@ -250,6 +270,11 @@ impl Emissions {
                                 "{tag}: Track/Jam target {target} isn't an entity in the exercise{}",
                                 cite("5.7.3.7")
                             ),
+                            vec![
+                                ("emitter, beam", format!("{number}, {beam}")),
+                                ("Track/Jam target", target.to_string()),
+                                ("in the entity table", "no".into()),
+                            ],
                         );
                     }
                 }
@@ -261,6 +286,7 @@ impl Emissions {
                             "{tag}: reported Deactivated again; a beam is reported Deactivated once, then left out until it is active{}",
                             cite("5.7.3.6")
                         ),
+                        vec![("emitter, beam", format!("{number}, {beam}")), ("Beam State", "Deactivated, again".into())],
                     );
                 }
                 sys.beams.insert(beam, off);
@@ -297,12 +323,13 @@ impl Emissions {
                 return true;
             }
             let silent = now - sys.last_seen;
-            let mut push = |kind, message: String| {
+            let mut push = |kind, message: String, facts: crate::engine::Facts| {
                 out.push(Finding {
                     kind,
                     key,
                     sender: sys.source,
                     message: format!("{entity} emitter {number}: {message}"),
+                    facts,
                 })
             };
             if sys.active() && silent > timeout && !sys.reported_silent {
@@ -315,6 +342,7 @@ impl Emissions {
                         limits.multiplier,
                         cite("5.7.3.3.2 e), 5.7.3.6")
                     ),
+                    vec![("Emitter Name", sys.name.to_string()), ("silent for", format!("{silent:.1} s")), ("timeout", format!("{timeout:.1} s"))],
                 );
             }
             let destroyed = rec.entity_type.kind == 1 && (rec.appearance >> 3) & 0b11 == DESTROYED;
@@ -329,6 +357,7 @@ impl Emissions {
                             now - since,
                             cite("5.7.3.3.3 b)")
                         ),
+                        vec![("Emitter Name", sys.name.to_string()), ("entity appearance", "Damage = Destroyed (3)".into()), ("still emitting after", format!("{:.0} s", now - since))],
                     );
                 }
             } else {
