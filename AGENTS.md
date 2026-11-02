@@ -288,6 +288,13 @@ removed or changed ones); `Monitor::tick` evaluates them every second over
 `rule_id` = id or `id@dim=v,...`, stored in `Engine::monitor_active`
 (`monitor_change`), included in `active()`, ack; `mute_rule(id)` mutes all
 groups. `Monitors::preview(def, metrics, (from, to, step))`.
+`serve --monitors FILE` / `[serve] monitors` (scripts/nn: `.nn/monitors.toml`):
+`nn_server::monitors_api::{load, save, handle}`; `GET /api/monitors`,
+`POST /api/monitors {"cmd":"put"|"delete"|"preview", "toml"|"id"}`, run in the
+serve loop via `Hub::monitor_request` (a channel, like `/api/query`); the
+loop re-installs monitors when it swaps the Monitor for a replay. Dashboard
+Monitors tab (`monLoad`, `monEdit`, `monToml` builds the block; metric dims
+mirrored in `MON_METRICS`).
 
 ## Timing and identity semantics (October 2026 review fixes)
 

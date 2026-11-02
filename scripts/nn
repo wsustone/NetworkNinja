@@ -65,7 +65,8 @@ up() {
         # The file says where to listen; only the run directory comes from here.
         serve=("$bin/nn-server" serve --config "$NN_CONFIG" --runs .)
     else
-        serve=("$bin/nn-server" serve --port "$udp" --http "$http" --db "$db" --runs .)
+        # Monitors made in the dashboard's Monitors tab survive down/up.
+        serve=("$bin/nn-server" serve --port "$udp" --http "$http" --db "$db" --runs . --monitors "$state/monitors.toml")
         if [[ -f $siso ]]; then
             serve+=(--siso "$siso")
         fi

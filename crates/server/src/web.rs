@@ -66,6 +66,8 @@ pub struct Hub {
     auth: Mutex<Option<Arc<Auth>>>,
     /// `/api/query` requests to the serve loop, which owns the metrics.
     query_tx: Mutex<Option<SyncSender<QueryReq>>>,
+    /// `/api/monitors` requests to the serve loop, which owns the monitors.
+    monitor_tx: Mutex<Option<SyncSender<crate::monitors_api::MonitorReq>>>,
     /// Rollups are in the store for every slot before this second.
     metrics_flushed: Mutex<Option<i64>>,
     /// Alerts firing now (as violations) and what each sender claims,
@@ -134,6 +136,7 @@ impl Hub {
             cmd_tx: Mutex::new(None),
             auth: Mutex::new(None),
             query_tx: Mutex::new(None),
+            monitor_tx: Mutex::new(None),
             metrics_flushed: Mutex::new(None),
             capture: Mutex::new(None),
             inputs: Mutex::new(Vec::new()),
@@ -578,6 +581,26 @@ impl Hub {
     /// The `--config` file listener changes may be saved to.
     pub fn set_config_file(&self, path: Option<String>) {
         *self.config_file.lock().unwrap() = path;
+    }
+
+    /// Where `/api/monitors` requests go: the serve loop.
+    pub fn set_monitor_sink(&self, tx: SyncSender<crate::monitors_api::MonitorReq>) {
+        *self.monitor_tx.lock().unwrap() = Some(tx);
+    }
+
+    /// Ask the serve loop to run a monitors request and wait for its answer.
+    pub fn monitor_request(&self, body: &str) -> Result<String, String> {
+        let tx = self
+            .monitor_tx
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("monitors aren't available here")?;
+        let (rtx, rrx) = channel();
+        tx.try_send((body.to_string(), rtx))
+            .map_err(|_| "server busy, try again")?;
+        rrx.recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "the server did not answer in time".to_string())?
     }
 
     /// The sender names in force (from the config file, then edits).
@@ -1170,6 +1193,29 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                     "404 Not Found",
                     "application/json",
                     "{\"error\":\"no PDU kept for that alert (seq=N)\"}",
+                ),
+            };
+        }
+        ("GET", "/api/monitors") => {
+            let _ = match hub.monitor_request("{\"cmd\":\"list\"}") {
+                Ok(body) => respond(s, "200 OK", "application/json", &body),
+                Err(e) => respond(
+                    s,
+                    "503 Service Unavailable",
+                    "application/json",
+                    &format!("{{\"error\":\"{}\"}}", esc(&e)),
+                ),
+            };
+        }
+        ("POST", "/api/monitors") => {
+            let text = String::from_utf8_lossy(&req.body).to_string();
+            let _ = match hub.monitor_request(&text) {
+                Ok(body) => respond(s, "200 OK", "application/json", &body),
+                Err(e) => respond(
+                    s,
+                    "400 Bad Request",
+                    "application/json",
+                    &format!("{{\"ok\":false,\"error\":\"{}\"}}", esc(&e)),
                 ),
             };
         }

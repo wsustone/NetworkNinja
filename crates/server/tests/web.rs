@@ -934,3 +934,58 @@ fn an_alerts_pdu_is_kept_for_api_evidence() {
     );
     assert!(j.contains("\"hex\":\"0000  07 01 1c 05"), "{j}");
 }
+
+#[test]
+fn monitors_api_puts_lists_previews_deletes_and_saves() {
+    use nn_server::monitors_api::{handle, load};
+    let path = std::env::temp_dir().join(format!("nn-monitors-{}.toml", std::process::id()));
+    let path = path.to_str().unwrap().to_string();
+    let mut m = Monitor::new(RuleConfig::default());
+    m.now = 1000.0;
+    // JSON-encode the TOML as the dashboard does (JSON.stringify).
+    let put = |t: &str| {
+        let j = t.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+        format!("{{\"cmd\":\"put\",\"toml\":\"{j}\"}}")
+    };
+    let quiet = "[[monitor]]\nid = \"quiet\"\nname = \"Federate \\\"B\\\" quiet\"\ntype = \"absence\"\nmetric = \"pdu.count\"\nby = [\"sender\"]\nfor = 15\n";
+    let (r, _) = handle(&mut m, &put(quiet), Some(&path));
+    let r = r.unwrap();
+    assert!(r.contains("added monitor quiet; saved to"), "{r}");
+    assert_eq!(load(&path).unwrap().len(), 1, "on disk");
+    assert_eq!(load(&path).unwrap()[0].name, "Federate \"B\" quiet");
+    let (list, _) = handle(&mut m, "{\"cmd\":\"list\"}", Some(&path));
+    let list = list.unwrap();
+    assert!(
+        list.contains("\"id\":\"quiet\"")
+            && list.contains("\"type\":\"absence\"")
+            && list.contains("\"by\":[\"sender\"]"),
+        "{list}"
+    );
+    // Preview: memory holds no traffic, so it would never have fired.
+    let (p, _) = handle(&mut m, &put(quiet).replace("\"put\"", "\"preview\""), Some(&path));
+    assert!(p.unwrap().starts_with("{\"would_fire\":0,"));
+    // A bad monitor is refused and changes nothing.
+    let (bad, _) = handle(
+        &mut m,
+        &put("[[monitor]]\nid = \"x\"\ntype = \"threshold\"\nmetric = \"pdu.count\"\n"),
+        Some(&path),
+    );
+    assert!(bad.unwrap_err().contains("needs a condition"));
+    assert_eq!(m.user_monitors.defs.len(), 1);
+    // Replace, then delete.
+    let (r, _) = handle(&mut m, &put(&quiet.replace("for = 15", "for = 30")), Some(&path));
+    assert!(r.unwrap().contains("updated monitor quiet"));
+    assert_eq!(m.user_monitors.defs[0].for_secs, 30);
+    let (r, _) = handle(&mut m, "{\"cmd\":\"delete\",\"id\":\"quiet\"}", Some(&path));
+    assert!(r.unwrap().contains("deleted monitor quiet"));
+    assert!(load(&path).unwrap().is_empty());
+    assert!(handle(&mut m, "{\"cmd\":\"delete\",\"id\":\"quiet\"}", Some(&path))
+        .0
+        .is_err());
+    // Without a file: kept until restart, and says so.
+    let (r, _) = handle(&mut m, &put(quiet), None);
+    assert!(r.unwrap().contains("until restart"));
+    for ext in ["", ".bak"] {
+        let _ = std::fs::remove_file(format!("{path}{ext}"));
+    }
+}

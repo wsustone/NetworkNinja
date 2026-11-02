@@ -57,6 +57,9 @@ LISTEN / SERVE OPTIONS
                           search via /api/log, plus 10 s metric rollups
                           for /api/query (serve only)
     --metrics-retention DAYS  Keep metric rollups this long (default 7)
+    --monitors FILE       User monitors ([[monitor]] blocks, ADR 0008),
+                          edited from the dashboard's Monitors tab and saved
+                          here; a missing FILE starts empty (serve only)
     --capture FILE        Persist PDUs to SQLite FILE by the rule packs'
                           [[capture]] tiers: every report from fast movers,
                           a thinned stream from slow and static entities
@@ -229,6 +232,7 @@ fn real_main() -> Result<(), String> {
         every: 10.0,
     };
     let mut users_file = fc.users.clone();
+    let mut monitors_file = fc.monitors.clone();
     let mut passwd_user = None;
     let mut passwd_pass = None;
     let mut cert_file: Option<String> = fc.cert.clone();
@@ -284,6 +288,7 @@ fn real_main() -> Result<(), String> {
             "--replay" => replay_file = Some(val()?),
             "--runs" => runs_dir = Some(val()?),
             "--users" => users_file = Some(val()?),
+            "--monitors" => monitors_file = Some(val()?),
             "--user" => passwd_user = Some(val()?),
             "--pass" => passwd_pass = Some(val()?),
             "--cert" => cert_file = Some(val()?),
@@ -355,6 +360,7 @@ fn real_main() -> Result<(), String> {
             speed.unwrap_or(1.0),
             runs_dir.as_deref(),
             users_file.as_deref(),
+            monitors_file.as_deref(),
             tls,
             &packs,
         ),
@@ -654,6 +660,7 @@ fn serve(
     speed: f64,
     runs_dir: Option<&str>,
     users_file: Option<&str>,
+    monitors_file: Option<&str>,
     tls: Option<std::sync::Arc<rustls::ServerConfig>>,
     packs: &Merged,
 ) -> Result<(), String> {
@@ -775,6 +782,13 @@ fn serve(
         m
     };
     let mut m = new_monitor(matches!(src, Src::Udp(_)));
+    if let Some(f) = monitors_file {
+        let defs = nn_server::monitors_api::load(f).map_err(|e| format!("--monitors {e}"))?;
+        eprintln!("  monitors: {f} ({} monitors)", defs.len());
+        m.set_monitors(defs);
+    }
+    let (monitor_tx, monitor_rx) = std::sync::mpsc::sync_channel::<nn_server::monitors_api::MonitorReq>(16);
+    hub.set_monitor_sink(monitor_tx);
     let mut recent: VecDeque<String> = VecDeque::new();
     let mut prev_ents = std::collections::BTreeMap::new();
     let mut speed = speed;
@@ -901,7 +915,10 @@ fn serve(
                             }
                         };
                         if switched {
+                            // A fresh monitor for the new source keeps the user monitors.
+                            let defs = m.user_monitors.defs.clone();
                             m = new_monitor(matches!(src, Src::Udp(_)));
+                            m.set_monitors(defs);
                             prev_ents.clear();
                             recent.clear();
                             next_full = 0.0;
@@ -923,6 +940,17 @@ fn serve(
         }
         while let Ok((q, reply)) = query_rx.try_recv() {
             let _ = reply.send(nn_server::web::memory_cells(&m.metrics, &q));
+        }
+        while let Ok((body, reply)) = monitor_rx.try_recv() {
+            let (answer, events) = nn_server::monitors_api::handle(&mut m, &body, monitors_file);
+            for e in &events {
+                let j = hub.log_alert(e);
+                if recent.len() >= 100 {
+                    recent.pop_front();
+                }
+                recent.push_back(j);
+            }
+            let _ = reply.send(answer);
         }
         let errs_before = m.decode_errors;
         let next = match &mut src {
