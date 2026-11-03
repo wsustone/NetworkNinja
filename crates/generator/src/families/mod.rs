@@ -14,6 +14,7 @@ pub(crate) mod entity_info;
 pub(crate) mod handshakes;
 pub(crate) mod iff;
 pub(crate) mod interactions;
+pub(crate) mod logistics;
 pub(crate) mod radio;
 pub(crate) mod sim_mgmt;
 pub(crate) mod warfare;
@@ -69,5 +70,6 @@ pub(crate) fn all(w: &World) -> Vec<Box<dyn Family>> {
         Box::new(emission::Emission::default()),
         Box::new(designator::Designator::default()),
         Box::new(iff::Iff::default()),
+        Box::new(logistics::Logistics::default()),
     ]
 }

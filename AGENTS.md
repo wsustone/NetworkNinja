@@ -246,6 +246,23 @@ on the first site's first moving entity, heartbeat 10 s), faults
 `--iff-mode-mismatch`, `--iff-destroyed-on`, preset `--all-iff-faults`. A mode
 switch is a change: the generator flags it and the PDU after.
 
+Logistics (`nn_rules::logistics`, rule `logistics`, types 5-10): conversations
+keyed by (exercise, receiving entity @12, supplying entity @18); PDUs naming an
+entity number 0 or 65535 aren't judged (coverage's minimal ones). Service
+Request: service @24 (UID 63: 1 resupply, 2 repair), supply count @25, records
+@28 (12 bytes: entity type + f32); Offer / Received: count @24, records @28;
+Repair Complete: repair u16 @24 (0 = supplier's cancel); Repair Response:
+result @24 (4 = canceled by supplier). `[rules.logistics]` response_timeout
+(12), resupply_timeout (RESUP_SUP_T1 60), repair_response_timeout
+(REPAR_SUP_T2 12); orphans after the stationary grace. Generator
+`--logistics-every SECS` (conversations between the first site and another,
+resupply and repair in turn, overlapping, round-robin pairs), eleven faults
+(`--logistics-no-offer`, `--logistics-no-receipt`, `--received-more`,
+`--no-repair-response`, `--repair-cancel-result`, `--supplies-on-repair`,
+`--unsolicited-offer`, `--orphan-received`, `--unrequested-repair`,
+`--orphan-repair-response`, `--unknown-supplier`), preset
+`--all-logistics-faults`; each fault scripts the next conversation.
+
 Explanations (alerts work): every `Alert` carries `kind` (the finding type)
 and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and
 `facts` (`[[name, value], ...]`). **Not `kind`** in JSON: log entries already

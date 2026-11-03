@@ -16,7 +16,7 @@ families so far did. Status per type is in [pdu-coverage.md](pdu-coverage.md).
 | H header and framing | all 72 types |
 | S structure (lengths, counts, record lengths) | all 72 on v7; types 1–27 on v6 |
 | E enumerations (SISO-REF-010) | 63 fixed-offset fields in 41 types, plus Entity State, Fire and Detonation fields |
-| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, Electromagnetic Emission, Designator, IFF (v7), SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
+| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, Electromagnetic Emission, Designator, IFF (v7), Logistics, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
 
 Everything else is checked for shape and enumerations, but not for meaning.
 
@@ -247,6 +247,16 @@ v6 (1278.1a layers differ).
 The SIMAN tracker (`nn_rules::siman`) is the template: same pairing, same "addressed to one
 entity" rule, same startup grace.
 
+*Done:* rule `logistics` (`nn_rules::logistics`, conversations keyed by exercise, receiving and
+supplying entity; only PDUs naming two specific entities): `no-offer` (no Offer or Cancel within
+`response_timeout`, 12 s; the standard sets none), `no-receipt` (RESUP_SUP_T1, 60 s),
+`received-more`, `no-repair-response` (REPAR_SUP_T2, 12 s), `cancel-result`,
+`supplies-on-repair`, and after the startup grace `unsolicited-offer`, `orphan-received`,
+`unrequested-repair`, `orphan-repair-response`, `unknown-supplier`. Frozen time doesn't count; a
+removed or deactivated party owes nothing. Generator: `--logistics-every SECS` (resupply and
+repair in turn), eleven faults, `--all-logistics-faults`. Left: the receiver-side timers (a
+request repeated every RESUP_REC_T1 while unanswered) and offers as a subset of the request.
+
 ### Entity management (33–36)
 
 | Check | Kind | Clause |
@@ -316,7 +326,7 @@ silence and exact-detection tests, coverage-table update and docs.
 6. **EE**: heartbeat per system, fixed identities, beam fields, beam enumerations. *Done*:
    rule `emission`, repeated-field enumerations.
 7. **Designator, IFF.** *Done:* rules `designator`, `iff`.
-8. **Logistics**, built on the SIMAN tracker.
+8. **Logistics**, built on the SIMAN tracker. *Done:* rule `logistics`.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.
 10. **Timestamps and PDU Status bits** (cross-cutting).
 11. **Attribute, Intercom, UA/SEES.**

@@ -65,6 +65,9 @@ pub enum Rule {
     Designator,
     /// An IFF system's layers, Change Indicator or status (`crate::iff`).
     Iff,
+    /// A resupply or repair conversation left unanswered or answered wrong
+    /// (`crate::logistics`).
+    Logistics,
     /// A user monitor's condition held (`crate::monitors`): one alert per
     /// monitor and group; `rule_id` is the monitor id, with `@tags` for a
     /// group.
@@ -94,6 +97,7 @@ impl Rule {
             Rule::Emission => "emission",
             Rule::Designator => "designator",
             Rule::Iff => "iff",
+            Rule::Logistics => "logistics",
             Rule::UserMonitor => "monitor",
         }
     }
@@ -120,6 +124,7 @@ impl Rule {
             "emission" => Some(Rule::Emission),
             "designator" => Some(Rule::Designator),
             "iff" => Some(Rule::Iff),
+            "logistics" => Some(Rule::Logistics),
             "monitor" => Some(Rule::UserMonitor),
             _ => None,
         }
@@ -238,6 +243,11 @@ pub struct RuleConfig {
     /// IFF_PDU_FINAL: seconds an IFF system has to report Off after its
     /// entity is deactivated, removed or destroyed.
     pub iff_final: f64,
+    /// Logistics waits: a supplier answering a resupply request, RESUP_SUP_T1
+    /// (an offer taken or cancelled), REPAR_SUP_T2 (a repair answered).
+    pub logistics_response: f64,
+    pub resupply_timeout: f64,
+    pub repair_response: f64,
 }
 
 impl Default for RuleConfig {
@@ -268,6 +278,9 @@ impl Default for RuleConfig {
             high_density_threshold: 10.0,
             designator_window: 12.0,
             iff_final: 10.0,
+            logistics_response: 12.0,
+            resupply_timeout: 60.0,
+            repair_response: 12.0,
         }
     }
 }
@@ -383,6 +396,7 @@ pub struct Engine {
     emissions: crate::emission::Emissions,
     designators: crate::designator::Designators,
     iffs: crate::iff::Systems,
+    logistics: crate::logistics::Logistics,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -426,6 +440,7 @@ impl Engine {
             emissions: crate::emission::Emissions::default(),
             designators: crate::designator::Designators::default(),
             iffs: crate::iff::Systems::default(),
+            logistics: crate::logistics::Logistics::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             monitor_active: BTreeMap::new(),
@@ -918,6 +933,15 @@ impl Engine {
         }
     }
 
+    fn logistics_limits(&self) -> crate::logistics::Limits {
+        crate::logistics::Limits {
+            grace: self.config.stationary_heartbeat * self.config.timeout_multiplier,
+            response: self.config.logistics_response,
+            resupply: self.config.resupply_timeout,
+            repair_response: self.config.repair_response,
+        }
+    }
+
     /// Attribute PDU issuance and Coupled PDU Extension on one PDU's bytes,
     /// with its neighbours in the datagram.
     pub fn check_attribute(
@@ -999,6 +1023,15 @@ impl Engine {
                     .observe(now, source, raw, table, limits)
                     .into_iter()
                     .map(|f| (Rule::Iff, f)),
+            );
+        }
+        if self.enabled(Rule::Logistics) {
+            let limits = self.logistics_limits();
+            found.extend(
+                self.logistics
+                    .observe(now, source, raw, table, &limits)
+                    .into_iter()
+                    .map(|f| (Rule::Logistics, f)),
             );
         }
         if self.enabled(Rule::Emission) {
@@ -1334,6 +1367,13 @@ impl Engine {
                 .map(|f| (Rule::Designator, f)),
         );
         self.iffs.expire(now);
+        let limits = self.logistics_limits();
+        found.extend(
+            self.logistics
+                .expire(now, &limits, table, frozen)
+                .into_iter()
+                .map(|f| (Rule::Logistics, f)),
+        );
         for (rule, f) in found {
             self.point_event(now, (rule, f.kind), f.key, Some(f.sender), f.message, f.facts, &mut out);
         }
@@ -1453,6 +1493,7 @@ impl Engine {
                 | Rule::Emission
                 | Rule::Designator
                 | Rule::Iff
+                | Rule::Logistics
                 | Rule::UserMonitor => {}
             }
         }

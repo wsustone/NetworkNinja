@@ -23,6 +23,7 @@ mod heartbeats;
 mod iff;
 mod interactions;
 mod lifecycle;
+mod logistics;
 pub mod minitoml;
 mod monitor;
 pub mod monitors;

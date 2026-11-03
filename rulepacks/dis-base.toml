@@ -201,6 +201,21 @@ severity = "warning"
 final_window = 10.0
 severity = "warning"
 
+# --- Logistics (5.5, 7.4) ---------------------------------------------------
+
+[rules.logistics]
+# A resupply Service Request gets a Resupply Offer or Resupply Cancel from the
+# supplier it names within response_timeout seconds (the standard sets none;
+# the receiver re-asks every RESUP_REC_T1, 5 s); an offer gets a Resupply
+# Received or Cancel within resupply_timeout (RESUP_SUP_T1); a Repair Complete
+# gets a Repair Response within repair_response_timeout (REPAR_SUP_T2). Plus
+# answers to nothing, supplies listed on a repair request, more received than
+# offered, and a supplier's repair cancel answered with the wrong result.
+response_timeout = 12.0
+resupply_timeout = 60.0
+repair_response_timeout = 12.0
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]

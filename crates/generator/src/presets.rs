@@ -20,6 +20,7 @@ pub struct Presets {
     pub emission: bool,
     pub designator: bool,
     pub iff: bool,
+    pub logistics: bool,
 }
 
 impl Presets {
@@ -37,6 +38,7 @@ impl Presets {
             emission: true,
             designator: true,
             iff: true,
+            logistics: true,
         }
     }
 }
@@ -144,6 +146,32 @@ pub fn schedule(
         .enumerate()
         {
             pending.push((kind, format!("@{}", d * (0.08 + 0.1 * i as f64))));
+        }
+    }
+    if p.logistics {
+        cfg.logistics_every.get_or_insert(20.0);
+        // Each fault scripts the next conversation. The answers to nothing
+        // come late, after the monitor's startup grace (144 s).
+        let early = [
+            EventKind::LogisticsNoOffer,
+            EventKind::LogisticsNoReceipt,
+            EventKind::ReceivedMore,
+            EventKind::NoRepairResponse,
+            EventKind::RepairCancelResult,
+            EventKind::SuppliesOnRepair,
+        ];
+        let late = [
+            EventKind::UnsolicitedOffer,
+            EventKind::OrphanReceived,
+            EventKind::UnrequestedRepair,
+            EventKind::OrphanRepairResponse,
+            EventKind::UnknownSupplier,
+        ];
+        for (i, kind) in early.into_iter().enumerate() {
+            pending.push((kind, format!("@{}", d * (0.05 + 0.08 * i as f64))));
+        }
+        for (i, kind) in late.into_iter().enumerate() {
+            pending.push((kind, format!("@{}", d * (0.62 + 0.07 * i as f64))));
         }
     }
     if p.designator {
@@ -282,6 +310,17 @@ pub fn schedule(
             | EventKind::IffHeartbeatUnflagged
             | EventKind::IffModeMismatch
             | EventKind::IffDestroyedOn
+            | EventKind::LogisticsNoOffer
+            | EventKind::LogisticsNoReceipt
+            | EventKind::ReceivedMore
+            | EventKind::NoRepairResponse
+            | EventKind::RepairCancelResult
+            | EventKind::SuppliesOnRepair
+            | EventKind::UnsolicitedOffer
+            | EventKind::OrphanReceived
+            | EventKind::UnrequestedRepair
+            | EventKind::OrphanRepairResponse
+            | EventKind::UnknownSupplier
             | EventKind::OneSidedCollision
             | EventKind::DuplicateCollision
             | EventKind::StaleAppearance
