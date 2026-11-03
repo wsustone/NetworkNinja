@@ -284,6 +284,20 @@ reliability`, `--transfer-indicator`, `--transfer-attributes`, `--transfer-no-
 report`, `--transfer-concurrent`, `--transfer-inactive`, `--transfer-stalled`,
 preset `--all-transfer-faults`. Never the IFF carrier.
 
+Header checks (`nn_rules::header`, `Engine::check_header` on every non-copy
+PDU's bytes in `Monitor::ingest`, decoded or not): rule `timestamp` per
+(sender, PDU type, first identifier from the structure layout; Live IDs are
+1+1+2 bytes): type-changed, backwards (`[rules.timestamp]` backwards_tolerance
+1 s; hour wrap; a freeze/resume since the last PDU resets), clock-ahead /
+clock-behind (absolute only, vs `now` past the hour; ahead / behind 5 s; keyed
+by simulation site:app:65535). Rule `pdu-status` (v7): undefined-bits
+(`header::defined_status_bits`, Table 99), bad-value (DTI/RAI/IAI 3),
+ism-mismatch. Generator clock faults are per site in `World::clocks`, applied
+by `restamp` in `run` before encoding: `--timestamp-flip`,
+`--timestamp-backwards` (10 s: with absolute stamps it also runs behind),
+`--clock-skew` (+30 s), `--status-bits` (bit 4 on the next ES), preset
+`--all-header-faults`.
+
 Explanations (alerts work): every `Alert` carries `kind` (the finding type)
 and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and
 `facts` (`[[name, value], ...]`). **Not `kind`** in JSON: log entries already

@@ -232,6 +232,24 @@ report_timeout = 5.0
 stall_timeout = 120.0
 severity = "warning"
 
+# --- Timestamps and PDU Status (4.6.3, 4.6.5, 6.2.67) ------------------------
+
+[rules.timestamp]
+# Per sender, PDU type and object: one kind of timestamp (absolute or
+# relative) for its life; a clock that runs forward (back by more than
+# backwards_tolerance seconds is a finding; a freeze or resume starts over);
+# absolute timestamps within ahead / behind seconds of when they arrive
+# (TIMESTAMP_AHEAD, TIMESTAMP_BEHIND).
+ahead = 5.0
+behind = 5.0
+backwards_tolerance = 1.0
+severity = "warning"
+
+[rules.pdu-status]
+# DIS v7: PDU Status bits a type doesn't define (Table 99) are 0; DTI, RAI
+# and IAI aren't 3; an IFF PDU's ISM matches its Simulation Mode.
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]

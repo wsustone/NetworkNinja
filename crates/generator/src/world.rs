@@ -166,6 +166,11 @@ pub(crate) struct World<'a> {
     pub entities: Vec<SimEntity>,
     pub senders: Senders,
     pub frozen: bool,
+    /// Clock faults per site: seconds of offset, and absolute/relative
+    /// swapped (applied by `restamp` in `run`).
+    pub clocks: std::collections::BTreeMap<u16, (f64, bool)>,
+    /// Sites whose next Entity State sets an undefined PDU Status bit.
+    pub status_bits: std::collections::BTreeSet<u16>,
     /// Seconds the exercise has been running (frozen time excluded).
     pub motion_time: f64,
     pub truth: Truth,
@@ -275,6 +280,8 @@ impl<'a> World<'a> {
             entities,
             senders: Senders::default(),
             frozen: false,
+            clocks: Default::default(),
+            status_bits: Default::default(),
             motion_time: 0.0,
             truth,
         }

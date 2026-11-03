@@ -318,6 +318,15 @@ Used by fewer exercises. Do them when a customer's traffic needs them.
 | Timestamps | lifecycle | A sender mixing absolute and relative timestamps; timestamps going backwards within one sender (allowing for the hour wrap); absolute timestamps far from receive time (clock skew); feeds the planned `sender.clock_skew` metric. |
 | Exercise ID consistency | lifecycle | A sender whose PDUs suddenly carry another exercise ID, as a warning. |
 | PDU Status bits per type | field | TEI, LVC, CEI, FTI, DTI, RAI, IAI: each meaningful only for some types, and must be 0 elsewhere (6.2.67). |
+
+*Timestamps and PDU Status done:* `nn_rules::header`, on every PDU's header. Rule `timestamp`
+(per sender, PDU type and first identifier): `type-changed`, `backwards` (past
+`backwards_tolerance`, 1 s; the hour wraps; a freeze or resume starts over), `clock-ahead` /
+`clock-behind` (absolute only, TIMESTAMP_AHEAD / TIMESTAMP_BEHIND 5 s, keyed by simulation).
+Rule `pdu-status` (v7): `undefined-bits` (Table 99; types past 41 get LVC and CEI, ESU the TEI
+too), `bad-value` (DTI, RAI, IAI = 3), `ism-mismatch` (IFF). Generator: `--timestamp-flip`,
+`--timestamp-backwards`, `--clock-skew`, `--status-bits SITE[@T]`, `--all-header-faults`. Left:
+the `sender.clock_skew` metric (ADR 0008), and exercise ID consistency.
 | References to unknown entities | cross-PDU | Target, colliding, designated and receiving IDs naming entities never seen, with grace. |
 | Activity after Deactivated | cross-PDU | Any PDU issued by an entity after its Deactivated Entity State (EDS is explicit; the rest by implication). |
 
@@ -341,7 +350,7 @@ silence and exact-detection tests, coverage-table update and docs.
 8. **Logistics**, built on the SIMAN tracker. *Done:* rule `logistics`.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.
    *Transfer Ownership done:* rule `transfer-ownership`; aggregates and IsPartOf left.
-10. **Timestamps and PDU Status bits** (cross-cutting).
+10. **Timestamps and PDU Status bits** (cross-cutting). *Done:* rules `timestamp`, `pdu-status`.
 11. **Attribute, Intercom, UA/SEES.**
 12. **Wave 4 families**, as customers need them.
 

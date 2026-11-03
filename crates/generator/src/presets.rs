@@ -22,6 +22,7 @@ pub struct Presets {
     pub iff: bool,
     pub logistics: bool,
     pub transfer: bool,
+    pub header: bool,
 }
 
 impl Presets {
@@ -41,6 +42,7 @@ impl Presets {
             iff: true,
             logistics: true,
             transfer: true,
+            header: true,
         }
     }
 }
@@ -174,6 +176,19 @@ pub fn schedule(
         }
         for (i, kind) in late.into_iter().enumerate() {
             pending.push((kind, format!("@{}", d * (0.62 + 0.07 * i as f64))));
+        }
+    }
+    if p.header {
+        // On the first site. The flip last: after it the site's timestamps
+        // are relative, which aren't compared with the clock.
+        let first = cfg.site_base;
+        for (kind, at) in [
+            (EventKind::TimestampBackwards, 0.2),
+            (EventKind::StatusBits, 0.4),
+            (EventKind::ClockSkew, 0.6),
+            (EventKind::TimestampFlip, 0.8),
+        ] {
+            pending.push((kind, format!("{first}@{}", d * at)));
         }
     }
     if p.transfer {
@@ -356,6 +371,10 @@ pub fn schedule(
             | EventKind::DeDropout
             | EventKind::DeNoFire => Target::Exercise,
             EventKind::RestartPort
+            | EventKind::TimestampFlip
+            | EventKind::TimestampBackwards
+            | EventKind::ClockSkew
+            | EventKind::StatusBits
             | EventKind::NoResponse
             | EventKind::WrongAck
             | EventKind::OrphanResponse

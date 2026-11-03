@@ -19,6 +19,7 @@ mod designator;
 mod emission;
 mod engine;
 pub mod explain;
+mod header;
 mod heartbeats;
 mod iff;
 mod interactions;

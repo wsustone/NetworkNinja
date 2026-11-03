@@ -131,6 +131,10 @@ impl Monitor {
             // PDU the decoder rejects is still reported against its sender.
             let structure = structure::check(&d.payload[span.start..]);
             events.extend(self.engine.check_structure(now, d.source, &structure));
+            events.extend(
+                self.engine
+                    .check_header(now, d.source, &d.payload[span.clone()], &self.table),
+            );
             let near = |j: Option<usize>| j.and_then(|j| spans.get(j)).map(|s| &d.payload[s.clone()]);
             events.extend(self.engine.check_attribute(
                 now,
