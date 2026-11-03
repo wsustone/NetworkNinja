@@ -327,6 +327,9 @@
   #dbar .grp, #dvars, #dvars .var { display:flex; gap:.4em; align-items:center; }
   #dvars { gap:.8em; flex-wrap:wrap; }
   #dbar select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.2em .4em; font:inherit; font-size:12px; }
+  #dbar input[type=datetime-local] { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.15em .3em; font:inherit; font-size:12px; color-scheme:dark; }
+  #dgrid:not(.edit) .wbody svg[data-from] { cursor:crosshair; touch-action:pan-y; }
+  .zoomsel { position:absolute; top:0; bottom:18px; background:rgba(88,166,255,.15); border:1px solid rgba(88,166,255,.6); pointer-events:none; }
   #dvSeek { width:220px; margin:0 .2em; } #dvAt { min-width:9em; } #dvAt.paused { color:var(--warn); }
   @media (max-width:700px) { #dgrid { grid-template-columns:1fr; } .wcard { grid-column:span 1 !important; } }
 </style>
@@ -412,8 +415,9 @@
     <span class="msg" id="dMsg"></span>
   </h2>
   <div id="dbar">
-    <span class="grp">range <select id="dvSpan"><option value="">per widget</option><option value="600">last 10 min</option><option value="3600">last 1 h</option><option value="86400">last 24 h</option><option value="run">whole run</option></select></span>
-    <span class="grp"><button class="albtn" id="dvBack" title="step back one range">◀</button><input type="range" id="dvSeek" min="0" max="1" step="1" title="drag to look back in time"><button class="albtn" id="dvFwd" title="step forward one range">▶</button><span id="dvAt">live</span><button class="albtn" id="dvNow" hidden>back to live</button></span>
+    <span class="grp">range <select id="dvSpan"><option value="">per widget</option><option value="600">last 10 min</option><option value="3600">last 1 h</option><option value="86400">last 24 h</option><option value="run">whole run</option><option value="custom">custom…</option></select></span>
+    <span class="grp" id="dvCustom" hidden>from <input type="datetime-local" step="1" id="dvFrom"> to <input type="datetime-local" step="1" id="dvTo"></span>
+    <span class="grp"><button class="albtn" id="dvBack" title="step back one range">◀</button><input type="range" id="dvSeek" min="0" max="1" step="1" title="drag to look back in time"><button class="albtn" id="dvFwd" title="step forward one range">▶</button><span id="dvAt">live</span><button class="albtn" id="dvNow" hidden>back to live</button><button class="albtn" id="dvLink" title="copy a link to this board, time window and variables">copy link</button></span>
     <span id="dvars"></span>
   </div>
   <div id="dgrid"></div>
@@ -1368,6 +1372,7 @@ function showView(v) {
   else if (isConf) confQuery();
   else if (isDash) { if (!dash.list) dashFetch(); else renderDash(); }
   else { renderTraffic(); if (map) map.resize(); }
+  if (!isDash && location.hash.startsWith("#dash")) history.replaceState(null, "", location.pathname + location.search);
 }
 // --- Monitors (ADR 0008 slice 3): GET /api/monitors, POST {cmd: put|delete|preview} ---
 // The metrics and their dimensions, as nn_state::metrics defines them.
@@ -1908,7 +1913,10 @@ const TEMPLATES = {
 const sizeOf = w => ({c: Math.min(3, Math.max(1, +w.cols || (w.wide ? 2 : 1))), r: Math.min(3, Math.max(1, +w.rows || 1))});
 const gridCols = () => Math.max(1, Math.floor(($("dgrid").clientWidth + 16) / 356));
 const dash = {list: null, name: null, tpl: null, def: null, dirty: false, edit: false, data: [], editing: null,
-  view: {span: "", to: null}, vals: {}, varOpts: {}, tick: 0};
+  view: {span: "", to: null}, vals: {}, varOpts: {}, tick: 0,
+  // Earlier windows, for zooming back out; a board, window and variables
+  // waiting to be applied from the page's link.
+  zooms: [], fromLink: null};
 const clone = o => JSON.parse(JSON.stringify(o));
 const dashNameOk = n => /^[\p{L}\p{N} ._-]{1,64}$/u.test(n);
 function dashMsg(t, bad) { $("dMsg").textContent = t || ""; $("dMsg").style.color = bad ? "var(--crit)" : "var(--dim)"; }
@@ -1916,7 +1924,9 @@ function dashMsg(t, bad) { $("dMsg").textContent = t || ""; $("dMsg").style.colo
 function dashFetch(select) {
   return fetch("/api/dashboards", auth()).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(d => {
     dash.list = d.dashboards;
-    const want = select || dash.name || localStorage.nn_dash;
+    const link = dash.fromLink;
+    if (link && link.get("template") && TEMPLATES[link.get("template")]) { dashOpenTemplate(link.get("template")); return; }
+    const want = (link && link.get("board")) || select || dash.name || localStorage.nn_dash;
     if (want && dash.list.some(x => x.name === want)) dashOpen(want);
     else if (!dash.def) { if (dash.list.length) dashOpen(dash.list[0].name); else dashOpenTemplate("Exercise overview"); }
     else renderDash();
@@ -1936,7 +1946,7 @@ function dashOpenTemplate(tpl) {
   dash.vals = {}; dash.varOpts = {};
   dashLoaded();
 }
-function dashLoaded() { dash.data = dash.def.widgets.map(() => null); renderDash(); dashRefresh(); varOptionsFetch(); }
+function dashLoaded() { dash.zooms = []; dashLinkApply(); dash.data = dash.def.widgets.map(() => null); renderDash(); dashRefresh(); varOptionsFetch(); }
 // Re-query every widget without blanking it (view changes).
 function dashReload() { renderDash(); dashRefresh(); }
 
@@ -1944,16 +1954,24 @@ function dashReload() { renderDash(); dashRefresh(); }
 const clockNow = () => state && state.at ? state.at : Date.now() / 1000;
 // When this run started on the feed's clock.
 const runStart = () => state ? clockNow() - (state.replay ? state.replay.pos : state.uptime) : clockNow() - 3600;
-// What the scrubber can reach: the replay file, or the last 24 h (or the run, if longer).
+// What the scrubber can reach: the replay file, or the last 24 h (or the
+// run, if longer), and back to a custom window's start.
 function viewDomain() {
-  const now = clockNow();
-  if (state && state.replay) return [now - state.replay.pos, now - state.replay.pos + state.replay.dur];
-  return [Math.min(now - 86400, runStart()), now];
+  const now = clockNow(), v = dash.view;
+  const [a, b] = state && state.replay ? [now - state.replay.pos, now - state.replay.pos + state.replay.dur]
+    : [Math.min(now - 86400, runStart()), now];
+  return [v.span === "custom" && v.from != null ? Math.min(a, v.from) : a, b];
 }
 // The time range a widget covers: the board's range when one is set, else
 // its own; ending at the board's paused time, else the feed's clock.
 function widgetRange(q) {
-  const v = dash.view, to = Math.ceil(v.to ?? clockNow());
+  const v = dash.view;
+  // A custom window: its own start and end.
+  if (v.span === "custom" && v.from != null && v.to != null) {
+    const from = Math.floor(v.from), to = Math.ceil(v.to);
+    return {from, to, span: Math.max(1, to - from)};
+  }
+  const to = Math.ceil(v.to ?? clockNow());
   const sp = v.span || q.span;
   const span = sp === "run" ? Math.max(60, to - runStart()) : +sp;
   return {from: Math.floor(to - span), to, span};
@@ -2006,27 +2024,120 @@ function renderVars() {
     return `<span class="var">${esc(DIM_LABEL[vr.dim] || vr.dim)}<select data-var="${esc(vr.dim)}" title="$${esc(vr.dim)}"><option value="*">all</option>${list.map(o => `<option value="${esc(o)}" ${o === cur ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>${dash.edit ? `<button class="albtn" data-delvar="${esc(vr.dim)}" title="remove this variable">✕</button>` : ""}</span>`;
   }).join("") + (dash.edit ? `<select id="dvAdd"><option value="">+ variable…</option>${Object.keys(DIM_LABEL).filter(d => !vars.some(v => v.dim === d)).map(d => `<option value="${d}">${DIM_LABEL[d]}</option>`).join("")}</select>` : "");
 }
+// Seconds since the epoch as a datetime-local value (local time), and back.
+const toLocalInput = t => { const d = new Date(t * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 19); };
+const fromLocalInput = s => { const t = new Date(s).getTime(); return isFinite(t) ? t / 1000 : null; };
+const hms = t => new Date(t * 1000).toLocaleTimeString();
 function renderViewBar() {
-  const v = dash.view, [a, b] = viewDomain(), to = v.to ?? clockNow();
+  const v = dash.view, [a, b] = viewDomain(), custom = v.span === "custom";
+  const to = v.to ?? clockNow();
   $("dvSpan").value = v.span;
+  $("dvCustom").hidden = !custom;
+  if (custom) {
+    if (document.activeElement !== $("dvFrom")) $("dvFrom").value = toLocalInput(v.from);
+    if (document.activeElement !== $("dvTo")) $("dvTo").value = toLocalInput(v.to);
+  }
   const s = $("dvSeek"); s.min = Math.floor(a); s.max = Math.ceil(b);
   if (document.activeElement !== s) s.value = Math.round(to);
-  $("dvAt").textContent = v.to === null ? "live" : "ending " + new Date(v.to * 1000).toLocaleTimeString() + " · paused";
+  $("dvAt").textContent = v.to === null ? "live"
+    : custom ? `${hms(v.from)} – ${hms(v.to)} · paused` : "ending " + hms(v.to) + " · paused";
   $("dvAt").classList.toggle("paused", v.to !== null);
   $("dvNow").hidden = v.to === null;
+  dashLinkSync();
 }
-$("dvSpan").onchange = () => { dash.view.span = $("dvSpan").value; dashReload(); };
+// Set the board's window to [from, to] (a custom range), remembering the
+// one it replaces for zooming back out.
+function viewSet(from, to, remember) {
+  if (!(to > from)) return;
+  if (remember) dash.zooms.push(clone(dash.view));
+  const back = dash.view.span === "custom" ? dash.view.back : dash.view.span;
+  dash.view = {span: "custom", from: Math.floor(from), to: Math.ceil(to), back};
+  dashReload();
+}
+$("dvSpan").onchange = () => {
+  const span = $("dvSpan").value;
+  if (span === "custom") {
+    // Start from the window on screen.
+    const {from, to} = widgetRange({span: dash.view.span || 3600});
+    viewSet(from, to, false);
+    return;
+  }
+  dash.view = {span, to: dash.view.span === "custom" ? null : dash.view.to};
+  dash.zooms = [];
+  dashReload();
+};
+$("dvFrom").onchange = $("dvTo").onchange = () => {
+  const from = fromLocalInput($("dvFrom").value), to = fromLocalInput($("dvTo").value);
+  if (from === null || to === null || to <= from) { dashMsg("the window's start must come before its end", true); return; }
+  dashMsg("");
+  viewSet(from, to, true);
+};
 function viewStep(dir) {
   const {span} = widgetRange({span: dash.view.span || 3600}), [a, b] = viewDomain();
-  const to = Math.min(b, Math.max(a, (dash.view.to ?? clockNow()) + dir * span));
+  const end = dash.view.to ?? clockNow();
+  // A custom window may step back as far as the store keeps data.
+  if (dash.view.span === "custom") { const to = Math.min(b, end + dir * span); viewSet(to - span, to, false); return; }
+  const to = Math.min(b, Math.max(a, end + dir * span));
   dash.view.to = to >= b - 1 ? null : to;
+  dashReload();
+}
+// Live again: a custom window goes back to the range it replaced.
+function viewLive() {
+  const v = dash.view;
+  dash.view = {span: v.span === "custom" ? (v.back || "") : v.span, to: null};
+  dash.zooms = [];
   dashReload();
 }
 $("dvBack").onclick = () => viewStep(-1);
 $("dvFwd").onclick = () => viewStep(1);
-$("dvNow").onclick = () => { dash.view.to = null; dashReload(); };
-$("dvSeek").oninput = () => { dash.view.to = +$("dvSeek").value; renderViewBar(); };
-$("dvSeek").onchange = () => { const [, b] = viewDomain(); if (+$("dvSeek").value >= b - 1) dash.view.to = null; dashReload(); };
+$("dvNow").onclick = viewLive;
+$("dvSeek").oninput = () => {
+  const v = dash.view, t = +$("dvSeek").value;
+  if (v.span === "custom") { const len = v.to - v.from; v.to = t; v.from = t - len; } else v.to = t;
+  renderViewBar();
+};
+$("dvSeek").onchange = () => {
+  const [, b] = viewDomain();
+  if (+$("dvSeek").value >= b - 1 && dash.view.span !== "custom") dash.view.to = null;
+  dashReload();
+};
+// --- the link: board, window and variables in the page's address ---
+function dashLinkParams() {
+  const p = new URLSearchParams();
+  if (dash.name) p.set("board", dash.name); else if (dash.tpl) p.set("template", dash.tpl);
+  const v = dash.view;
+  if (v.span) p.set("span", v.span);
+  if (v.span === "custom") { p.set("from", v.from); p.set("to", v.to); }
+  else if (v.to !== null) p.set("to", Math.round(v.to));
+  for (const [k, val] of Object.entries(dash.vals)) if (val && val !== "*") p.set("v." + k, val);
+  return p;
+}
+function dashLinkSync() {
+  if ($("dash").hidden || !dash.def) return;
+  const hash = "#dash?" + dashLinkParams();
+  if (location.hash !== hash) history.replaceState(null, "", hash);
+}
+// A link's window and variables, once its board is open.
+function dashLinkApply() {
+  const p = dash.fromLink;
+  if (!p) return;
+  dash.fromLink = null;
+  const span = p.get("span") || "", from = +p.get("from"), to = p.get("to");
+  dash.view = span === "custom" && from && to ? {span, from, to: +to, back: ""} : {span: span === "custom" ? "" : span, to: to ? +to : null};
+  for (const [k, val] of p) if (k.startsWith("v.")) dash.vals[k.slice(2)] = val;
+}
+function dashLinkRead() {
+  if (!location.hash.startsWith("#dash")) return false;
+  dash.fromLink = new URLSearchParams(location.hash.slice(location.hash.indexOf("?") + 1));
+  return true;
+}
+$("dvLink").onclick = () => {
+  dashLinkSync();
+  const url = location.href;
+  const done = () => toast("link copied: it opens this board and window");
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(url).then(done, () => prompt("Copy this link:", url));
+  else prompt("Copy this link:", url);
+};
 $("dvars").onchange = ev => {
   const t = ev.target;
   if (t.id === "dvAdd") {
@@ -2261,7 +2372,7 @@ function drawWidget(box, w, d) {
   };
   const lines = S.map((s, i) => ({s, c: SERIES[i]})).reverse().map(({s, c}) => `<path fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round" d="${path(s)}"><title>${esc(s.label)}</title></path>`).join("");
   const last = s => { for (let i = s.points.length - 1; i >= 0; i--) if (s.points[i][1] !== null) return s.points[i][1]; return null; };
-  box.innerHTML = `<svg viewBox="0 0 ${Wd} ${H}" style="height:${H}px" preserveAspectRatio="none" role="img" aria-label="${esc(w.title)}">${g}${lines}</svg>`
+  box.innerHTML = `<svg viewBox="0 0 ${Wd} ${H}" style="height:${H}px" preserveAspectRatio="none" role="img" aria-label="${esc(w.title)}" data-from="${d.from}" data-to="${d.to}" data-l="${L}" data-r="${R}" data-w="${Wd}"><title>drag to zoom in · double-click to zoom out</title>${g}${lines}</svg>`
     + `<div class="wleg">${S.map((s, i) => `<span ${goAttrs(s.tags, by)}><i style="background:${SERIES[i]}"></i>${esc(s.label)} <b style="color:var(--fg);font-weight:500">${fmtVal(last(s), d.unit)}</b></span>`).join("")}${hidden ? `<span>+${hidden} more</span>` : ""}<span style="margin-left:auto">${esc(unit)}</span></div>`;
 }
 
@@ -2324,6 +2435,8 @@ $("dFile").onchange = () => {
   }).catch(e => dashMsg("import failed: " + e.message, true));
 };
 $("dgrid").onclick = ev => {
+  // The click that ends a drag-to-zoom isn't a click-through.
+  if (dash.justZoomed) { dash.justZoomed = false; return; }
   const tpl = ev.target.closest("[data-tpl]");
   if (tpl) { dashOpenTemplate(tpl.dataset.tpl); return; }
   if (ev.target.id === "wAdd") { openWidgetEditor(null); return; }
@@ -2391,6 +2504,42 @@ $("dgrid").addEventListener("drop", ev => {
 $("dgrid").addEventListener("dragend", () => {
   dash.drag = null;
   for (const c of $("dgrid").querySelectorAll(".dragging,.drop")) c.classList.remove("dragging", "drop");
+});
+// Drag across a time series to make that stretch the board's window;
+// double-click to go back to the window before it.
+$("dgrid").addEventListener("pointerdown", ev => {
+  const svg = ev.target.closest(".wbody svg[data-from]");
+  if (!svg || dash.edit || ev.button > 0) return;
+  const box = svg.parentElement, r = svg.getBoundingClientRect(), d = svg.dataset;
+  const [from, to, L, R, Wd] = [+d.from, +d.to, +d.l, +d.r, +d.w];
+  const timeAt = x => {
+    const px = (x - r.left) * Wd / r.width;
+    return from + Math.min(1, Math.max(0, (px - L) / (Wd - L - R))) * (to - from);
+  };
+  const x0 = ev.clientX, sel = document.createElement("div");
+  sel.className = "zoomsel";
+  const offset = r.left - box.getBoundingClientRect().left;
+  let x1 = x0;
+  const move = e => {
+    x1 = e.clientX;
+    const a = Math.min(x0, x1) - r.left, b = Math.max(x0, x1) - r.left;
+    sel.style.left = offset + a + "px"; sel.style.width = b - a + "px";
+    if (!sel.parentElement && Math.abs(x1 - x0) > 4) box.appendChild(sel);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+    sel.remove();
+    if (Math.abs(x1 - x0) < 6) return;
+    dash.justZoomed = true;
+    const [t0, t1] = [timeAt(Math.min(x0, x1)), timeAt(Math.max(x0, x1))];
+    if (t1 - t0 >= 10) viewSet(t0, t1, true); else dashMsg("zoom to at least 10 seconds", true);
+  };
+  window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+});
+$("dgrid").addEventListener("dblclick", ev => {
+  if (dash.edit || !ev.target.closest(".wbody svg[data-from]")) return;
+  const prev = dash.zooms.pop();
+  if (prev) { dash.view = prev; dashReload(); } else if (dash.view.span === "custom") viewLive();
 });
 $("dgrid").addEventListener("pointerdown", ev => {
   const h = ev.target.closest(".rsz");
@@ -2515,4 +2664,5 @@ fetch("/api/log?limit=500", auth()).then(r => {
   connect();
 }).catch(() => connect());
 showBoard(boardView);
+if (dashLinkRead()) showView("dash");
 </script>

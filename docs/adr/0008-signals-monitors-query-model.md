@@ -328,7 +328,12 @@ broken down.
    that pauses the board in the past; metric widgets re-query the
    rollups, the event stream reads the store through `/api/log?from&to`,
    and the violations table passes `until` so alerts open *now* don't
-   count for a window that ended earlier). Template variables (a
+   count for a window that ended earlier). A custom range sets the
+   window's start and end (from / to fields; ◀ ▶ and the scrubber keep
+   its length), dragging across a time series zooms the board to that
+   stretch (double-click steps back out), and the address carries the
+   board, window and variables (`#dash?board=…&span=custom&from=&to=&v.site=`,
+   "copy link"), so a link opens the same view. Template variables (a
    dimension per variable, e.g. sender or site, with values from live
    data) filter every widget whose metric carries that dimension and
    substitute `$name` in where-filters. In edit mode a widget's title

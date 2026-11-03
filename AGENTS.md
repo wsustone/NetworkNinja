@@ -312,6 +312,13 @@ tracker's `Finding` has a `facts` field (warfare's helper adds the shot's
 firer / Event ID / munition / indicator, attribute's wrapper the PDU's own
 fields) and `Engine::point_event` takes them. `tests/explain.rs` also fails
 on any preset alert raised without facts.
+Dashboard time window: `dash.view` = {span, to} (to null = live) or
+{span: "custom", from, to, back}; `widgetRange` gives every widget its
+window; `viewSet` (zooms push onto `dash.zooms`), `viewLive`, `viewStep`.
+Time series carry their scale on the svg (`data-from/to/l/r/w`) for
+drag-to-zoom. The address holds `#dash?board|template=…&span&from&to&v.DIM=`
+(`dashLinkSync` on every bar render, `dashLinkRead` at load, applied in
+`dashLoaded`).
 Dashboard Issues panel: tabs Problems (default) / Entities / Log
 (`boardView` in localStorage). A problem groups per-entity issues by
 (exercise, check `rule`, `finding`, simulation = entity site:app); its card
