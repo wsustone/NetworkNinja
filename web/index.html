@@ -1387,8 +1387,9 @@ const MON_METRICS = {
   "entity.heartbeat_jitter": ["exercise", "entity", "sender"],
   "entity.dr_error": ["exercise", "entity"],
   "alerts.open": ["exercise", "pack", "rule", "severity"],
+  "sender.clock_skew": ["exercise", "sender"],
 };
-const MON_GAUGES = new Set(["entity.active", "entity.heartbeat_mean", "entity.heartbeat_jitter", "entity.dr_error", "alerts.open"]);
+const MON_GAUGES = new Set(["entity.active", "entity.heartbeat_mean", "entity.heartbeat_jitter", "entity.dr_error", "alerts.open", "sender.clock_skew"]);
 const MON_EVENT_DIMS = ["exercise", "site", "app", "entity", "sender", "rule"];
 let mon = {list: [], file: null, editing: null};
 function monPost(body) {
@@ -1863,6 +1864,7 @@ const METRICS = {
   "entity.heartbeat_jitter": {label: "heartbeat jitter",     unit: "s",         dims: ["exercise", "entity", "sender"], gauge: true},
   "entity.dr_error":         {label: "dead-reckoning error", unit: "m",         dims: ["exercise", "entity"], gauge: true},
   "alerts.open":             {label: "open alerts",          unit: "alerts",    dims: ["exercise", "pack", "rule", "severity"], gauge: true},
+  "sender.clock_skew":       {label: "clock skew",           unit: "s",         dims: ["exercise", "sender"], gauge: true},
 };
 const AGGS = {counter: ["rate", "sum", "max"], gauge: ["avg", "sum", "max", "min"]};
 const AGG_LABEL = {rate: "per second", sum: "total", avg: "average", max: "max", min: "min"};
@@ -1899,6 +1901,8 @@ const TEMPLATES = {
     W("Worst heartbeat jitter", "toplist", "entity.heartbeat_jitter", "max", 600, {q: {by: ["entity"]}}),
     W("Largest dead-reckoning error", "toplist", "entity.dr_error", "max", 600, {q: {by: ["entity"]}}),
     W("Heartbeat jitter (worst entity)", "timeseries", "entity.heartbeat_jitter", "max", 3600),
+    // Absolute timestamps only; ahead is +, behind is -.
+    W("Clock skew by sender", "timeseries", "sender.clock_skew", "avg", 3600, {q: {by: ["sender"]}, th: {dir: "above", warn: 1, crit: 5}}),
   ]},
   "Error hunt": {about: "is anything wrong right now, and who is causing it", vars: [{dim: "sender"}, {dim: "rule"}], widgets: [
     W("Critical alerts", "status", "alerts.open", "sum", 60, {q: {where: {severity: "critical"}}, th: {dir: "above", warn: "", crit: 0}}),

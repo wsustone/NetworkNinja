@@ -217,8 +217,10 @@ broken down.
   partial last slot.
 - Retention is `serve --metrics-retention DAYS` (default 7) until the ADR
   0007 `config.toml` exists; swept on start and hourly.
-- Not yet: `sender.clock_skew` and `capture.drops` (no source for either
-  yet), and events gaining `sender`/`pack` columns (slice 2, item 1).
+- `sender.clock_skew` came later (with the timestamp rule): seconds an
+  absolute timestamp runs ahead (+) or behind (-) its arrival, tagged by
+  exercise and sender. Not yet: `capture.drops` (no source yet), and
+  events gaining `sender`/`pack` columns (slice 2, item 1).
 
 1. `nn_state::Metrics`: add a `sender` split to `Bucket` and the gauges
    `entity.active` (by exercise/site/kind/force) and per-entity

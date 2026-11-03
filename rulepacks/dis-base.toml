@@ -245,6 +245,12 @@ behind = 5.0
 backwards_tolerance = 1.0
 severity = "warning"
 
+[rules.exercise-id]
+# A sender that carried one exercise ID for window seconds sends a PDU with
+# another: a warning (a gateway may carry several on purpose).
+window = 60.0
+severity = "warning"
+
 [rules.pdu-status]
 # DIS v7: PDU Status bits a type doesn't define (Table 99) are 0; DTI, RAI
 # and IAI aren't 3; an IFF PDU's ISM matches its Simulation Mode.

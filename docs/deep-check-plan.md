@@ -325,8 +325,10 @@ Used by fewer exercises. Do them when a customer's traffic needs them.
 `clock-behind` (absolute only, TIMESTAMP_AHEAD / TIMESTAMP_BEHIND 5 s, keyed by simulation).
 Rule `pdu-status` (v7): `undefined-bits` (Table 99; types past 41 get LVC and CEI, ESU the TEI
 too), `bad-value` (DTI, RAI, IAI = 3), `ism-mismatch` (IFF). Generator: `--timestamp-flip`,
-`--timestamp-backwards`, `--clock-skew`, `--status-bits SITE[@T]`, `--all-header-faults`. Left:
-the `sender.clock_skew` metric (ADR 0008), and exercise ID consistency.
+`--timestamp-backwards`, `--clock-skew`, `--status-bits SITE[@T]`, `--all-header-faults`. Then
+the `sender.clock_skew` gauge (exercise, sender; absolute timestamps only, + is ahead), and
+rule `exercise-id` (`switched`: a sender that carried one exercise ID for `window`, 60 s, sends
+another; `--exercise-switch SITE[@T]`).
 | References to unknown entities | cross-PDU | Target, colliding, designated and receiving IDs naming entities never seen, with grace. |
 | Activity after Deactivated | cross-PDU | Any PDU issued by an entity after its Deactivated Entity State (EDS is explicit; the rest by implication). |
 

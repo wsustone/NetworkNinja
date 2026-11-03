@@ -910,6 +910,14 @@ static CATALOG: &[Explanation] = &[
         "Copy the Change/Options Simulation Mode into PDU Status bit 4 (ISM) on every IFF PDU.",
     ),
     x(
+        "exercise-id",
+        "switched",
+        "Sender switched exercise",
+        "Its PDUs now land in another exercise: its entities vanish from this one and appear in the other, with timeouts and conflicts to follow.",
+        "The application was restarted or reconfigured with another exercise ID, or a gateway forwards a second exercise from the same address.",
+        "Check the application's Exercise ID setting. If it's a gateway carrying several exercises on purpose, turn this check off for it in a site pack (`[rules.exercise-id] enabled = false`).",
+    ),
+    x(
         "monitor",
         "*",
         "A monitor you set up fired",

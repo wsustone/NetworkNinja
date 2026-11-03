@@ -135,6 +135,15 @@ impl Monitor {
                 self.engine
                     .check_header(now, d.source, &d.payload[span.clone()], &self.table),
             );
+            // `sender.clock_skew`: the same skew the timestamp rule judges.
+            if let Some(skew) = crate::header::clock_skew(now, &d.payload[span.clone()]) {
+                let tags = Tags {
+                    exercise: d.payload.get(span.start + 1).copied(),
+                    sender: Some(d.source),
+                    ..Default::default()
+                };
+                self.metrics.record(now, Metric::ClockSkew, tags, skew);
+            }
             let near = |j: Option<usize>| j.and_then(|j| spans.get(j)).map(|s| &d.payload[s.clone()]);
             events.extend(self.engine.check_attribute(
                 now,

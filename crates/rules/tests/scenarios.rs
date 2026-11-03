@@ -1718,18 +1718,20 @@ fn header_faults_each_fire_on_their_own() {
     // A clock stepped back past a heartbeat also runs behind when its
     // timestamps are absolute: relative ones show the step alone.
     let faults = [
-        (EventKind::TimestampFlip, false, Rule::Timestamp, "type-changed"),
-        (EventKind::TimestampBackwards, true, Rule::Timestamp, "backwards"),
-        (EventKind::ClockSkew, false, Rule::Timestamp, "clock-ahead"),
-        (EventKind::StatusBits, false, Rule::PduStatus, "undefined-bits"),
+        (EventKind::TimestampFlip, false, Rule::Timestamp, "type-changed", 40.0),
+        (EventKind::TimestampBackwards, true, Rule::Timestamp, "backwards", 40.0),
+        (EventKind::ClockSkew, false, Rule::Timestamp, "clock-ahead", 40.0),
+        (EventKind::StatusBits, false, Rule::PduStatus, "undefined-bits", 40.0),
+        // After 60 s of the first exercise (`[rules.exercise-id] window`).
+        (EventKind::ExerciseSwitch, false, Rule::ExerciseId, "switched", 80.0),
     ];
-    for (kind, relative_timestamps, rule, finding) in faults {
+    for (kind, relative_timestamps, rule, finding, at) in faults {
         let cfg = Config {
             relative_timestamps,
             events: vec![Event {
                 kind,
                 target: Target::Site(1),
-                at: 40.0,
+                at,
             }],
             ..base.clone()
         };
@@ -1742,6 +1744,35 @@ fn header_faults_each_fire_on_their_own() {
             describe(&events)
         );
     }
+    // `sender.clock_skew`: about +30 s for site 1's sender after its skew,
+    // about 0 for site 2's.
+    let (m, _) = monitor(&generate(&Config {
+        events: vec![Event {
+            kind: EventKind::ClockSkew,
+            target: Target::Site(1),
+            at: 40.0,
+        }],
+        ..base.clone()
+    }));
+    use nn_state::metrics::{Dim, Metric};
+    use nn_state::query::{evaluate, Fold, Query};
+    let end = m.now.floor() as i64;
+    let q = Query {
+        metric: Metric::ClockSkew,
+        filter: vec![],
+        by: vec![Dim::Sender],
+        agg: Fold::Avg,
+        window: 30,
+        from: end - 30,
+        to: end,
+    };
+    let cells = m.metrics.cells(q.metric, q.from, q.to, |t| q.matches(t));
+    let skews: Vec<f64> = evaluate(&q, cells).iter().map(|s| s.points[0].1).collect();
+    assert_eq!(skews.len(), 2, "{skews:?}");
+    assert!(
+        skews.iter().any(|v| (v - 30.0).abs() < 0.5) && skews.iter().any(|v| v.abs() < 0.5),
+        "{skews:?}"
+    );
     // Relative timestamps (the legacy profile's) aren't compared with the
     // clock, so a skewed relative clock is fine.
     let (_, events) = monitor(&generate(&Config {

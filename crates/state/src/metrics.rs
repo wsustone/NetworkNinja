@@ -32,10 +32,11 @@ pub enum Metric {
     HeartbeatJitter,
     DrError,
     AlertsOpen,
+    ClockSkew,
 }
 
 impl Metric {
-    pub const ALL: [Metric; 10] = [
+    pub const ALL: [Metric; 11] = [
         Metric::PduCount,
         Metric::PduDuplicates,
         Metric::BytesCount,
@@ -46,6 +47,7 @@ impl Metric {
         Metric::HeartbeatJitter,
         Metric::DrError,
         Metric::AlertsOpen,
+        Metric::ClockSkew,
     ];
 
     pub fn name(self) -> &'static str {
@@ -60,6 +62,7 @@ impl Metric {
             Metric::HeartbeatJitter => "entity.heartbeat_jitter",
             Metric::DrError => "entity.dr_error",
             Metric::AlertsOpen => "alerts.open",
+            Metric::ClockSkew => "sender.clock_skew",
         }
     }
 
@@ -76,6 +79,7 @@ impl Metric {
                 | Metric::HeartbeatJitter
                 | Metric::DrError
                 | Metric::AlertsOpen
+                | Metric::ClockSkew
         )
     }
 
@@ -94,6 +98,7 @@ impl Metric {
             Metric::HeartbeatMean | Metric::HeartbeatJitter => "s",
             Metric::DrError => "m",
             Metric::AlertsOpen => "alerts",
+            Metric::ClockSkew => "s",
         }
     }
 
@@ -108,6 +113,7 @@ impl Metric {
             Metric::HeartbeatMean | Metric::HeartbeatJitter => &[Exercise, Entity, Sender],
             Metric::DrError => &[Exercise, Entity],
             Metric::AlertsOpen => &[Exercise, Pack, Rule, Severity],
+            Metric::ClockSkew => &[Exercise, Sender],
         }
     }
 }
