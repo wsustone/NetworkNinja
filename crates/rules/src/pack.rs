@@ -525,6 +525,9 @@ fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (Emission, "high_density_threshold") => |c, v| c.high_density_threshold = v,
         (Designator, "final_report_window") => |c, v| c.designator_window = v,
         (Iff, "final_window") => |c, v| c.iff_final = v,
+        (Logistics, "response_timeout") => |c, v| c.logistics_response = v,
+        (Logistics, "resupply_timeout") => |c, v| c.resupply_timeout = v,
+        (Logistics, "repair_response_timeout") => |c, v| c.repair_response = v,
         _ => return None,
     })
 }
@@ -937,6 +940,7 @@ impl Merged {
                 Rule::Emission,
                 Rule::Designator,
                 Rule::Iff,
+                Rule::Logistics,
                 Rule::UserMonitor,
             ]
             .into_iter()
@@ -962,6 +966,7 @@ impl Merged {
                 (Rule::Emission, Severity::Warning),
                 (Rule::Designator, Severity::Warning),
                 (Rule::Iff, Severity::Warning),
+                (Rule::Logistics, Severity::Warning),
                 (Rule::UserMonitor, Severity::Warning),
             ]
             .into_iter()

@@ -1606,6 +1606,59 @@ fn iff_told_right_is_silent_and_each_fault_fires_on_its_own() {
 }
 
 #[test]
+fn logistics_told_right_is_silent_and_each_fault_fires_on_its_own() {
+    let base = Config {
+        duration: 400.0,
+        sites: 2,
+        logistics_every: Some(20.0),
+        all_types: Some(10.0),
+        ..Default::default()
+    };
+    for version in [6, 7] {
+        let (_, events) = monitor(&generate(&Config {
+            version,
+            ..base.clone()
+        }));
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+    }
+    // The answers to nothing after the monitor's startup grace (144 s).
+    let faults = [
+        (EventKind::LogisticsNoOffer, 30.0, "no-offer"),
+        (EventKind::LogisticsNoReceipt, 30.0, "no-receipt"),
+        (EventKind::ReceivedMore, 30.0, "received-more"),
+        (EventKind::NoRepairResponse, 30.0, "no-repair-response"),
+        (EventKind::RepairCancelResult, 30.0, "cancel-result"),
+        (EventKind::SuppliesOnRepair, 30.0, "supplies-on-repair"),
+        (EventKind::UnsolicitedOffer, 200.0, "unsolicited-offer"),
+        (EventKind::OrphanReceived, 200.0, "orphan-received"),
+        (EventKind::UnrequestedRepair, 200.0, "unrequested-repair"),
+        (EventKind::OrphanRepairResponse, 200.0, "orphan-repair-response"),
+        (EventKind::UnknownSupplier, 200.0, "unknown-supplier"),
+    ];
+    for (kind, at, finding) in faults {
+        let cfg = Config {
+            events: vec![Event {
+                kind,
+                target: Target::Exercise,
+                at,
+            }],
+            ..base.clone()
+        };
+        let (_, events) = monitor(&generate(&cfg));
+        let fired = firing(&events);
+        assert!(
+            !fired.is_empty()
+                && fired
+                    .iter()
+                    .all(|e| e.alert.rule == Rule::Logistics && e.alert.kind == finding),
+            "{}: {}",
+            kind.name(),
+            describe(&events)
+        );
+    }
+}
+
+#[test]
 fn user_monitors_open_alerts_through_the_normal_path() {
     use nn_rules::monitors::MonitorDef;
     // Site 2's simulator restarts on a new port at 60 s: its old address

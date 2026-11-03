@@ -53,12 +53,12 @@ Update this table in the same change that adds support. What comes next for each
 | 3 | Detonation | Warfare (2) | 5.4.4 | 7.3.3 | ✓ | ✓ | partial | partial | ✓ |
 | 68 | Directed Energy Fire | Warfare (2) | 5.4.5 | 7.3.4 | ✓ | ✓ v7 | ✓ | partial | ✓ |
 | 69 | Entity Damage Status | Warfare (2) | 5.4.6 | 7.3.5 | ✓ | ✓ v7 | – | partial | ✓ |
-| 5 | Service Request | Logistics (3) | 5.5.5 | 7.4.2 | ✓ | ✓ | ✓ | – | min |
-| 6 | Resupply Offer | Logistics (3) | 5.5.6 | 7.4.3 | ✓ | ✓ | – | – | min |
-| 7 | Resupply Received | Logistics (3) | 5.5.7 | 7.4.4 | ✓ | ✓ | – | – | min |
-| 8 | Resupply Cancel | Logistics (3) | 5.5.8 | 7.4.5 | ✓ | ✓ | – | – | min |
-| 9 | Repair Complete | Logistics (3) | 5.5.10 | 7.4.6 | ✓ | ✓ | ✓ | – | min |
-| 10 | Repair Response | Logistics (3) | 5.5.11 | 7.4.7 | ✓ | ✓ | ✓ | – | min |
+| 5 | Service Request | Logistics (3) | 5.5.5 | 7.4.2 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 6 | Resupply Offer | Logistics (3) | 5.5.6 | 7.4.3 | ✓ | ✓ | – | ✓ | ✓ |
+| 7 | Resupply Received | Logistics (3) | 5.5.7 | 7.4.4 | ✓ | ✓ | – | ✓ | ✓ |
+| 8 | Resupply Cancel | Logistics (3) | 5.5.8 | 7.4.5 | ✓ | ✓ | – | ✓ | ✓ |
+| 9 | Repair Complete | Logistics (3) | 5.5.10 | 7.4.6 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 10 | Repair Response | Logistics (3) | 5.5.11 | 7.4.7 | ✓ | ✓ | ✓ | ✓ | ✓ |
 | 11 | Create Entity | Simulation Management (5) | 5.6.5.2 | 7.5.2 | ✓ | ✓ | – | handshake | ✓ |
 | 12 | Remove Entity | Simulation Management (5) | 5.6.5.3 | 7.5.3 | ✓ | ✓ | partial | partial | ✓ |
 | 13 | Start/Resume | Simulation Management (5) | 5.6.5.4 | 7.5.4 | ✓ | ✓ | partial | partial | ✓ |

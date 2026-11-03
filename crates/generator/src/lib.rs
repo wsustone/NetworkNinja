@@ -147,6 +147,28 @@ pub enum EventKind {
     IffModeMismatch,
     /// IFF fault: the transponder's entity is destroyed and the transponder stays on.
     IffDestroyedOn,
+    /// Logistics fault: the next resupply request gets no offer (or cancel) from its supplier.
+    LogisticsNoOffer,
+    /// Logistics fault: the next resupply offer is never taken or cancelled.
+    LogisticsNoReceipt,
+    /// Logistics fault: the next resupply receipt takes more than was offered.
+    ReceivedMore,
+    /// Logistics fault: the next completed repair gets no Repair Response.
+    NoRepairResponse,
+    /// Logistics fault: the next repair is cancelled by its supplier, answered as finished.
+    RepairCancelResult,
+    /// Logistics fault: the next repair request lists supplies.
+    SuppliesOnRepair,
+    /// Logistics fault: supplies offered to an entity that didn't ask.
+    UnsolicitedOffer,
+    /// Logistics fault: supplies received with no offer.
+    OrphanReceived,
+    /// Logistics fault: a repair reported that nobody requested.
+    UnrequestedRepair,
+    /// Logistics fault: a Repair Response to no Repair Complete.
+    OrphanRepairResponse,
+    /// Logistics fault: a service request to an entity that doesn't exist.
+    UnknownSupplier,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -238,6 +260,17 @@ impl EventKind {
             EventKind::IffHeartbeatUnflagged => "iff-heartbeat-unflagged",
             EventKind::IffModeMismatch => "iff-mode-mismatch",
             EventKind::IffDestroyedOn => "iff-destroyed-on",
+            EventKind::LogisticsNoOffer => "logistics-no-offer",
+            EventKind::LogisticsNoReceipt => "logistics-no-receipt",
+            EventKind::ReceivedMore => "received-more",
+            EventKind::NoRepairResponse => "no-repair-response",
+            EventKind::RepairCancelResult => "repair-cancel-result",
+            EventKind::SuppliesOnRepair => "supplies-on-repair",
+            EventKind::UnsolicitedOffer => "unsolicited-offer",
+            EventKind::OrphanReceived => "orphan-received",
+            EventKind::UnrequestedRepair => "unrequested-repair",
+            EventKind::OrphanRepairResponse => "orphan-repair-response",
+            EventKind::UnknownSupplier => "unknown-supplier",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -317,6 +350,17 @@ impl EventKind {
                 | EventKind::IffHeartbeatUnflagged
                 | EventKind::IffModeMismatch
                 | EventKind::IffDestroyedOn
+                | EventKind::LogisticsNoOffer
+                | EventKind::LogisticsNoReceipt
+                | EventKind::ReceivedMore
+                | EventKind::NoRepairResponse
+                | EventKind::RepairCancelResult
+                | EventKind::SuppliesOnRepair
+                | EventKind::UnsolicitedOffer
+                | EventKind::OrphanReceived
+                | EventKind::UnrequestedRepair
+                | EventKind::OrphanRepairResponse
+                | EventKind::UnknownSupplier
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
                 | EventKind::StaleAppearance
@@ -403,6 +447,9 @@ pub struct Config {
     /// Seconds between Mode 3/A code changes of a Mark XIIA transponder on
     /// the first site (`families::iff`); `None` sends no IFF from it.
     pub iff_every: Option<f64>,
+    /// Seconds between logistics conversations, alternating resupply and
+    /// repair (`families::logistics`).
+    pub logistics_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -453,6 +500,7 @@ impl Default for Config {
             emission_every: None,
             designator_every: None,
             iff_every: None,
+            logistics_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,

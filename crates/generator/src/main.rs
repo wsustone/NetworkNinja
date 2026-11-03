@@ -56,6 +56,8 @@ EXERCISE
     --de-every SECS         A 3 s directed-energy shot (default off)
     --emission-every SECS   An entity's radar emits for 30 s, tracking another (default off)
     --designator-every SECS An entity lases another for 30 s (default off)
+    --logistics-every SECS  A resupply or repair between site 1 and another site
+                            (alternating; default off)
     --iff-every SECS        Site 1's first entity carries a Mark XIIA transponder
                             whose Mode 3/A code changes every SECS (default off)
     --bundle                Pack several PDUs per datagram
@@ -151,6 +153,23 @@ IFF FAULTS (on the transponder; need --iff-every)
     --iff-destroyed-on T    Its entity is destroyed; the transponder stays on
     --all-iff-faults        One of each (turns on --iff-every 60 if not set)
 
+LOGISTICS FAULTS (script the next conversation; need --logistics-every)
+    --logistics-no-offer T  The next resupply request gets no offer (or cancel) from its supplier
+    --logistics-no-receipt T
+                            The next resupply offer is never taken or cancelled
+    --received-more T       The next resupply receipt takes more than was offered
+    --no-repair-response T  The next completed repair gets no Repair Response
+    --repair-cancel-result T
+                            The next repair is cancelled by its supplier, answered as finished
+    --supplies-on-repair T  The next repair request lists supplies
+    --unsolicited-offer T   Supplies offered to an entity that didn't ask
+    --orphan-received T     Supplies received with no offer
+    --unrequested-repair T  A repair reported that nobody requested
+    --orphan-repair-response T
+                            A Repair Response to no Repair Complete
+    --unknown-supplier T    A service request to an entity that doesn't exist
+    --all-logistics-faults  One of each (turns on --logistics-every 20 if not set)
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -204,6 +223,7 @@ fn parse_args() -> Result<Options, String> {
     let (mut all_warfare, mut all_interaction, mut all_emission) = (false, false, false);
     let mut all_designator = false;
     let mut all_iff = false;
+    let mut all_logistics = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -322,6 +342,19 @@ fn parse_args() -> Result<Options, String> {
             "--iff-mode-mismatch" => pending.push((EventKind::IffModeMismatch, format!("@{}", val()?))),
             "--iff-destroyed-on" => pending.push((EventKind::IffDestroyedOn, format!("@{}", val()?))),
             "--all-iff-faults" => all_iff = true,
+            "--logistics-every" => cfg.logistics_every = Some(num(val()?)?),
+            "--logistics-no-offer" => pending.push((EventKind::LogisticsNoOffer, format!("@{}", val()?))),
+            "--logistics-no-receipt" => pending.push((EventKind::LogisticsNoReceipt, format!("@{}", val()?))),
+            "--received-more" => pending.push((EventKind::ReceivedMore, format!("@{}", val()?))),
+            "--no-repair-response" => pending.push((EventKind::NoRepairResponse, format!("@{}", val()?))),
+            "--repair-cancel-result" => pending.push((EventKind::RepairCancelResult, format!("@{}", val()?))),
+            "--supplies-on-repair" => pending.push((EventKind::SuppliesOnRepair, format!("@{}", val()?))),
+            "--unsolicited-offer" => pending.push((EventKind::UnsolicitedOffer, format!("@{}", val()?))),
+            "--orphan-received" => pending.push((EventKind::OrphanReceived, format!("@{}", val()?))),
+            "--unrequested-repair" => pending.push((EventKind::UnrequestedRepair, format!("@{}", val()?))),
+            "--orphan-repair-response" => pending.push((EventKind::OrphanRepairResponse, format!("@{}", val()?))),
+            "--unknown-supplier" => pending.push((EventKind::UnknownSupplier, format!("@{}", val()?))),
+            "--all-logistics-faults" => all_logistics = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -352,6 +385,7 @@ fn parse_args() -> Result<Options, String> {
         emission: all_emission,
         designator: all_designator,
         iff: all_iff,
+        logistics: all_logistics,
     };
     nn_generator::presets::schedule(&mut cfg, &presets, pending, defects)?;
     Ok(Options {
