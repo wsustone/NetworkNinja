@@ -31,6 +31,7 @@ pub mod pack;
 pub mod radio;
 pub mod siman;
 pub mod siso;
+mod transfer;
 mod warfare;
 
 pub use capture::{Capture, Captured};

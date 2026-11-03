@@ -59,6 +59,9 @@ pub(crate) struct Logistics {
     conversations: Vec<Conversation>,
     pending: VecDeque<EventKind>,
     started: u32,
+    /// Pairs and when they're free again: an unanswered offer or request
+    /// is still owed for a while after its script ends.
+    busy: Vec<(usize, usize, f64)>,
 }
 
 fn script(fault: Option<EventKind>, repair_turn: bool) -> Vec<Step> {
@@ -215,24 +218,33 @@ impl Family for Logistics {
         }
         self.next = t;
         let first = w.cfg.site_base;
+        // Not an entity another scheduled event acts on (a removal, a
+        // dropped heartbeat...): a party that leaves owes nothing, and would
+        // hide this conversation's fault.
+        let spared = |i: usize| {
+            !w.cfg
+                .events
+                .iter()
+                .any(|ev| ev.target == crate::Target::Entity(w.entities[i].id))
+        };
         let pick = |on_first: bool, k: u32| {
             let pool: Vec<usize> = (0..w.entities.len())
-                .filter(|&i| (w.entities[i].id.site == first) == on_first && alive(i))
+                .filter(|&i| (w.entities[i].id.site == first) == on_first && alive(i) && spared(i))
                 .collect();
             (!pool.is_empty()).then(|| pool[k as usize % pool.len()])
         };
-        // Round robin over pairs, so overlapping conversations don't share one.
-        let k = self.started;
-        let (Some(receiver), Some(supplier)) = (pick(true, k), pick(false, k / 2)) else {
+        // Round robin over pairs, skipping one still busy: a receiver
+        // doesn't ask a supplier again while their last exchange is open.
+        self.busy.retain(|b| b.2 > t);
+        let Some((k, receiver, supplier)) = (self.started..self.started + 16).find_map(|k| {
+            let (r, s) = (pick(true, k)?, pick(false, k / 2)?);
+            (!self.busy.iter().any(|b| b.0 == r && b.1 == s)).then_some((k, r, s))
+        }) else {
             return;
         };
-        if self
-            .conversations
-            .iter()
-            .any(|c| c.receiver == receiver && c.supplier == supplier)
-        {
-            return;
-        }
+        // RESUP_SUP_T1 (60 s) and then some.
+        self.busy.push((receiver, supplier, t + 70.0));
+        self.started = k;
         let fault = self.pending.pop_front();
         self.started += 1;
         let c = Conversation {

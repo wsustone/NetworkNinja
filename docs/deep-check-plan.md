@@ -16,7 +16,7 @@ families so far did. Status per type is in [pdu-coverage.md](pdu-coverage.md).
 | H header and framing | all 72 types |
 | S structure (lengths, counts, record lengths) | all 72 on v7; types 1–27 on v6 |
 | E enumerations (SISO-REF-010) | 63 fixed-offset fields in 41 types, plus Entity State, Fire and Detonation fields |
-| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, Electromagnetic Emission, Designator, IFF (v7), Logistics, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
+| D deep | Entity State (timeout, ID conflict, position jump), Fire/Detonation (pairing, munition end), DE Fire, Entity Damage Status, Collision, Attribute, Electromagnetic Emission, Designator, IFF (v7), Logistics, Transfer Ownership, SIMAN and SIMAN-R handshakes, Radio (Transmitter / Signal / Receiver) |
 
 Everything else is checked for shape and enumerations, but not for meaning.
 
@@ -271,6 +271,18 @@ request repeated every RESUP_REC_T1 while unanswered) and offers as a subset of 
 Transfer Ownership interacts with the ID-conflict rule: a completed transfer is a legitimate
 change of sender. Doing it right removes a real source of false conflict alarms.
 
+*Transfer Ownership done:* rule `transfer-ownership` (`nn_rules::transfer`, transactions keyed
+by exercise and entity; push and pull; cancelled by a Cancel TO or an Acknowledge-R Unable to
+Comply; completed by the acquiring simulation's first Entity State): `reliability`,
+`concurrent`, `inactive-entity`, `lingering-owner` (the old owner past `handover_window`, 5 s;
+`id-conflict` leaves that pair to it), `attributes-changed` (type or marking), `transferred-
+indicator` (PDU Status bit 0, v7), `no-event-report` (Event Type 17 within
+TO_AUTO_RESPONSE_TIMER, 5 s), `stalled` (TO_MAN_RESPONSE_TIMER, 120 s). SIMAN now pairs a TO
+with its Acknowledge-R (flag 5), so that answer isn't unsolicited. Generator:
+`--transfer-every SECS` (push), eight faults, `--all-transfer-faults`. Left: the Set
+Record-R / Record-R steps and pull transfers in the generator, the ownership datum (15800) in
+the Event Report, and Aggregate State, IsGroupOf and IsPartOf.
+
 ### Simulation management with reliability: what's left
 
 The handshakes are done. Left:
@@ -328,6 +340,7 @@ silence and exact-detection tests, coverage-table update and docs.
 7. **Designator, IFF.** *Done:* rules `designator`, `iff`.
 8. **Logistics**, built on the SIMAN tracker. *Done:* rule `logistics`.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.
+   *Transfer Ownership done:* rule `transfer-ownership`; aggregates and IsPartOf left.
 10. **Timestamps and PDU Status bits** (cross-cutting).
 11. **Attribute, Intercom, UA/SEES.**
 12. **Wave 4 families**, as customers need them.

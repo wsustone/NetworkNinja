@@ -216,6 +216,22 @@ resupply_timeout = 60.0
 repair_response_timeout = 12.0
 severity = "warning"
 
+# --- Transfer Ownership (5.9.4, 7.8.4) ---------------------------------------
+
+[rules.transfer-ownership]
+# A TO PDU asks for Unacknowledged service, for an Active entity not already
+# in a transfer. Once the acquiring simulation's first Entity State is out,
+# the divesting one stops within handover_window seconds (and id-conflict
+# leaves that pair to this rule), the new owner keeps Entity Type and Marking,
+# sets the Transferred Entity Indicator right and sends its ownership Event
+# Report within report_timeout (TO_AUTO_RESPONSE_TIMER). A transaction that
+# neither completes nor is cancelled within stall_timeout
+# (TO_MAN_RESPONSE_TIMER) is stalled.
+handover_window = 5.0
+report_timeout = 5.0
+stall_timeout = 120.0
+severity = "warning"
+
 # --- Heartbeats (IEEE 1278.1 4.2.7, Table 4) --------------------------------
 
 [rules.heartbeat]

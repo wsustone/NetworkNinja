@@ -261,7 +261,28 @@ resupply and repair in turn, overlapping, round-robin pairs), eleven faults
 `--no-repair-response`, `--repair-cancel-result`, `--supplies-on-repair`,
 `--unsolicited-offer`, `--orphan-received`, `--unrequested-repair`,
 `--orphan-repair-response`, `--unknown-supplier`), preset
-`--all-logistics-faults`; each fault scripts the next conversation.
+`--all-logistics-faults`; each fault scripts the next conversation. Logistics
+and transfer pick only entities no other scheduled event targets (a removed
+party owes nothing and would hide the fault); a pair stays busy 70 s.
+
+Transfer Ownership (`nn_rules::transfer`, rule `transfer-ownership`): TO bytes
+originating @12, receiving @18, Request ID @24, reliability @28, type @29 (UID
+224: push 1/4, pull 2/5/8/9, cancel 7), entity @30; Acknowledge-R flag @24 (5 =
+transfer), response @26 (2 = unable), Request ID @28. Raw PDUs in
+`check_interactions`; the Entity State side in `before_apply` (`rec` is still
+the old owner's): completion = first ES from the acquirer's address (or a
+sender the entity never had). `Transfers::explains` makes `id-conflict` skip
+the old/new owner pair. `[rules.transfer-ownership]` handover_window (5),
+report_timeout (TO_AUTO_RESPONSE_TIMER 5), stall_timeout (TO_MAN 120). SIMAN's
+request table has TO → Acknowledge-R flag 5 (always Unacknowledged, so nothing
+owed, but not unsolicited). Generator `--transfer-every SECS`: push from the
+entity's owner to the next site (`SimEntity.owner`; entity_info sends from the
+owner's sender and sets PDU Status bit 0 when the site differs), TO → Ack-R →
+first ES → Event Report 17; faults `--transfer-lingering` (the old owner's copy
+differs by the indicator bit, so echo detection keeps it), `--transfer-
+reliability`, `--transfer-indicator`, `--transfer-attributes`, `--transfer-no-
+report`, `--transfer-concurrent`, `--transfer-inactive`, `--transfer-stalled`,
+preset `--all-transfer-faults`. Never the IFF carrier.
 
 Explanations (alerts work): every `Alert` carries `kind` (the finding type)
 and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and

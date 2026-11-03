@@ -83,7 +83,7 @@ Update this table in the same change that adds support. What comes next for each
 | 32 | Intercom Control | Radio Communications (4) | 5.8.7 | 7.7.6 | ✓ | ✓ v7 | ✓ | – | min |
 | 33 | Aggregate State | Entity Management (7) | 5.9.2.2 | 7.8.2 | ✓ | ✓ v7 | ✓ | – | min |
 | 34 | IsGroupOf | Entity Management (7) | 5.9.3 | 7.8.3 | ✓ | ✓ v7 | ✓ | – | min |
-| 35 | Transfer Ownership | Entity Management (7) | 5.9.4 | 7.8.4 | ✓ | ✓ v7 | ✓ | – | min |
+| 35 | Transfer Ownership | Entity Management (7) | 5.9.4 | 7.8.4 | ✓ | ✓ v7 | ✓ | ✓ | ✓ |
 | 36 | IsPartOf | Entity Management (7) | 5.9.5 | 7.8.5 | ✓ | ✓ v7 | – | – | min |
 | 37 | Minefield State | Minefield (8) | 5.10.2 | 7.9.2 | ✓ | ✓ v7 | ✓ | – | min |
 | 38 | Minefield Query | Minefield (8) | 5.10.3 | 7.9.3 | ✓ | ✓ v7 | – | – | min |

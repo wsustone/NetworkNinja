@@ -68,6 +68,9 @@ pub enum Rule {
     /// A resupply or repair conversation left unanswered or answered wrong
     /// (`crate::logistics`).
     Logistics,
+    /// A Transfer Ownership transaction, or what follows it
+    /// (`crate::transfer`).
+    TransferOwnership,
     /// A user monitor's condition held (`crate::monitors`): one alert per
     /// monitor and group; `rule_id` is the monitor id, with `@tags` for a
     /// group.
@@ -98,6 +101,7 @@ impl Rule {
             Rule::Designator => "designator",
             Rule::Iff => "iff",
             Rule::Logistics => "logistics",
+            Rule::TransferOwnership => "transfer-ownership",
             Rule::UserMonitor => "monitor",
         }
     }
@@ -125,6 +129,7 @@ impl Rule {
             "designator" => Some(Rule::Designator),
             "iff" => Some(Rule::Iff),
             "logistics" => Some(Rule::Logistics),
+            "transfer-ownership" => Some(Rule::TransferOwnership),
             "monitor" => Some(Rule::UserMonitor),
             _ => None,
         }
@@ -248,6 +253,12 @@ pub struct RuleConfig {
     pub logistics_response: f64,
     pub resupply_timeout: f64,
     pub repair_response: f64,
+    /// Transfer Ownership: how long the old owner may keep reporting after
+    /// the new one starts; TO_AUTO_RESPONSE_TIMER (the ownership Event
+    /// Report); TO_MAN_RESPONSE_TIMER (a transaction ends).
+    pub handover_window: f64,
+    pub transfer_report: f64,
+    pub transfer_stall: f64,
 }
 
 impl Default for RuleConfig {
@@ -281,6 +292,9 @@ impl Default for RuleConfig {
             logistics_response: 12.0,
             resupply_timeout: 60.0,
             repair_response: 12.0,
+            handover_window: 5.0,
+            transfer_report: 5.0,
+            transfer_stall: 120.0,
         }
     }
 }
@@ -397,6 +411,7 @@ pub struct Engine {
     designators: crate::designator::Designators,
     iffs: crate::iff::Systems,
     logistics: crate::logistics::Logistics,
+    transfers: crate::transfer::Transfers,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -441,6 +456,7 @@ impl Engine {
             designators: crate::designator::Designators::default(),
             iffs: crate::iff::Systems::default(),
             logistics: crate::logistics::Logistics::default(),
+            transfers: crate::transfer::Transfers::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             monitor_active: BTreeMap::new(),
@@ -933,6 +949,14 @@ impl Engine {
         }
     }
 
+    fn transfer_limits(&self) -> crate::transfer::Limits {
+        crate::transfer::Limits {
+            handover: self.config.handover_window,
+            report: self.config.transfer_report,
+            stall: self.config.transfer_stall,
+        }
+    }
+
     fn logistics_limits(&self) -> crate::logistics::Limits {
         crate::logistics::Limits {
             grace: self.config.stationary_heartbeat * self.config.timeout_multiplier,
@@ -979,6 +1003,14 @@ impl Engine {
         table: &EntityTable,
     ) -> Vec<AlertEvent> {
         let mut found = Vec::new();
+        if self.enabled(Rule::TransferOwnership) {
+            found.extend(
+                self.transfers
+                    .observe(now, source, raw, table)
+                    .into_iter()
+                    .map(|f| (Rule::TransferOwnership, f)),
+            );
+        }
         if self.enabled(Rule::DirectedEnergy) {
             found.extend(
                 self.directed_energy
@@ -1150,6 +1182,29 @@ impl Engine {
             id: es.entity_id,
         };
         let Some(rec) = table.get(&key) else { return out };
+        if self.enabled(Rule::TransferOwnership) {
+            let limits = self.transfer_limits();
+            let h = &pdu.header;
+            let found = self.transfers.entity_state(
+                now,
+                source,
+                es,
+                (h.exercise_id, h.protocol_version, h.pdu_status),
+                rec,
+                &limits,
+            );
+            for f in found {
+                self.point_event(
+                    now,
+                    (Rule::TransferOwnership, f.kind),
+                    f.key,
+                    Some(f.sender),
+                    f.message,
+                    f.facts,
+                    &mut out,
+                );
+            }
+        }
         let ex = table.state_for(&key);
         if ex.frozen {
             return out;
@@ -1210,6 +1265,10 @@ impl Engine {
         let my_first = rec.sources.get(&source).map(|t| t.first_seen).unwrap_or(now);
         for (other, track) in &rec.sources {
             if *other == source || now - track.last_seen > timeout {
+                continue;
+            }
+            // A transfer's old and new owners: `transfer-ownership` judges them.
+            if self.transfers.explains(&key, *other, source) {
                 continue;
             }
             // The other sender kept reporting well after this one appeared:
@@ -1367,6 +1426,13 @@ impl Engine {
                 .map(|f| (Rule::Designator, f)),
         );
         self.iffs.expire(now);
+        let limits = self.transfer_limits();
+        found.extend(
+            self.transfers
+                .expire(now, &limits, frozen)
+                .into_iter()
+                .map(|f| (Rule::TransferOwnership, f)),
+        );
         let limits = self.logistics_limits();
         found.extend(
             self.logistics
@@ -1494,6 +1560,7 @@ impl Engine {
                 | Rule::Designator
                 | Rule::Iff
                 | Rule::Logistics
+                | Rule::TransferOwnership
                 | Rule::UserMonitor => {}
             }
         }
