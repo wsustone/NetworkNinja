@@ -169,6 +169,22 @@ pub enum EventKind {
     OrphanRepairResponse,
     /// Logistics fault: a service request to an entity that doesn't exist.
     UnknownSupplier,
+    /// Transfer fault: the old owner keeps reporting the next transferred entity.
+    TransferLingering,
+    /// Transfer fault: the next TO PDU asks for Acknowledged service.
+    TransferReliability,
+    /// Transfer fault: the next new owner leaves the Transferred Entity Indicator clear.
+    TransferIndicator,
+    /// Transfer fault: the next new owner changes the entity's marking.
+    TransferAttributes,
+    /// Transfer fault: the next new owner sends no ownership Event Report.
+    TransferNoReport,
+    /// Transfer fault: a second TO for the next entity, to another simulation, while the first is open.
+    TransferConcurrent,
+    /// Transfer fault: the next transfer is of an entity just deactivated.
+    TransferInactive,
+    /// Transfer fault: the next transfer gets no answer and nobody cancels it.
+    TransferStalled,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -271,6 +287,14 @@ impl EventKind {
             EventKind::UnrequestedRepair => "unrequested-repair",
             EventKind::OrphanRepairResponse => "orphan-repair-response",
             EventKind::UnknownSupplier => "unknown-supplier",
+            EventKind::TransferLingering => "transfer-lingering",
+            EventKind::TransferReliability => "transfer-reliability",
+            EventKind::TransferIndicator => "transfer-indicator",
+            EventKind::TransferAttributes => "transfer-attributes",
+            EventKind::TransferNoReport => "transfer-no-report",
+            EventKind::TransferConcurrent => "transfer-concurrent",
+            EventKind::TransferInactive => "transfer-inactive",
+            EventKind::TransferStalled => "transfer-stalled",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -361,6 +385,14 @@ impl EventKind {
                 | EventKind::UnrequestedRepair
                 | EventKind::OrphanRepairResponse
                 | EventKind::UnknownSupplier
+                | EventKind::TransferLingering
+                | EventKind::TransferReliability
+                | EventKind::TransferIndicator
+                | EventKind::TransferAttributes
+                | EventKind::TransferNoReport
+                | EventKind::TransferConcurrent
+                | EventKind::TransferInactive
+                | EventKind::TransferStalled
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
                 | EventKind::StaleAppearance
@@ -450,6 +482,9 @@ pub struct Config {
     /// Seconds between logistics conversations, alternating resupply and
     /// repair (`families::logistics`).
     pub logistics_every: Option<f64>,
+    /// Seconds between Transfer Ownership pushes of an entity to another
+    /// site's simulator (`families::transfer`).
+    pub transfer_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -501,6 +536,7 @@ impl Default for Config {
             designator_every: None,
             iff_every: None,
             logistics_every: None,
+            transfer_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,

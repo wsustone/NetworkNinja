@@ -58,6 +58,8 @@ EXERCISE
     --designator-every SECS An entity lases another for 30 s (default off)
     --logistics-every SECS  A resupply or repair between site 1 and another site
                             (alternating; default off)
+    --transfer-every SECS   An entity's owner pushes it to another site's simulator
+                            (Transfer Ownership; needs 2 sites; default off)
     --iff-every SECS        Site 1's first entity carries a Mark XIIA transponder
                             whose Mode 3/A code changes every SECS (default off)
     --bundle                Pack several PDUs per datagram
@@ -170,6 +172,18 @@ LOGISTICS FAULTS (script the next conversation; need --logistics-every)
     --unknown-supplier T    A service request to an entity that doesn't exist
     --all-logistics-faults  One of each (turns on --logistics-every 20 if not set)
 
+TRANSFER FAULTS (script the next transfer; need --transfer-every)
+    --transfer-lingering T  The old owner keeps reporting the next transferred entity
+    --transfer-reliability T
+                            The next TO PDU asks for Acknowledged service
+    --transfer-indicator T  The next new owner leaves the Transferred Entity Indicator clear
+    --transfer-attributes T The next new owner changes the entity's marking
+    --transfer-no-report T  The next new owner sends no ownership Event Report
+    --transfer-concurrent T A second TO for the next entity, to another simulation, while the first is open
+    --transfer-inactive T   The next transfer is of an entity just deactivated
+    --transfer-stalled T    The next transfer gets no answer and nobody cancels it
+    --all-transfer-faults   One of each (turns on --transfer-every 25 if not set)
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -224,6 +238,7 @@ fn parse_args() -> Result<Options, String> {
     let mut all_designator = false;
     let mut all_iff = false;
     let mut all_logistics = false;
+    let mut all_transfer = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -355,6 +370,16 @@ fn parse_args() -> Result<Options, String> {
             "--orphan-repair-response" => pending.push((EventKind::OrphanRepairResponse, format!("@{}", val()?))),
             "--unknown-supplier" => pending.push((EventKind::UnknownSupplier, format!("@{}", val()?))),
             "--all-logistics-faults" => all_logistics = true,
+            "--transfer-every" => cfg.transfer_every = Some(num(val()?)?),
+            "--transfer-lingering" => pending.push((EventKind::TransferLingering, format!("@{}", val()?))),
+            "--transfer-reliability" => pending.push((EventKind::TransferReliability, format!("@{}", val()?))),
+            "--transfer-indicator" => pending.push((EventKind::TransferIndicator, format!("@{}", val()?))),
+            "--transfer-attributes" => pending.push((EventKind::TransferAttributes, format!("@{}", val()?))),
+            "--transfer-no-report" => pending.push((EventKind::TransferNoReport, format!("@{}", val()?))),
+            "--transfer-concurrent" => pending.push((EventKind::TransferConcurrent, format!("@{}", val()?))),
+            "--transfer-inactive" => pending.push((EventKind::TransferInactive, format!("@{}", val()?))),
+            "--transfer-stalled" => pending.push((EventKind::TransferStalled, format!("@{}", val()?))),
+            "--all-transfer-faults" => all_transfer = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -386,6 +411,7 @@ fn parse_args() -> Result<Options, String> {
         designator: all_designator,
         iff: all_iff,
         logistics: all_logistics,
+        transfer: all_transfer,
     };
     nn_generator::presets::schedule(&mut cfg, &presets, pending, defects)?;
     Ok(Options {

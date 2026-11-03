@@ -17,6 +17,7 @@ pub(crate) mod interactions;
 pub(crate) mod logistics;
 pub(crate) mod radio;
 pub(crate) mod sim_mgmt;
+pub(crate) mod transfer;
 pub(crate) mod warfare;
 
 /// PDUs produced this tick, in send order, each with its sender.
@@ -71,5 +72,6 @@ pub(crate) fn all(w: &World) -> Vec<Box<dyn Family>> {
         Box::new(designator::Designator::default()),
         Box::new(iff::Iff::default()),
         Box::new(logistics::Logistics::default()),
+        Box::new(transfer::Transfers::default()),
     ]
 }

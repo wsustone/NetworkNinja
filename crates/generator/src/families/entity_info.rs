@@ -75,6 +75,16 @@ fn update_of(tick: &Tick, es: Pdu) -> Pdu {
     }
 }
 
+/// A transferred entity's PDUs from its new owner set the Transferred Entity
+/// Indicator (PDU Status bit 0, v7) when its site isn't the owner's
+/// (IEEE 1278.1 5.9.4.2.1 e 5).
+fn owned(e: &SimEntity, mut pdu: Pdu) -> Pdu {
+    if e.owner.is_some_and(|o| o != e.id.site) && !e.wrong_indicator && pdu.header.protocol_version >= 7 {
+        pdu.header.pdu_status |= 1;
+    }
+    pdu
+}
+
 impl Family for EntityInfo {
     fn on_event(&mut self, w: &mut World, _tick: &Tick, ev: &Event, _out: &mut Out) -> Option<bool> {
         let Target::Entity(id) = ev.target else {
@@ -117,7 +127,7 @@ impl Family for EntityInfo {
                 if let PduBody::EntityState(es) = &mut pdu.body {
                     es.appearance |= appearance::DEACTIVATED;
                 }
-                out.push((senders.get(e.id.site), pdu));
+                out.push((senders.get(e.owner.unwrap_or(e.id.site)), owned(e, pdu)));
                 e.final_due = false;
                 e.sending = e.zombie;
                 e.last_sent = t;
@@ -157,7 +167,12 @@ impl Family for EntityInfo {
                     }
                     out.push((senders.get(e.id.site), ghost));
                 }
-                out.push((senders.get(e.id.site), pdu));
+                if let Some(old) = e.linger_from {
+                    // The old owner's own report: no Transferred Entity
+                    // Indicator, so not byte-identical to the new owner's.
+                    out.push((senders.get(old), pdu.clone()));
+                }
+                out.push((senders.get(e.owner.unwrap_or(e.id.site)), owned(e, pdu)));
             }
         }
 

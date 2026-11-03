@@ -66,6 +66,13 @@ pub(crate) struct SimEntity {
     /// Destroyed: its appearance says so (Damage = 3), and it keeps
     /// reporting.
     pub destroyed: bool,
+    /// After a Transfer Ownership: the site whose simulator now reports it
+    /// (`families::transfer`); `None` is its own site.
+    pub owner: Option<u16>,
+    /// Faults after a transfer: the old owner's site keeps reporting it
+    /// too; the new owner leaves the Transferred Entity Indicator clear.
+    pub linger_from: Option<u16>,
+    pub wrong_indicator: bool,
     pub last_sent: f64,
     pub last_pos: WorldCoord,
     pub last_vel: Vec3f,
@@ -202,6 +209,9 @@ impl<'a> World<'a> {
                     orphan_updates: false,
                     damaged: false,
                     destroyed: false,
+                    owner: None,
+                    linger_from: None,
+                    wrong_indicator: false,
                     // Stagger first reports across one heartbeat.
                     last_sent: -rng.range(0.0, cfg.heartbeat),
                     last_pos: WorldCoord::default(),
@@ -243,6 +253,9 @@ impl<'a> World<'a> {
                     orphan_updates: false,
                     damaged: false,
                     destroyed: false,
+                    owner: None,
+                    linger_from: None,
+                    wrong_indicator: false,
                     last_sent: -rng.range(0.0, cfg.stationary_heartbeat),
                     last_pos: WorldCoord::default(),
                     last_vel: Vec3f::default(),

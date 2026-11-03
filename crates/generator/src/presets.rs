@@ -21,6 +21,7 @@ pub struct Presets {
     pub designator: bool,
     pub iff: bool,
     pub logistics: bool,
+    pub transfer: bool,
 }
 
 impl Presets {
@@ -39,6 +40,7 @@ impl Presets {
             designator: true,
             iff: true,
             logistics: true,
+            transfer: true,
         }
     }
 }
@@ -172,6 +174,25 @@ pub fn schedule(
         }
         for (i, kind) in late.into_iter().enumerate() {
             pending.push((kind, format!("@{}", d * (0.62 + 0.07 * i as f64))));
+        }
+    }
+    if p.transfer {
+        cfg.transfer_every.get_or_insert(25.0);
+        // Stalled first: its 120 s wait has to end inside the run.
+        for (i, kind) in [
+            EventKind::TransferStalled,
+            EventKind::TransferReliability,
+            EventKind::TransferIndicator,
+            EventKind::TransferAttributes,
+            EventKind::TransferNoReport,
+            EventKind::TransferConcurrent,
+            EventKind::TransferInactive,
+            EventKind::TransferLingering,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            pending.push((kind, format!("@{}", d * (0.05 + 0.1 * i as f64))));
         }
     }
     if p.designator {
@@ -321,6 +342,14 @@ pub fn schedule(
             | EventKind::UnrequestedRepair
             | EventKind::OrphanRepairResponse
             | EventKind::UnknownSupplier
+            | EventKind::TransferLingering
+            | EventKind::TransferReliability
+            | EventKind::TransferIndicator
+            | EventKind::TransferAttributes
+            | EventKind::TransferNoReport
+            | EventKind::TransferConcurrent
+            | EventKind::TransferInactive
+            | EventKind::TransferStalled
             | EventKind::OneSidedCollision
             | EventKind::DuplicateCollision
             | EventKind::StaleAppearance

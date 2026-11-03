@@ -7,6 +7,7 @@
 //! | Action Request (-R) | Action Response (-R) |
 //! | Data Query, Set Data (-R) | Data (-R) |
 //! | Set Record-R, Record Query-R | Record-R |
+//! | Transfer Ownership | Acknowledge-R, flag Transfer Ownership (5) |
 //!
 //! An answer matches a request when it comes back from the simulation the
 //! request named, is addressed to the requester, and carries its Request ID.
@@ -67,6 +68,9 @@ fn request(pdu_type: u8) -> Option<(usize, Option<usize>, Expect)> {
         59 => (28, Some(24), ans(60)),
         64 => (24, Some(28), ans(63)),
         65 => (24, Some(28), ans(63)),
+        // Transfer Ownership: always Unacknowledged (5.9.4.2.1 a 4), so no
+        // answer is owed here, but its Acknowledge-R isn't unsolicited.
+        35 => (24, Some(28), ack(55, 5)),
         _ => return None,
     })
 }

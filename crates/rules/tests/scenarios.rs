@@ -1659,6 +1659,55 @@ fn logistics_told_right_is_silent_and_each_fault_fires_on_its_own() {
 }
 
 #[test]
+fn transfers_told_right_are_silent_and_each_fault_fires_on_its_own() {
+    let base = Config {
+        duration: 400.0,
+        sites: 3,
+        transfer_every: Some(25.0),
+        all_types: Some(10.0),
+        ..Default::default()
+    };
+    for version in [6, 7] {
+        let (_, events) = monitor(&generate(&Config {
+            version,
+            ..base.clone()
+        }));
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+    }
+    let faults = [
+        (EventKind::TransferLingering, "lingering-owner"),
+        (EventKind::TransferReliability, "reliability"),
+        (EventKind::TransferIndicator, "transferred-indicator"),
+        (EventKind::TransferAttributes, "attributes-changed"),
+        (EventKind::TransferNoReport, "no-event-report"),
+        (EventKind::TransferConcurrent, "concurrent"),
+        (EventKind::TransferInactive, "inactive-entity"),
+        (EventKind::TransferStalled, "stalled"),
+    ];
+    for (kind, finding) in faults {
+        let cfg = Config {
+            events: vec![Event {
+                kind,
+                target: Target::Exercise,
+                at: 60.0,
+            }],
+            ..base.clone()
+        };
+        let (_, events) = monitor(&generate(&cfg));
+        let fired = firing(&events);
+        assert!(
+            !fired.is_empty()
+                && fired
+                    .iter()
+                    .all(|e| e.alert.rule == Rule::TransferOwnership && e.alert.kind == finding),
+            "{}: {}",
+            kind.name(),
+            describe(&events)
+        );
+    }
+}
+
+#[test]
 fn user_monitors_open_alerts_through_the_normal_path() {
     use nn_rules::monitors::MonitorDef;
     // Site 2's simulator restarts on a new port at 60 s: its old address
