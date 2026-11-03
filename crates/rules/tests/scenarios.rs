@@ -1708,6 +1708,55 @@ fn transfers_told_right_are_silent_and_each_fault_fires_on_its_own() {
 }
 
 #[test]
+fn header_faults_each_fire_on_their_own() {
+    let base = Config {
+        duration: 120.0,
+        sites: 2,
+        all_types: Some(10.0),
+        ..Default::default()
+    };
+    // A clock stepped back past a heartbeat also runs behind when its
+    // timestamps are absolute: relative ones show the step alone.
+    let faults = [
+        (EventKind::TimestampFlip, false, Rule::Timestamp, "type-changed"),
+        (EventKind::TimestampBackwards, true, Rule::Timestamp, "backwards"),
+        (EventKind::ClockSkew, false, Rule::Timestamp, "clock-ahead"),
+        (EventKind::StatusBits, false, Rule::PduStatus, "undefined-bits"),
+    ];
+    for (kind, relative_timestamps, rule, finding) in faults {
+        let cfg = Config {
+            relative_timestamps,
+            events: vec![Event {
+                kind,
+                target: Target::Site(1),
+                at: 40.0,
+            }],
+            ..base.clone()
+        };
+        let (_, events) = monitor(&generate(&cfg));
+        let fired = firing(&events);
+        assert!(
+            !fired.is_empty() && fired.iter().all(|e| e.alert.rule == rule && e.alert.kind == finding),
+            "{}: {}",
+            kind.name(),
+            describe(&events)
+        );
+    }
+    // Relative timestamps (the legacy profile's) aren't compared with the
+    // clock, so a skewed relative clock is fine.
+    let (_, events) = monitor(&generate(&Config {
+        relative_timestamps: true,
+        events: vec![Event {
+            kind: EventKind::ClockSkew,
+            target: Target::Site(1),
+            at: 40.0,
+        }],
+        ..base.clone()
+    }));
+    assert!(events.is_empty(), "{}", describe(&events));
+}
+
+#[test]
 fn user_monitors_open_alerts_through_the_normal_path() {
     use nn_rules::monitors::MonitorDef;
     // Site 2's simulator restarts on a new port at 60 s: its old address

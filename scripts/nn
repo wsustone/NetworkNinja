@@ -16,8 +16,9 @@
 #          exercise: the dashboard should stay quiet.
 #   demo   the same, plus a "faulty vendor" on sites 9-12 that runs every
 #          fault, PDU defect, handshake, radio, lifecycle, warfare,
-#          interaction, emission, designator, IFF, logistics and transfer
-#          fault, then starts over, every 5 minutes.
+#          interaction, emission, designator, IFF, logistics, transfer and
+#          header (timestamp, PDU Status) fault, then starts over, every 5
+#          minutes.
 #
 # Environment:
 #   NN_CONFIG a serve --config file (listeners, dashboard, database...); the
@@ -106,7 +107,7 @@ up() {
             --all-designator-faults --designator-every 30 \
             --all-iff-faults --iff-every 60 \
             --all-logistics-faults --logistics-every 20 \
-            --all-transfer-faults --transfer-every 25 \
+            --all-transfer-faults --transfer-every 25 --all-header-faults \
             --collision-every 20 --damage-every 60 --de-every 30 --emission-every 30 --truth /dev/null; done"
     fi
     echo "$scenario" >"$state/scenario"

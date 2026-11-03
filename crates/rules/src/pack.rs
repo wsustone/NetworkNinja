@@ -531,6 +531,9 @@ fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (TransferOwnership, "handover_window") => |c, v| c.handover_window = v,
         (TransferOwnership, "report_timeout") => |c, v| c.transfer_report = v,
         (TransferOwnership, "stall_timeout") => |c, v| c.transfer_stall = v,
+        (Timestamp, "ahead") => |c, v| c.timestamp_ahead = v,
+        (Timestamp, "behind") => |c, v| c.timestamp_behind = v,
+        (Timestamp, "backwards_tolerance") => |c, v| c.backwards_tolerance = v,
         _ => return None,
     })
 }
@@ -945,6 +948,8 @@ impl Merged {
                 Rule::Iff,
                 Rule::Logistics,
                 Rule::TransferOwnership,
+                Rule::Timestamp,
+                Rule::PduStatus,
                 Rule::UserMonitor,
             ]
             .into_iter()
@@ -972,6 +977,8 @@ impl Merged {
                 (Rule::Iff, Severity::Warning),
                 (Rule::Logistics, Severity::Warning),
                 (Rule::TransferOwnership, Severity::Warning),
+                (Rule::Timestamp, Severity::Warning),
+                (Rule::PduStatus, Severity::Warning),
                 (Rule::UserMonitor, Severity::Warning),
             ]
             .into_iter()

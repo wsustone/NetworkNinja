@@ -184,6 +184,15 @@ TRANSFER FAULTS (script the next transfer; need --transfer-every)
     --transfer-stalled T    The next transfer gets no answer and nobody cancels it
     --all-transfer-faults   One of each (turns on --transfer-every 25 if not set)
 
+HEADER FAULTS (a site's simulator)
+    --timestamp-flip SITE[@T]
+                            It switches between absolute and relative timestamps
+    --timestamp-backwards SITE[@T]
+                            Its clock steps back 10 s
+    --clock-skew SITE[@T]   Its clock runs 30 s ahead
+    --status-bits SITE[@T]  Its next Entity State sets an undefined PDU Status bit
+    --all-header-faults     One of each, on the first site
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -239,6 +248,7 @@ fn parse_args() -> Result<Options, String> {
     let mut all_iff = false;
     let mut all_logistics = false;
     let mut all_transfer = false;
+    let mut all_header = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -380,6 +390,11 @@ fn parse_args() -> Result<Options, String> {
             "--transfer-inactive" => pending.push((EventKind::TransferInactive, format!("@{}", val()?))),
             "--transfer-stalled" => pending.push((EventKind::TransferStalled, format!("@{}", val()?))),
             "--all-transfer-faults" => all_transfer = true,
+            "--timestamp-flip" => pending.push((EventKind::TimestampFlip, val()?)),
+            "--timestamp-backwards" => pending.push((EventKind::TimestampBackwards, val()?)),
+            "--clock-skew" => pending.push((EventKind::ClockSkew, val()?)),
+            "--status-bits" => pending.push((EventKind::StatusBits, val()?)),
+            "--all-header-faults" => all_header = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -412,6 +427,7 @@ fn parse_args() -> Result<Options, String> {
         iff: all_iff,
         logistics: all_logistics,
         transfer: all_transfer,
+        header: all_header,
     };
     nn_generator::presets::schedule(&mut cfg, &presets, pending, defects)?;
     Ok(Options {

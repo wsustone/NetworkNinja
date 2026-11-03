@@ -185,6 +185,15 @@ pub enum EventKind {
     TransferInactive,
     /// Transfer fault: the next transfer gets no answer and nobody cancels it.
     TransferStalled,
+    /// Header fault: the site's simulator switches between absolute and relative timestamps.
+    TimestampFlip,
+    /// Header fault: the site's clock steps back 10 s (with absolute
+    /// timestamps it then also runs behind).
+    TimestampBackwards,
+    /// Header fault: the site's clock runs 30 s ahead.
+    ClockSkew,
+    /// Header fault: the site's next Entity State sets a PDU Status bit it doesn't define.
+    StatusBits,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -295,6 +304,10 @@ impl EventKind {
             EventKind::TransferConcurrent => "transfer-concurrent",
             EventKind::TransferInactive => "transfer-inactive",
             EventKind::TransferStalled => "transfer-stalled",
+            EventKind::TimestampFlip => "timestamp-flip",
+            EventKind::TimestampBackwards => "timestamp-backwards",
+            EventKind::ClockSkew => "clock-skew",
+            EventKind::StatusBits => "status-bits",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -393,6 +406,10 @@ impl EventKind {
                 | EventKind::TransferConcurrent
                 | EventKind::TransferInactive
                 | EventKind::TransferStalled
+                | EventKind::TimestampFlip
+                | EventKind::TimestampBackwards
+                | EventKind::ClockSkew
+                | EventKind::StatusBits
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
                 | EventKind::StaleAppearance
@@ -700,6 +717,29 @@ impl Truth {
 ///
 /// Each tick: families' `begin`, then scheduled events (each to the family
 /// that owns it), then motion, then families' `emit`, then the wire.
+/// Per-simulator clock faults (offset, absolute/relative flipped) and a
+/// pending undefined PDU Status bit, applied to this tick's PDUs.
+fn restamp(w: &mut world::World, cfg: &Config, tick: &world::Tick, out: &mut families::Out) {
+    if w.clocks.is_empty() && w.status_bits.is_empty() {
+        return;
+    }
+    let wall = cfg.start_time + std::time::Duration::from_secs_f64(tick.t);
+    let since_epoch = wall
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    for o in out.0.iter_mut() {
+        let h = &mut o.pdu.header;
+        if let Some(&(offset, flip)) = w.clocks.get(&o.sender.site) {
+            h.timestamp = DisTimestamp::from_seconds_past_hour(since_epoch + offset, !cfg.relative_timestamps ^ flip);
+        }
+        if h.pdu_type == pdu_type::ENTITY_STATE && h.protocol_version >= 7 && w.status_bits.remove(&o.sender.site) {
+            // Bit 4 means nothing on an Entity State (Table 99).
+            h.pdu_status |= 0b1_0000;
+        }
+    }
+}
+
 pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
     let mut w = world::World::new(cfg);
     let mut families = families::all(&w);
@@ -725,6 +765,20 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
                     w.restart(site);
                     true
                 }
+                // A simulator's clock and header faults are its sender's.
+                (EventKind::TimestampFlip, Target::Site(site)) => {
+                    w.clocks.entry(site).or_default().1 ^= true;
+                    true
+                }
+                (EventKind::TimestampBackwards, Target::Site(site)) => {
+                    w.clocks.entry(site).or_default().0 -= 10.0;
+                    true
+                }
+                (EventKind::ClockSkew, Target::Site(site)) => {
+                    w.clocks.entry(site).or_default().0 += 30.0;
+                    true
+                }
+                (EventKind::StatusBits, Target::Site(site)) => w.status_bits.insert(site),
                 _ => families
                     .iter_mut()
                     .find_map(|f| f.on_event(&mut w, &tick, &ev, &mut out))
@@ -738,6 +792,7 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
         for f in families.iter_mut() {
             f.emit(&mut w, &tick, &mut out);
         }
+        restamp(&mut w, cfg, &tick, &mut out);
         wire.send(&mut w.truth, tick.t, out, sink)?;
     }
     Ok(w.truth)

@@ -71,6 +71,11 @@ pub enum Rule {
     /// A Transfer Ownership transaction, or what follows it
     /// (`crate::transfer`).
     TransferOwnership,
+    /// A sender's timestamps: kind, order, clock skew (`crate::header`).
+    Timestamp,
+    /// PDU Status bits a type doesn't define, or undefined values
+    /// (`crate::header`).
+    PduStatus,
     /// A user monitor's condition held (`crate::monitors`): one alert per
     /// monitor and group; `rule_id` is the monitor id, with `@tags` for a
     /// group.
@@ -102,6 +107,8 @@ impl Rule {
             Rule::Iff => "iff",
             Rule::Logistics => "logistics",
             Rule::TransferOwnership => "transfer-ownership",
+            Rule::Timestamp => "timestamp",
+            Rule::PduStatus => "pdu-status",
             Rule::UserMonitor => "monitor",
         }
     }
@@ -130,6 +137,8 @@ impl Rule {
             "iff" => Some(Rule::Iff),
             "logistics" => Some(Rule::Logistics),
             "transfer-ownership" => Some(Rule::TransferOwnership),
+            "timestamp" => Some(Rule::Timestamp),
+            "pdu-status" => Some(Rule::PduStatus),
             "monitor" => Some(Rule::UserMonitor),
             _ => None,
         }
@@ -259,6 +268,11 @@ pub struct RuleConfig {
     pub handover_window: f64,
     pub transfer_report: f64,
     pub transfer_stall: f64,
+    /// TIMESTAMP_AHEAD and TIMESTAMP_BEHIND, and how far one object's
+    /// timestamp may step back (reordering) before it counts.
+    pub timestamp_ahead: f64,
+    pub timestamp_behind: f64,
+    pub backwards_tolerance: f64,
 }
 
 impl Default for RuleConfig {
@@ -295,6 +309,9 @@ impl Default for RuleConfig {
             handover_window: 5.0,
             transfer_report: 5.0,
             transfer_stall: 120.0,
+            timestamp_ahead: 5.0,
+            timestamp_behind: 5.0,
+            backwards_tolerance: 1.0,
         }
     }
 }
@@ -412,6 +429,7 @@ pub struct Engine {
     iffs: crate::iff::Systems,
     logistics: crate::logistics::Logistics,
     transfers: crate::transfer::Transfers,
+    header: crate::header::Header,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -457,6 +475,7 @@ impl Engine {
             iffs: crate::iff::Systems::default(),
             logistics: crate::logistics::Logistics::default(),
             transfers: crate::transfer::Transfers::default(),
+            header: crate::header::Header::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             monitor_active: BTreeMap::new(),
@@ -947,6 +966,29 @@ impl Engine {
             high_density: self.config.high_density_threshold.clamp(0.0, 255.0) as u8,
             grace: self.config.stationary_heartbeat * self.config.timeout_multiplier,
         }
+    }
+
+    /// Timestamps and PDU Status on one PDU's bytes, decoded or not.
+    pub fn check_header(&mut self, now: f64, source: SocketAddr, raw: &[u8], table: &EntityTable) -> Vec<AlertEvent> {
+        let (stamps, status) = (self.enabled(Rule::Timestamp), self.enabled(Rule::PduStatus));
+        if !stamps && !status {
+            return Vec::new();
+        }
+        let limits = crate::header::Limits {
+            ahead: self.config.timestamp_ahead,
+            behind: self.config.timestamp_behind,
+            backwards_tolerance: self.config.backwards_tolerance,
+        };
+        let (a, b) = self.header.observe(now, source, raw, &limits, |ex, since| {
+            table.exercise(ex).last_change > since
+        });
+        let mut out = Vec::new();
+        for (rule, on, found) in [(Rule::Timestamp, stamps, a), (Rule::PduStatus, status, b)] {
+            for f in found.into_iter().filter(|_| on) {
+                self.point_event(now, (rule, f.kind), f.key, Some(f.sender), f.message, f.facts, &mut out);
+            }
+        }
+        out
     }
 
     fn transfer_limits(&self) -> crate::transfer::Limits {
@@ -1561,6 +1603,8 @@ impl Engine {
                 | Rule::Iff
                 | Rule::Logistics
                 | Rule::TransferOwnership
+                | Rule::Timestamp
+                | Rule::PduStatus
                 | Rule::UserMonitor => {}
             }
         }
