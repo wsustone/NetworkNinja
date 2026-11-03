@@ -301,7 +301,9 @@
   #dashEd .ifs > button { background:var(--ok); color:#04140a; border:0; border-radius:4px; padding:.45em 1em; font:inherit; font-weight:600; cursor:pointer; }
   #dashEd button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
   #dashEd .msg { font-size:12px; } #dashEd .msg.bad { color:var(--crit); }
-  #dashEd .row { display:flex; gap:.6em; align-items:center; }
+  #dashEd .row { display:flex; gap:.6em; align-items:center; flex-wrap:wrap; }
+  /* A cell's fields wrap and shrink instead of spilling into the next cell. */
+  #dashEd .row > * { min-width:0; } #dashEd .row > input[type=number] { flex:1 1 4.5em; width:4.5em; }
   #weWhere { display:flex; flex-direction:column; gap:.3em; }
   #weWhere .wrow { display:flex; gap:.3em; align-items:center; }
   #weWhere .wrow select { width:8em; }
@@ -506,7 +508,7 @@
     <label id="weWinL">points every<select id="weWin"><option value="0">auto</option><option value="5">5 s</option><option value="10">10 s</option><option value="60">1 min</option><option value="300">5 min</option></select></label>
     <label class="wq">group by<div class="ifs" id="weBy"></div></label>
     <label class="wq">where<div id="weWhere"></div><button type="button" class="plain" id="weWhereAdd">+ filter</button></label>
-    <label id="weThL"><span id="weThT">threshold (optional)</span><span class="row"><select id="weThDir"><option value="above">bad above</option><option value="below">bad below</option></select><input type="number" id="weThWarn" placeholder="warn" step="any" style="width:5.5em"><input type="number" id="weThCrit" placeholder="critical" step="any" style="width:5.5em"></span></label>
+    <label id="weThL"><span id="weThT">threshold (optional)</span><span class="row"><select id="weThDir"><option value="above">bad above</option><option value="below">bad below</option></select><input type="number" id="weThWarn" placeholder="warn" step="any"><input type="number" id="weThCrit" placeholder="critical" step="any"></span></label>
     <label id="weTabL">rows<span class="row"><select id="weBy1"></select><select id="weBy2"></select></span></label>
     <div class="ifs" id="weEvL">show <label><input type="checkbox" id="weEvAlert" checked> alerts</label><label><input type="checkbox" id="weEvErr" checked> decode errors</label><label><input type="checkbox" id="weEvInfo"> info</label>
       <select id="weEvState"><option value="firing">firing only</option><option value="all">firing + resolved</option></select>
