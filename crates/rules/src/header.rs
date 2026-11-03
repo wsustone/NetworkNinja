@@ -11,6 +11,12 @@
 //!   TIMESTAMP_AHEAD / TIMESTAMP_BEHIND from the time it was received
 //!   (4.6.5 b). Keyed by simulation, so one skewed simulator is one alert.
 //!
+//! Rule `exercise-id`: `switched`, a sender that carried one exercise ID
+//! for `exercise_window` seconds sends a PDU with another (a gateway or a
+//! misconfigured application), once per sender and exercise.
+//!
+//! [`clock_skew`] is the same skew the monitor charts as `sender.clock_skew`.
+//!
 //! Rule `pdu-status` (6.2.67, Table 99), DIS v7:
 //! - `undefined-bits`: bits set that the PDU type doesn't define, which
 //!   are to be 0. (Table 99 stops at type 41; later types get LVC and
@@ -23,7 +29,7 @@ use crate::interactions::Finding;
 use nn_decode::structure::{layout, IdField};
 use nn_decode::EntityId;
 use nn_state::EntityKey;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
 fn cite(clause: &str) -> String {
@@ -69,7 +75,62 @@ struct Seen {
 #[derive(Debug, Default)]
 pub struct Header {
     objects: HashMap<(SocketAddr, u8, [u8; 6]), Seen>,
+    /// Per sender, each exercise ID's (first, last) PDU time.
+    exercises: HashMap<SocketAddr, HashMap<u8, (f64, f64)>>,
+    reported_switch: HashSet<(SocketAddr, u8)>,
     last_prune: f64,
+}
+
+/// Seconds an absolute timestamp runs ahead (+) or behind (-) `now`; `None`
+/// for a relative one or a short PDU.
+pub fn clock_skew(now: f64, pdu: &[u8]) -> Option<f64> {
+    let raw = u32::from_be_bytes(pdu.get(4..8)?.try_into().ok()?);
+    (raw & 1 == 1).then(|| wrapped(now.rem_euclid(3600.0), (raw >> 1) as f64 * 3600.0 / (1u64 << 31) as f64))
+}
+
+impl Header {
+    /// A sender switching exercise ID. `window`: how long it must have
+    /// carried only the other one.
+    pub fn exercise(&mut self, now: f64, source: SocketAddr, pdu: &[u8], window: f64) -> Option<Finding> {
+        let exercise = *pdu.get(1)?;
+        let seen = self.exercises.entry(source).or_default();
+        let fresh = !seen.contains_key(&exercise);
+        let e = seen.entry(exercise).or_insert((now, now));
+        e.1 = now;
+        if !fresh || seen.len() < 2 {
+            return None;
+        }
+        // Every other exercise it carried: one, recent, and long enough.
+        let others: Vec<(u8, (f64, f64))> = seen
+            .iter()
+            .filter(|(x, _)| **x != exercise)
+            .map(|(x, t)| (*x, *t))
+            .collect();
+        let &[(old, (first, last))] = others.as_slice() else {
+            return None;
+        };
+        if now - last > window || last - first < window || !self.reported_switch.insert((source, exercise)) {
+            return None;
+        }
+        Some(Finding {
+            kind: "switched",
+            key: EntityKey {
+                exercise,
+                id: EntityId::new(0, 0, 0),
+            },
+            sender: source,
+            message: format!(
+                "{source} sent exercise {old} for {:.0} s, then a {} with exercise {exercise}: one application, one exercise, unless it's a gateway",
+                last - first,
+                nn_decode::pdu_type_name(pdu[2])
+            ),
+            facts: vec![
+                ("sender", source.to_string()),
+                ("exercise before", format!("{old} ({:.0} s)", last - first)),
+                ("exercise now", exercise.to_string()),
+            ],
+        })
+    }
 }
 
 /// Seconds `b` is after `a`, both seconds past the hour, wrapped to
@@ -267,6 +328,10 @@ impl Header {
         if now - self.last_prune > 60.0 {
             self.last_prune = now;
             self.objects.retain(|_, s| now - s.at < 600.0);
+            for seen in self.exercises.values_mut() {
+                seen.retain(|_, t| now - t.1 < 600.0);
+            }
+            self.exercises.retain(|_, seen| !seen.is_empty());
         }
         (stamps, status)
     }
@@ -318,6 +383,35 @@ mod tests {
         assert!(run(&mut h, 3602.0, &pdu(1, 2.0, true, 0)).is_empty());
         // Relative timestamps aren't compared with the clock.
         assert!(run(&mut Header::default(), 100.0, &pdu(1, 3000.0, false, 0)).is_empty());
+        assert_eq!(
+            clock_skew(100.0, &pdu(1, 130.0, true, 0)).map(|s| s.round()),
+            Some(30.0)
+        );
+        assert_eq!(
+            clock_skew(3599.0, &pdu(1, 1.0, true, 0)).map(|s| s.round()),
+            Some(2.0),
+            "the hour wraps"
+        );
+        assert_eq!(clock_skew(100.0, &pdu(1, 130.0, false, 0)), None);
+    }
+
+    #[test]
+    fn a_sender_switching_exercise_is_named_once() {
+        let mut h = Header::default();
+        let on = |ex: u8| {
+            let mut b = pdu(1, 0.0, true, 0);
+            b[1] = ex;
+            b
+        };
+        for t in 0..80 {
+            assert!(h.exercise(t as f64, src(), &on(1), 60.0).is_none());
+        }
+        assert_eq!(h.exercise(80.0, src(), &on(2), 60.0).map(|f| f.kind), Some("switched"));
+        assert!(h.exercise(81.0, src(), &on(2), 60.0).is_none(), "once");
+        // Not when it had sent the other only briefly (a quick fix).
+        let mut h = Header::default();
+        h.exercise(0.0, src(), &on(1), 60.0);
+        assert!(h.exercise(5.0, src(), &on(2), 60.0).is_none());
     }
 
     #[test]

@@ -76,6 +76,8 @@ pub enum Rule {
     /// PDU Status bits a type doesn't define, or undefined values
     /// (`crate::header`).
     PduStatus,
+    /// A sender that switches exercise ID (`crate::header`).
+    ExerciseId,
     /// A user monitor's condition held (`crate::monitors`): one alert per
     /// monitor and group; `rule_id` is the monitor id, with `@tags` for a
     /// group.
@@ -109,6 +111,7 @@ impl Rule {
             Rule::TransferOwnership => "transfer-ownership",
             Rule::Timestamp => "timestamp",
             Rule::PduStatus => "pdu-status",
+            Rule::ExerciseId => "exercise-id",
             Rule::UserMonitor => "monitor",
         }
     }
@@ -139,6 +142,7 @@ impl Rule {
             "transfer-ownership" => Some(Rule::TransferOwnership),
             "timestamp" => Some(Rule::Timestamp),
             "pdu-status" => Some(Rule::PduStatus),
+            "exercise-id" => Some(Rule::ExerciseId),
             "monitor" => Some(Rule::UserMonitor),
             _ => None,
         }
@@ -273,6 +277,8 @@ pub struct RuleConfig {
     pub timestamp_ahead: f64,
     pub timestamp_behind: f64,
     pub backwards_tolerance: f64,
+    /// How long a sender carries one exercise ID before another is a switch.
+    pub exercise_window: f64,
 }
 
 impl Default for RuleConfig {
@@ -312,6 +318,7 @@ impl Default for RuleConfig {
             timestamp_ahead: 5.0,
             timestamp_behind: 5.0,
             backwards_tolerance: 1.0,
+            exercise_window: 60.0,
         }
     }
 }
@@ -971,8 +978,22 @@ impl Engine {
     /// Timestamps and PDU Status on one PDU's bytes, decoded or not.
     pub fn check_header(&mut self, now: f64, source: SocketAddr, raw: &[u8], table: &EntityTable) -> Vec<AlertEvent> {
         let (stamps, status) = (self.enabled(Rule::Timestamp), self.enabled(Rule::PduStatus));
+        let mut out = Vec::new();
+        if self.enabled(Rule::ExerciseId) {
+            if let Some(f) = self.header.exercise(now, source, raw, self.config.exercise_window) {
+                self.point_event(
+                    now,
+                    (Rule::ExerciseId, f.kind),
+                    f.key,
+                    Some(f.sender),
+                    f.message,
+                    f.facts,
+                    &mut out,
+                );
+            }
+        }
         if !stamps && !status {
-            return Vec::new();
+            return out;
         }
         let limits = crate::header::Limits {
             ahead: self.config.timestamp_ahead,
@@ -982,7 +1003,6 @@ impl Engine {
         let (a, b) = self.header.observe(now, source, raw, &limits, |ex, since| {
             table.exercise(ex).last_change > since
         });
-        let mut out = Vec::new();
         for (rule, on, found) in [(Rule::Timestamp, stamps, a), (Rule::PduStatus, status, b)] {
             for f in found.into_iter().filter(|_| on) {
                 self.point_event(now, (rule, f.kind), f.key, Some(f.sender), f.message, f.facts, &mut out);
@@ -1605,6 +1625,7 @@ impl Engine {
                 | Rule::TransferOwnership
                 | Rule::Timestamp
                 | Rule::PduStatus
+                | Rule::ExerciseId
                 | Rule::UserMonitor => {}
             }
         }

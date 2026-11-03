@@ -190,6 +190,9 @@ pub enum EventKind {
     /// Header fault: the site's clock steps back 10 s (with absolute
     /// timestamps it then also runs behind).
     TimestampBackwards,
+    /// Header fault: the site's simulator sends one PDU (a Comment) with
+    /// the next exercise ID.
+    ExerciseSwitch,
     /// Header fault: the site's clock runs 30 s ahead.
     ClockSkew,
     /// Header fault: the site's next Entity State sets a PDU Status bit it doesn't define.
@@ -307,6 +310,7 @@ impl EventKind {
             EventKind::TimestampFlip => "timestamp-flip",
             EventKind::TimestampBackwards => "timestamp-backwards",
             EventKind::ClockSkew => "clock-skew",
+            EventKind::ExerciseSwitch => "exercise-switch",
             EventKind::StatusBits => "status-bits",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
@@ -409,6 +413,7 @@ impl EventKind {
                 | EventKind::TimestampFlip
                 | EventKind::TimestampBackwards
                 | EventKind::ClockSkew
+                | EventKind::ExerciseSwitch
                 | EventKind::StatusBits
                 | EventKind::OneSidedCollision
                 | EventKind::DuplicateCollision
@@ -779,6 +784,20 @@ pub fn run(cfg: &Config, sink: &mut dyn Sink) -> io::Result<Truth> {
                     true
                 }
                 (EventKind::StatusBits, Target::Site(site)) => w.status_bits.insert(site),
+                (EventKind::ExerciseSwitch, Target::Site(site)) => {
+                    // A Comment: no entity of its own to time out or clash.
+                    let mut header = tick.header(22);
+                    header.exercise_id = header.exercise_id.wrapping_add(1).max(1);
+                    let body = nn_decode::structure::minimal_body(22).expect("Comment layout");
+                    out.push((
+                        w.sender(site),
+                        Pdu {
+                            header,
+                            body: PduBody::Other(body),
+                        },
+                    ));
+                    true
+                }
                 _ => families
                     .iter_mut()
                     .find_map(|f| f.on_event(&mut w, &tick, &ev, &mut out))

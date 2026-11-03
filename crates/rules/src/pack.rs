@@ -534,6 +534,7 @@ fn fixed_threshold(rule: Rule, key: &str) -> Option<fn(&mut RuleConfig, f64)> {
         (Timestamp, "ahead") => |c, v| c.timestamp_ahead = v,
         (Timestamp, "behind") => |c, v| c.timestamp_behind = v,
         (Timestamp, "backwards_tolerance") => |c, v| c.backwards_tolerance = v,
+        (ExerciseId, "window") => |c, v| c.exercise_window = v,
         _ => return None,
     })
 }
@@ -950,6 +951,7 @@ impl Merged {
                 Rule::TransferOwnership,
                 Rule::Timestamp,
                 Rule::PduStatus,
+                Rule::ExerciseId,
                 Rule::UserMonitor,
             ]
             .into_iter()
@@ -979,6 +981,7 @@ impl Merged {
                 (Rule::TransferOwnership, Severity::Warning),
                 (Rule::Timestamp, Severity::Warning),
                 (Rule::PduStatus, Severity::Warning),
+                (Rule::ExerciseId, Severity::Warning),
                 (Rule::UserMonitor, Severity::Warning),
             ]
             .into_iter()

@@ -186,6 +186,7 @@ pub fn schedule(
             (EventKind::TimestampBackwards, 0.2),
             (EventKind::StatusBits, 0.4),
             (EventKind::ClockSkew, 0.6),
+            (EventKind::ExerciseSwitch, 0.7),
             (EventKind::TimestampFlip, 0.8),
         ] {
             pending.push((kind, format!("{first}@{}", d * at)));
@@ -374,6 +375,7 @@ pub fn schedule(
             | EventKind::TimestampFlip
             | EventKind::TimestampBackwards
             | EventKind::ClockSkew
+            | EventKind::ExerciseSwitch
             | EventKind::StatusBits
             | EventKind::NoResponse
             | EventKind::WrongAck

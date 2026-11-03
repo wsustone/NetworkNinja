@@ -296,7 +296,11 @@ ism-mismatch. Generator clock faults are per site in `World::clocks`, applied
 by `restamp` in `run` before encoding: `--timestamp-flip`,
 `--timestamp-backwards` (10 s: with absolute stamps it also runs behind),
 `--clock-skew` (+30 s), `--status-bits` (bit 4 on the next ES), preset
-`--all-header-faults`.
+`--all-header-faults`. Metric `sender.clock_skew` (gauge, exercise + sender,
+recorded in `Monitor::ingest` from `header::clock_skew`, the rule's own skew).
+Rule `exercise-id` (`Header::exercise`, `[rules.exercise-id] window` 60 s):
+`switched` once per (sender, exercise); `--exercise-switch SITE[@T]` sends one
+Comment with the next exercise ID (no entity to time out).
 
 Explanations (alerts work): every `Alert` carries `kind` (the finding type)
 and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and

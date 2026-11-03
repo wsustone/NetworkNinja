@@ -191,6 +191,8 @@ HEADER FAULTS (a site's simulator)
                             Its clock steps back 10 s
     --clock-skew SITE[@T]   Its clock runs 30 s ahead
     --status-bits SITE[@T]  Its next Entity State sets an undefined PDU Status bit
+    --exercise-switch SITE[@T]
+                            It sends one PDU (a Comment) with the next exercise ID
     --all-header-faults     One of each, on the first site
 
 CONTROLS (alerts must stay quiet)
@@ -394,6 +396,7 @@ fn parse_args() -> Result<Options, String> {
             "--timestamp-backwards" => pending.push((EventKind::TimestampBackwards, val()?)),
             "--clock-skew" => pending.push((EventKind::ClockSkew, val()?)),
             "--status-bits" => pending.push((EventKind::StatusBits, val()?)),
+            "--exercise-switch" => pending.push((EventKind::ExerciseSwitch, val()?)),
             "--all-header-faults" => all_header = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
