@@ -43,6 +43,8 @@ type Key = (u8, u8, EntityId); // exercise, PDU type, object
 #[derive(Debug, Clone)]
 struct Object {
     last_seen: f64,
+    /// When a PDU last arrived: `last_seen` also moves while frozen.
+    heard: f64,
     source: SocketAddr,
     reported: bool,
 }
@@ -90,6 +92,7 @@ impl Heartbeats {
             key,
             Object {
                 last_seen: now,
+                heard: now,
                 source,
                 reported: false,
             },
@@ -108,7 +111,7 @@ impl Heartbeats {
     ) -> Vec<Finding> {
         let mut out = Vec::new();
         self.objects.retain(|&(exercise, pdu_type, id), o| {
-            if gone(exercise, id) {
+            if gone(exercise, id) || now - o.heard > crate::FORGET {
                 return false;
             }
             if paused(exercise, id) {

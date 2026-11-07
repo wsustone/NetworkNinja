@@ -20,6 +20,11 @@ mod emission;
 mod engine;
 pub mod explain;
 mod header;
+
+/// Seconds after its last PDU that a tracker forgets an object, frozen or
+/// not, so state stays bounded whatever arrives (a freeze nobody resumes,
+/// random IDs).
+pub(crate) const FORGET: f64 = 3600.0;
 mod heartbeats;
 mod iff;
 mod interactions;
