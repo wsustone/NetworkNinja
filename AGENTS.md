@@ -390,6 +390,16 @@ loop re-installs monitors when it swaps the Monitor for a replay. Dashboard
 Monitors tab (`monLoad`, `monEdit`, `monToml` builds the block; metric dims
 mirrored in `MON_METRICS`).
 
+Fuzzing (`crates/rules/tests/fuzz.rs`, no dependencies): mutants of the
+generator's own traffic (every preset, v6/v7, all profiles) through a whole
+`Monitor` and through `PcapReader`; 20k inputs per `cargo test`, long runs with
+`NN_FUZZ_ITERS=2000000 NN_FUZZ_SEED=N cargo test --release -p nn-rules --test
+fuzz` (`NN_FUZZ_STATS=1 ... -- --nocapture` prints throughput and state sizes
+every 100k). A panic names the seed, iteration and input hex. Trackers must
+stay bounded whatever arrives: `nn_rules::FORGET` (3600 s) drops radios,
+heartbeat objects and removed entities with no PDU for an hour even while
+frozen (a freeze nobody resumes used to keep them forever).
+
 ## Timing and identity semantics (October 2026 review fixes)
 
 - Live datagrams carry `monotonic` (`nn_capture::steady_now()`, a steady clock

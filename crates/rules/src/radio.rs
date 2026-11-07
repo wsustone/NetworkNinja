@@ -64,6 +64,8 @@ const UNMODULATED: u16 = 6;
 #[derive(Debug, Clone)]
 struct Tx {
     last_seen: f64,
+    /// When a PDU last arrived: `last_seen` also moves while frozen.
+    heard: f64,
     state: u8,
     /// When the state last changed.
     since: f64,
@@ -80,6 +82,7 @@ struct Tx {
 #[derive(Debug, Clone)]
 struct Rx {
     last_seen: f64,
+    heard: f64,
     on: bool,
     source: SocketAddr,
     reported: bool,
@@ -180,6 +183,7 @@ impl Radios {
                 let antenna = [x, y, z];
                 let tx = self.transmitters.entry(key).or_insert(Tx {
                     last_seen: now,
+                    heard: now,
                     state,
                     since: now,
                     source,
@@ -204,6 +208,7 @@ impl Radios {
                 }
                 tx.state = state;
                 tx.last_seen = now;
+                tx.heard = now;
                 tx.source = source;
                 tx.unmodulated = major == UNMODULATED;
                 tx.reported_silent = false;
@@ -314,6 +319,7 @@ impl Radios {
                     key,
                     Rx {
                         last_seen: now,
+                        heard: now,
                         on: state != 0,
                         source,
                         reported: false,
@@ -414,9 +420,16 @@ impl Radios {
                 });
             }
         }
-        // A radio not heard from in ten minutes is gone, not silent.
-        self.transmitters.retain(|_, t| now - t.last_seen < 600.0);
-        self.receivers.retain(|_, r| now - r.last_seen < 600.0);
+        // A radio not heard from in ten minutes is gone, not silent; and
+        // one with no PDU for an hour is forgotten even while its exercise
+        // is frozen (a freeze nobody resumes would otherwise keep every
+        // radio it ever saw).
+        self.transmitters
+            .retain(|_, t| now - t.last_seen < 600.0 && now - t.heard < crate::FORGET);
+        self.receivers
+            .retain(|_, r| now - r.last_seen < 600.0 && now - r.heard < crate::FORGET);
+        let tx = &self.transmitters;
+        self.encodings.retain(|k, _| tx.contains_key(k));
         out
     }
 }
