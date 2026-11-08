@@ -78,6 +78,8 @@ pub enum Rule {
     PduStatus,
     /// A sender that switches exercise ID (`crate::header`).
     ExerciseId,
+    /// Aggregate State member lists and IsPartOf (`crate::aggregate`).
+    EntityManagement,
     /// A user monitor's condition held (`crate::monitors`): one alert per
     /// monitor and group; `rule_id` is the monitor id, with `@tags` for a
     /// group.
@@ -112,6 +114,7 @@ impl Rule {
             Rule::Timestamp => "timestamp",
             Rule::PduStatus => "pdu-status",
             Rule::ExerciseId => "exercise-id",
+            Rule::EntityManagement => "entity-management",
             Rule::UserMonitor => "monitor",
         }
     }
@@ -143,6 +146,7 @@ impl Rule {
             "timestamp" => Some(Rule::Timestamp),
             "pdu-status" => Some(Rule::PduStatus),
             "exercise-id" => Some(Rule::ExerciseId),
+            "entity-management" => Some(Rule::EntityManagement),
             "monitor" => Some(Rule::UserMonitor),
             _ => None,
         }
@@ -437,6 +441,7 @@ pub struct Engine {
     logistics: crate::logistics::Logistics,
     transfers: crate::transfer::Transfers,
     header: crate::header::Header,
+    aggregates: crate::aggregate::Aggregates,
     /// Last time each (rule, kind of finding, entity) point event fired.
     point_last: BTreeMap<(Rule, &'static str, EntityKey), f64>,
     active: BTreeMap<(Rule, EntityKey), Alert>,
@@ -483,6 +488,7 @@ impl Engine {
             logistics: crate::logistics::Logistics::default(),
             transfers: crate::transfer::Transfers::default(),
             header: crate::header::Header::default(),
+            aggregates: crate::aggregate::Aggregates::default(),
             point_last: BTreeMap::new(),
             active: BTreeMap::new(),
             monitor_active: BTreeMap::new(),
@@ -1065,6 +1071,20 @@ impl Engine {
         table: &EntityTable,
     ) -> Vec<AlertEvent> {
         let mut found = Vec::new();
+        if self.enabled(Rule::EntityManagement) {
+            let cfg = &self.config;
+            let limits = crate::aggregate::Limits {
+                grace: cfg.stationary_heartbeat * cfg.timeout_multiplier,
+                aggregate_timeout: nn_decode::heartbeat::of(33).map_or(30.0, |h| cfg.heartbeats.seconds_for(h))
+                    * cfg.heartbeats.timeout_multiplier,
+            };
+            found.extend(
+                self.aggregates
+                    .observe(now, source, raw, table, &limits, |r| cfg.timeout_of(r))
+                    .into_iter()
+                    .map(|f| (Rule::EntityManagement, f)),
+            );
+        }
         if self.enabled(Rule::TransferOwnership) {
             found.extend(
                 self.transfers
@@ -1488,6 +1508,7 @@ impl Engine {
                 .map(|f| (Rule::Designator, f)),
         );
         self.iffs.expire(now);
+        self.aggregates.expire(now);
         let limits = self.transfer_limits();
         found.extend(
             self.transfers
@@ -1626,6 +1647,7 @@ impl Engine {
                 | Rule::Timestamp
                 | Rule::PduStatus
                 | Rule::ExerciseId
+                | Rule::EntityManagement
                 | Rule::UserMonitor => {}
             }
         }

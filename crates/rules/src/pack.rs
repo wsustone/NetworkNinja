@@ -952,6 +952,7 @@ impl Merged {
                 Rule::Timestamp,
                 Rule::PduStatus,
                 Rule::ExerciseId,
+                Rule::EntityManagement,
                 Rule::UserMonitor,
             ]
             .into_iter()
@@ -982,6 +983,7 @@ impl Merged {
                 (Rule::Timestamp, Severity::Warning),
                 (Rule::PduStatus, Severity::Warning),
                 (Rule::ExerciseId, Severity::Warning),
+                (Rule::EntityManagement, Severity::Warning),
                 (Rule::UserMonitor, Severity::Warning),
             ]
             .into_iter()

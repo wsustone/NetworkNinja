@@ -197,6 +197,20 @@ pub enum EventKind {
     ClockSkew,
     /// Header fault: the site's next Entity State sets a PDU Status bit it doesn't define.
     StatusBits,
+    /// Entity management fault: the aggregate's first member is removed and stays listed.
+    AggregateStaleMember,
+    /// Entity management fault: the next Aggregate State lists an entity that doesn't exist.
+    AggregateUnknownMember,
+    /// Entity management fault: the aggregate lists a subaggregate that never reports.
+    AggregateStaleSubaggregate,
+    /// Entity management fault: the next Aggregate State has more appearance records than entities.
+    AggregateAppearances,
+    /// Entity management fault: the next IsPartOf names a part that doesn't exist.
+    PartOfUnknown,
+    /// Entity management fault: the next IsPartOf gives range and bearing with a third component.
+    PartOfRangeBearing,
+    /// Entity management fault: the next IsPartOf gives the wrong Part Type.
+    PartOfType,
     /// Collision fault: only one party reports the next collision.
     OneSidedCollision,
     /// Collision fault: one party reports the next collision twice.
@@ -312,6 +326,13 @@ impl EventKind {
             EventKind::ClockSkew => "clock-skew",
             EventKind::ExerciseSwitch => "exercise-switch",
             EventKind::StatusBits => "status-bits",
+            EventKind::AggregateStaleMember => "aggregate-stale-member",
+            EventKind::AggregateUnknownMember => "aggregate-unknown-member",
+            EventKind::AggregateStaleSubaggregate => "aggregate-stale-subaggregate",
+            EventKind::AggregateAppearances => "aggregate-appearances",
+            EventKind::PartOfUnknown => "part-of-unknown",
+            EventKind::PartOfRangeBearing => "part-of-range-bearing",
+            EventKind::PartOfType => "part-of-type",
             EventKind::OneSidedCollision => "one-sided-collision",
             EventKind::DuplicateCollision => "duplicate-collision",
             EventKind::StaleAppearance => "stale-appearance",
@@ -410,6 +431,13 @@ impl EventKind {
                 | EventKind::TransferConcurrent
                 | EventKind::TransferInactive
                 | EventKind::TransferStalled
+                | EventKind::AggregateStaleMember
+                | EventKind::AggregateUnknownMember
+                | EventKind::AggregateStaleSubaggregate
+                | EventKind::AggregateAppearances
+                | EventKind::PartOfUnknown
+                | EventKind::PartOfRangeBearing
+                | EventKind::PartOfType
                 | EventKind::TimestampFlip
                 | EventKind::TimestampBackwards
                 | EventKind::ClockSkew
@@ -507,6 +535,9 @@ pub struct Config {
     /// Seconds between Transfer Ownership pushes of an entity to another
     /// site's simulator (`families::transfer`).
     pub transfer_every: Option<f64>,
+    /// Seconds between IsPartOf requests; turns on the first site's
+    /// platoon aggregate too (`families::aggregates`).
+    pub aggregate_every: Option<f64>,
     /// Pack each sender's PDUs from one tick into shared datagrams.
     pub bundle: bool,
     /// Simulators stop sending while the exercise is frozen (some do; the
@@ -559,6 +590,7 @@ impl Default for Config {
             iff_every: None,
             logistics_every: None,
             transfer_every: None,
+            aggregate_every: None,
             bundle: false,
             silent_when_frozen: false,
             dr_algorithm: 2,
