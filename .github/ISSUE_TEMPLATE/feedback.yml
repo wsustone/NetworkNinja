@@ -1,0 +1,30 @@
+name: Feedback or idea
+description: Something confusing, missing, or that would make NetworkNinja more useful
+labels: [feedback, tester]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Run `nn-server --version`."
+      placeholder: nn-server 0.1.7
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Getting started (download, first launch, quick start)
+        - Alerts and explanations
+        - Dashboards
+        - Monitors
+        - The generator
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Your feedback
+      description: What you tried to do, what got in the way, and what would have helped.
+    validations:
+      required: true

@@ -1,0 +1,56 @@
+name: Something went wrong
+description: A crash, an error, a wrong or missing alert, or anything that didn't work
+labels: [bug, tester]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing NetworkNinja. Please don't attach recordings, pcaps or screenshots
+        from a real exercise unless you're allowed to share them: describe what you saw instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Run `nn-server --version` (or `nn-server.exe --version`)."
+      placeholder: nn-server 0.1.7
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How you ran it
+      description: The command line, and where the DIS traffic came from (a simulator, the generator, a pcap...).
+      placeholder: |
+        nn-server serve --port 3000
+        traffic: two VBS simulators on the same LAN, DIS v7
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: For a wrong or missing alert, name the check and the entity or sender it was about.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Messages or logs (optional)
+      description: |
+        Anything nn-server printed, or the alert's text from the dashboard. A fix report for a
+        simulation helps: open the problem card and use "fix report", or fetch
+        `http://127.0.0.1:8080/api/report?sim=SITE:APP` and paste the Markdown.
+      render: text
