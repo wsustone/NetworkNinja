@@ -33,10 +33,11 @@ pub enum Metric {
     DrError,
     AlertsOpen,
     ClockSkew,
+    CaptureDrops,
 }
 
 impl Metric {
-    pub const ALL: [Metric; 11] = [
+    pub const ALL: [Metric; 12] = [
         Metric::PduCount,
         Metric::PduDuplicates,
         Metric::BytesCount,
@@ -48,6 +49,7 @@ impl Metric {
         Metric::DrError,
         Metric::AlertsOpen,
         Metric::ClockSkew,
+        Metric::CaptureDrops,
     ];
 
     pub fn name(self) -> &'static str {
@@ -63,6 +65,7 @@ impl Metric {
             Metric::DrError => "entity.dr_error",
             Metric::AlertsOpen => "alerts.open",
             Metric::ClockSkew => "sender.clock_skew",
+            Metric::CaptureDrops => "capture.drops",
         }
     }
 
@@ -99,6 +102,7 @@ impl Metric {
             Metric::DrError => "m",
             Metric::AlertsOpen => "alerts",
             Metric::ClockSkew => "s",
+            Metric::CaptureDrops => "datagrams",
         }
     }
 
@@ -114,6 +118,8 @@ impl Metric {
             Metric::DrError => &[Exercise, Entity],
             Metric::AlertsOpen => &[Exercise, Pack, Rule, Severity],
             Metric::ClockSkew => &[Exercise, Sender],
+            // The kernel counts per socket, not per sender.
+            Metric::CaptureDrops => &[],
         }
     }
 }

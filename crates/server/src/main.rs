@@ -719,6 +719,13 @@ fn serve(
         eprintln!("  dashboard: {scheme}://{addr}");
     }
     eprintln!("  rule packs: {}", packs.packs.join(" + "));
+    hub.set_fact("rule packs", &packs.packs.join(" + "));
+    if let Some(path) = db_file {
+        hub.set_fact("event store", path);
+    }
+    if let Some(path) = record_file {
+        hub.set_fact("recording to", path);
+    }
     if let Some(path) = log_file {
         let n = hub
             .open_log(std::path::Path::new(path))
@@ -798,6 +805,7 @@ fn serve(
     let mut replay_pos: Option<(f64, f64)> = None;
     let start = Instant::now();
     let mut next_state = 0.0;
+    let mut drops_prev: Option<u64> = None;
     let mut next_full = 0.0;
     // Metric rollups reach the store every 10 s, live capture only: a
     // replay's timestamps are the recording's, not today's (ADR 0008).
@@ -1011,6 +1019,21 @@ fn serve(
             recent.push_back(j);
         }
         if t >= next_state {
+            // `capture.drops`: what the kernel dropped since the last tick
+            // (Linux; elsewhere the OS doesn't say).
+            if let Some(n) = hub.kernel_drops() {
+                if let Some(prev) = drops_prev {
+                    if n > prev {
+                        m.metrics.record(
+                            t,
+                            nn_state::metrics::Metric::CaptureDrops,
+                            Default::default(),
+                            (n - prev) as f64,
+                        );
+                    }
+                }
+                drops_prev = Some(n);
+            }
             // Once a second, so a server stopped with Ctrl-C or SIGTERM
             // loses at most the last second of a recording.
             if let Some(w) = rec_w.as_mut() {

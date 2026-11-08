@@ -336,6 +336,15 @@ Time series carry their scale on the svg (`data-from/to/l/r/w`) for
 drag-to-zoom. The address holds `#dash?board|template=…&span&from&to&v.DIM=`
 (`dashLinkSync` on every bar render, `dashLinkRead` at load, applied in
 `dashLoaded`).
+Monitor health (`GET /api/health`, `Hub::health_json`, header button "monitor
+health"): per input datagrams, errors, `stalls` (times the reader waited on a
+full queue to the monitor: `ListenerStats::stalls`, via `try_send`) and
+`kernel_drops` (Linux `/proc/net/udp{,6}` drops for the port, else null);
+CPU % between calls and memory from `nn_server::health::usage()` (getrusage on
+unix, GetProcessTimes / K32GetProcessMemoryInfo on Windows; current RSS on
+Linux and Windows only); `Hub::set_fact` lines (rule packs, event store,
+recording). Metric `capture.drops` (counter, no dims) is the kernel-drop delta
+recorded each state tick (Linux).
 Header: exercise selector (`exSel` in localStorage `nn_exercise`, `exOk(ex)`
 filters the entity table, map, log feed and `issueList`; decode errors carry
 no exercise and always show); sound toggle (`nn_sound`, WebAudio `chime()` on a

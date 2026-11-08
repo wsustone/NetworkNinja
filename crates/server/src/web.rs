@@ -99,6 +99,11 @@ pub struct Hub {
     /// Saved dashboards when there is no `--db` store: name →
     /// (updated unix second, JSON definition).
     dashboards: Mutex<BTreeMap<String, (i64, String)>>,
+    /// `/api/health`: what the server runs with (rule packs, stores...), its
+    /// start, and the last CPU sample (for a percentage between calls).
+    facts: Mutex<Vec<(String, String)>>,
+    started: std::time::Instant,
+    cpu_prev: Mutex<Option<(std::time::Instant, f64)>>,
 }
 
 /// A query for the serve loop and where to send the memory cells back.
@@ -152,6 +157,9 @@ impl Hub {
             evidence: Mutex::new(VecDeque::new()),
             conformance: Mutex::new((Vec::new(), BTreeMap::new())),
             dashboards: Mutex::new(BTreeMap::new()),
+            facts: Mutex::new(Vec::new()),
+            started: std::time::Instant::now(),
+            cpu_prev: Mutex::new(None),
         }
     }
 
@@ -574,6 +582,81 @@ impl Hub {
     /// Serve `/api/capture` and `/api/pdus` from this capture file.
     pub fn set_capture(&self, path: std::path::PathBuf, stats: Arc<crate::pdustore::CaptureStats>) {
         *self.capture.lock().unwrap() = Some((path, stats));
+    }
+
+    /// A line for `/api/health` (rule packs, event store, recording...).
+    pub fn set_fact(&self, name: &str, value: &str) {
+        let mut f = self.facts.lock().unwrap();
+        f.retain(|(n, _)| n != name);
+        f.push((name.to_string(), value.to_string()));
+    }
+
+    /// Kernel drops over every live listener (Linux), for `capture.drops`.
+    pub fn kernel_drops(&self) -> Option<u64> {
+        let inputs = self.inputs.lock().unwrap();
+        let mut ports = std::collections::BTreeSet::new();
+        let mut total = None;
+        for s in inputs.iter() {
+            // Listeners sharing a port share its sockets' counters.
+            if ports.insert(s.local.port()) {
+                if let Some(n) = s.kernel_drops() {
+                    total = Some(total.unwrap_or(0) + n);
+                }
+            }
+        }
+        total
+    }
+
+    /// `/api/health`: uptime, CPU and memory, each input's counters, and
+    /// what the server runs with.
+    pub fn health_json(&self) -> String {
+        let now = std::time::Instant::now();
+        let usage = crate::health::usage();
+        let cpu = usage.and_then(|u| {
+            let mut prev = self.cpu_prev.lock().unwrap();
+            let (t0, c0) = prev.unwrap_or((self.started, 0.0));
+            *prev = Some((now, u.cpu_secs));
+            let wall = now.duration_since(t0).as_secs_f64();
+            (wall > 0.2).then(|| 100.0 * (u.cpu_secs - c0) / wall)
+        });
+        let opt = |v: Option<u64>| v.map_or("null".to_string(), |n| n.to_string());
+        let inputs: Vec<String> = self
+            .inputs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                format!(
+                    "{{\"name\":\"{}\",\"local\":\"{}\",\"datagrams\":{},\"errors\":{},\"stalls\":{},\"kernel_drops\":{},\"recv_buffer\":{}}}",
+                    esc(s.name()),
+                    s.local,
+                    s.datagrams.load(Ordering::Relaxed),
+                    s.errors.load(Ordering::Relaxed),
+                    s.stalls.load(Ordering::Relaxed),
+                    opt(s.kernel_drops()),
+                    s.recv_buffer
+                )
+            })
+            .collect();
+        let facts: Vec<String> = self
+            .facts
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| format!("[\"{}\",\"{}\"]", esc(k), esc(v)))
+            .collect();
+        format!(
+            "{{\"version\":\"{}\",\"os\":\"{}\",\"uptime\":{:.0},\"cpu_percent\":{},\"rss\":{},\"peak_rss\":{},\"live\":{},\"inputs\":[{}],\"facts\":[{}],\"license\":\"not needed: pre-release builds run without a license\"}}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            now.duration_since(self.started).as_secs_f64(),
+            cpu.map_or("null".to_string(), |c| format!("{c:.1}")),
+            opt(usage.and_then(|u| u.rss)),
+            opt(usage.and_then(|u| u.peak_rss)),
+            self.inputs_live.load(Ordering::Relaxed),
+            inputs.join(","),
+            facts.join(",")
+        )
     }
 
     /// The listeners `/api/inputs` reports on, and whether they're live
@@ -1180,6 +1263,9 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
                     &format!("{{\"error\":\"{}\"}}", esc(&e)),
                 ),
             };
+        }
+        ("GET", "/api/health") => {
+            let _ = respond(s, "200 OK", "application/json", &hub.health_json());
         }
         ("GET", "/api/inputs") => {
             let mut body = inputs_json(

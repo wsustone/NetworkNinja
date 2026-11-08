@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod config;
 pub mod evidence;
+pub mod health;
 pub mod monitors_api;
 pub mod names;
 pub mod pdustore;
