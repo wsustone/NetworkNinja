@@ -7,7 +7,7 @@ use crate::udp::{UdpConfig, UdpSource};
 use crate::Datagram;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -30,9 +30,53 @@ pub struct ListenerStats {
     last_at: AtomicU64,
     pub errors: AtomicU64,
     pub last_error: Mutex<Option<String>>,
+    /// Times the queue to the monitor was full and this reader had to wait:
+    /// the monitor falling behind, the step before the kernel drops.
+    pub stalls: AtomicU64,
+}
+
+/// Kernel drops summed over every UDP socket bound to `port`: the last
+/// column of `/proc/net/udp` and `/proc/net/udp6`.
+#[cfg(target_os = "linux")]
+fn udp_drops(port: u16) -> Option<u64> {
+    let mut total = None;
+    for file in ["/proc/net/udp", "/proc/net/udp6"] {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        total = Some(total.unwrap_or(0) + drops_for(&text, port));
+    }
+    total
+}
+
+#[cfg(not(target_os = "linux"))]
+fn udp_drops(_port: u16) -> Option<u64> {
+    None
+}
+
+/// Sum the `drops` column of a `/proc/net/udp` table for one local port.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn drops_for(table: &str, port: u16) -> u64 {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let local = f.get(1)?;
+            let p = u16::from_str_radix(local.rsplit(':').next()?, 16).ok()?;
+            (p == port).then(|| f.last()?.parse::<u64>().ok()).flatten()
+        })
+        .sum()
 }
 
 impl ListenerStats {
+    /// Datagrams the kernel dropped on this listener's port because its
+    /// receive buffer was full. Linux only (`/proc/net/udp`, `udp6`); `None`
+    /// elsewhere. Sockets sharing the port (`share`) are counted together.
+    pub fn kernel_drops(&self) -> Option<u64> {
+        udp_drops(self.local.port())
+    }
+
     pub fn name(&self) -> &str {
         &self.config.name
     }
@@ -118,6 +162,7 @@ impl Listeners {
             last_at: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             last_error: Mutex::new(None),
+            stalls: AtomicU64::new(0),
         });
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, flag, s) = (self.tx.clone(), Arc::clone(&stop), Arc::clone(&stats));
@@ -129,8 +174,15 @@ impl Listeners {
                         s.bytes.fetch_add(d.payload.len() as u64, Ordering::Relaxed);
                         s.last_at.store(d.monotonic.unwrap_or(0.0).to_bits(), Ordering::Relaxed);
                         d.listener = Some(Arc::clone(&name));
-                        if tx.send(d).is_err() {
-                            break;
+                        match tx.try_send(d) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(d)) => {
+                                s.stalls.fetch_add(1, Ordering::Relaxed);
+                                if tx.send(d).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(TrySendError::Disconnected(_)) => break,
                         }
                     }
                     Ok(None) => {}
@@ -214,6 +266,18 @@ impl Drop for Listeners {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn kernel_drops_are_read_per_port() {
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops
+  12: 00000000:0BB8 00000000:0000 07 00000000:00000000 00:00000000 00000000  1000        0 41234 2 0000000000000000 17
+  13: 0100007F:0BB8 00000000:0000 07 00000000:00000000 00:00000000 00000000  1000        0 41235 2 0000000000000000 3
+  14: 00000000:0BC0 00000000:0000 07 00000000:00000000 00:00000000 00000000  1000        0 41236 2 0000000000000000 99
+";
+        assert_eq!(drops_for(table, 3000), 20, "both sockets on 3000 (0x0BB8)");
+        assert_eq!(drops_for(table, 3008), 99);
+        assert_eq!(drops_for(table, 4000), 0);
+    }
+
     use super::*;
     use std::net::{Ipv4Addr, UdpSocket};
 

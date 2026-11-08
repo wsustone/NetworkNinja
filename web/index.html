@@ -74,6 +74,17 @@
   #inputsEd .row button.plain { background:none; color:var(--dim); border:1px solid var(--line); font-weight:400; }
   #inputsEd .msg { font-size:12px; } #inputsEd .msg.bad { color:var(--crit); } #inputsEd .msg.good { color:var(--ok); }
   /* Fix report: one simulation's problems as Markdown / CSV. */
+  #healthEd { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center; z-index:8; overflow-y:auto; padding:4vh 1em; }
+  #healthEd.on { display:flex; }
+  #healthEd>div { background:var(--panel); border:1px solid var(--line); border-radius:8px; width:min(860px,100%); padding:0 .9em .9em; }
+  #healthEd h2 { margin:0; padding:.7em 0; font-size:14px; display:flex; gap:.6em; align-items:center; }
+  #healthEd h2 span { margin-left:auto; }
+  #healthEd table { width:100%; border-collapse:collapse; font-size:12px; margin:.4em 0 .8em; }
+  #healthEd th, #healthEd td { text-align:left; padding:.3em .5em; border-bottom:1px solid var(--line); }
+  #healthEd td.n, #healthEd th.n { text-align:right; font-variant-numeric:tabular-nums; }
+  #healthEd .bad { color:var(--crit); font-weight:600; } #healthEd .warn { color:var(--warn); } #healthEd .good { color:var(--ok); }
+  #healthEd .kv { display:grid; grid-template-columns:max-content 1fr; gap:.25em 1em; font-size:12px; }
+  #healthEd .kv b { color:var(--dim); font-weight:400; }
   #reportEd { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center; z-index:8; overflow-y:auto; padding:4vh 1em; }
   #reportEd.on { display:flex; }
   #reportEd>div { background:var(--panel); border:1px solid var(--line); border-radius:8px; width:min(900px,100%); display:flex; flex-direction:column; }
@@ -350,6 +361,7 @@
   <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button><button id="tabDash">Dashboards</button><button id="tabMon" title="Your own conditions: a federate going quiet, a rate out of range, a check firing too often">Monitors</button></span>
   <span id="conn" class="down">connecting…</span>
   <span class="stat">exercise <select id="exsel" title="Show one exercise, or all of them"><option value="">all</option></select></span>
+  <button id="hHealth" class="albtn" title="Is the monitor itself keeping up? Capture drops, CPU, memory, what it runs with">monitor health</button>
   <button id="sound" class="albtn" title="Sound a chime for each new critical alert (this browser only)">🔕 sound off</button>
   <span class="stat" id="hFrozen"></span>
   <span class="stat">run <select id="runsel"><option value="">live</option></select></span>
@@ -479,6 +491,12 @@
     <label>period <select id="rpSince"><option value="3600">last hour</option><option value="86400" selected>last 24 hours</option><option value="604800">last 7 days</option><option value="0">everything stored</option></select></label></div>
   <textarea id="rpText" readonly></textarea>
   <div class="foot"><button id="rpCopy">copy Markdown</button><button class="plain" id="rpMd">download .md</button><button class="plain" id="rpCsv">download .csv</button><span id="rpMsg" class="chk"></span></div>
+</div></div>
+<div id="healthEd"><div>
+  <h2>Monitor health <span><button class="albtn" id="hlClose">close</button></span></h2>
+  <div id="hlVerdict"></div>
+  <table><thead><tr><th>input</th><th>listening on</th><th class="n">datagrams</th><th class="n">errors</th><th class="n" title="times the monitor fell behind and the listener had to wait">queue stalls</th><th class="n" title="datagrams the operating system dropped because the receive buffer was full">kernel drops</th><th class="n">buffer</th></tr></thead><tbody id="hlInputs"></tbody></table>
+  <div class="kv" id="hlKv"></div>
 </div></div>
 <div id="toast"></div>
 <div id="inputsEd"><div>
@@ -675,6 +693,39 @@ function pduHtml(seq) {
     + (d.decoded ? `<pre>${esc(d.decoded)}</pre>` : "")
     + `<pre>${esc(d.hex)}</pre></div>`;
 }
+
+// --- monitor health (GET /api/health): is the monitor itself keeping up? ---
+let hlTimer = null;
+const mb = n => n === null || n === undefined ? "–" : n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + " GB" : (n / (1 << 20)).toFixed(0) + " MB";
+function loadHealth() {
+  fetch("/api/health", auth()).then(r => r.ok ? r.json() : null).then(h => {
+    if (!h) return;
+    const drops = h.inputs.reduce((a, i) => a + (i.kernel_drops || 0), 0);
+    const stalls = h.inputs.reduce((a, i) => a + i.stalls, 0);
+    const known = h.inputs.some(i => i.kernel_drops !== null);
+    $("hlVerdict").innerHTML = !h.live ? '<p class="chk">Replaying a recording: no live inputs.</p>'
+      : drops ? `<p class="bad">The operating system dropped ${drops} datagrams: the monitor missed traffic. Raise the receive buffer (--receive-buffer), or give the monitor more CPU.</p>`
+      : stalls ? `<p class="warn">The monitor fell behind ${stalls} times (queue stalls), but nothing was dropped${known ? "" : " that the OS reports"}.</p>`
+      : `<p class="good">Keeping up: no queue stalls${known ? ", no kernel drops" : ""}.</p>`;
+    $("hlInputs").innerHTML = h.inputs.map(i => `<tr><td>${esc(i.name)}</td><td>${esc(i.local)}</td><td class="n">${i.datagrams}</td>`
+      + `<td class="n${i.errors ? " warn" : ""}">${i.errors}</td><td class="n${i.stalls ? " warn" : ""}">${i.stalls}</td>`
+      + `<td class="n${i.kernel_drops ? " bad" : ""}">${i.kernel_drops === null ? `<span class="chk" title="${esc(h.os)} doesn't report drops per socket">n/a</span>` : i.kernel_drops}</td>`
+      + `<td class="n">${mb(i.recv_buffer)}</td></tr>`).join("") || '<tr><td colspan="7" class="chk">no live inputs</td></tr>';
+    const up = h.uptime < 3600 ? Math.round(h.uptime / 60) + " min" : (h.uptime / 3600).toFixed(1) + " h";
+    const kv = [["version", h.version + " on " + h.os], ["running for", up],
+      ["CPU", h.cpu_percent === null ? "–" : h.cpu_percent.toFixed(1) + " % of one core"],
+      ["memory", mb(h.rss) + (h.peak_rss ? " (peak " + mb(h.peak_rss) + ")" : "")],
+      ...h.facts, ["license", h.license]];
+    $("hlKv").innerHTML = kv.map(([k, v]) => `<b>${esc(k)}</b><span>${esc(String(v))}</span>`).join("");
+  }).catch(() => {});
+}
+$("hHealth").onclick = () => {
+  $("healthEd").classList.add("on");
+  loadHealth();
+  clearInterval(hlTimer);
+  hlTimer = setInterval(loadHealth, 3000);
+};
+$("hlClose").onclick = () => { $("healthEd").classList.remove("on"); clearInterval(hlTimer); };
 
 // --- fix report (GET /api/report): one simulation's problems for its vendor ---
 let rpSim = null, rpEx = null;
@@ -1453,6 +1504,7 @@ const MON_METRICS = {
   "entity.dr_error": ["exercise", "entity"],
   "alerts.open": ["exercise", "pack", "rule", "severity"],
   "sender.clock_skew": ["exercise", "sender"],
+  "capture.drops": [],
 };
 const MON_GAUGES = new Set(["entity.active", "entity.heartbeat_mean", "entity.heartbeat_jitter", "entity.dr_error", "alerts.open", "sender.clock_skew"]);
 const MON_EVENT_DIMS = ["exercise", "site", "app", "entity", "sender", "rule"];
@@ -1930,6 +1982,7 @@ const METRICS = {
   "entity.dr_error":         {label: "dead-reckoning error", unit: "m",         dims: ["exercise", "entity"], gauge: true},
   "alerts.open":             {label: "open alerts",          unit: "alerts",    dims: ["exercise", "pack", "rule", "severity"], gauge: true},
   "sender.clock_skew":       {label: "clock skew",           unit: "s",         dims: ["exercise", "sender"], gauge: true},
+  "capture.drops":           {label: "capture drops",        unit: "datagrams", dims: []},
 };
 const AGGS = {counter: ["rate", "sum", "max"], gauge: ["avg", "sum", "max", "min"]};
 const AGG_LABEL = {rate: "per second", sum: "total", avg: "average", max: "max", min: "min"};
@@ -1966,6 +2019,8 @@ const TEMPLATES = {
     W("Worst heartbeat jitter", "toplist", "entity.heartbeat_jitter", "max", 600, {q: {by: ["entity"]}}),
     W("Largest dead-reckoning error", "toplist", "entity.dr_error", "max", 600, {q: {by: ["entity"]}}),
     W("Heartbeat jitter (worst entity)", "timeseries", "entity.heartbeat_jitter", "max", 3600),
+    // Datagrams the OS dropped before the monitor read them (Linux).
+    W("Capture drops (Linux)", "counter", "capture.drops", "sum", 3600, {th: {dir: "above", warn: "", crit: 0}}),
     // Absolute timestamps only; ahead is +, behind is -.
     W("Clock skew by sender", "timeseries", "sender.clock_skew", "avg", 3600, {q: {by: ["sender"]}, th: {dir: "above", warn: 1, crit: 5}}),
   ]},

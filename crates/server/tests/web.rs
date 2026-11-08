@@ -48,6 +48,19 @@ fn serves_index_and_state() {
         );
     }
     assert!(http_get(addr, "/icon.svg").contains("image/svg+xml"));
+    // Monitor health: the server's own numbers and what it runs with.
+    hub.set_fact("rule packs", "dis-base v1");
+    let health = http_get(addr, "/api/health");
+    for field in [
+        "\"uptime\":",
+        "\"cpu_percent\":",
+        "\"peak_rss\":",
+        "\"inputs\":[",
+        "[\"rule packs\",\"dis-base v1\"]",
+        "\"license\":",
+    ] {
+        assert!(health.contains(field), "{field} in {health}");
+    }
     assert!(http_get(addr, "/api/state").contains("application/json"));
 }
 
