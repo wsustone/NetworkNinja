@@ -26,6 +26,11 @@ const WORLD_GEOJSON: &str = include_str!("../../../web/world.geojson");
 const NE_COASTLINE: &str = include_str!("../../../web/ne-coastline.json");
 const NE_RIVERS: &str = include_str!("../../../web/ne-rivers_lake_centerlines.json");
 const NE_LAKES: &str = include_str!("../../../web/ne-lakes.json");
+// Add to home screen (a web app manifest and its icons).
+const ICON_SVG: &str = include_str!("../../../web/icon.svg");
+const ICON_192: &[u8] = include_bytes!("../../../web/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("../../../web/icon-512.png");
+const MANIFEST: &str = r##"{"name":"NetworkNinja","short_name":"NetworkNinja","description":"Live monitoring and conformance checks for DIS exercises","start_url":"/","scope":"/","display":"standalone","background_color":"#0d1117","theme_color":"#0d1117","icons":[{"src":"/icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"},{"src":"/icon.svg","sizes":"any","type":"image/svg+xml"}]}"##;
 /// Queued frames per client before it is dropped as too slow.
 const CLIENT_QUEUE: usize = 128;
 /// Log entries kept in memory for `/api/log` and new clients.
@@ -973,6 +978,19 @@ impl Write for TlsWriter {
     }
 }
 
+/// A binary body (images).
+fn respond_bytes(mut s: impl Conn, content_type: &str, body: &[u8]) -> io::Result<()> {
+    write!(
+        s,
+        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\ncontent-type: {content_type}\r\ncache-control: max-age=86400\r\nconnection: close\r\n\r\n",
+        body.len()
+    )?;
+    s.write_all(body)?;
+    s.flush()?;
+    s.close();
+    Ok(())
+}
+
 fn respond(mut s: impl Conn, status: &str, content_type: &str, body: &str) -> io::Result<()> {
     write!(
         s,
@@ -1043,6 +1061,18 @@ fn handle_conn(hub: Arc<Hub>, mut s: impl Conn) {
         }
         ("GET", "/" | "/index.html") => {
             let _ = respond(s, "200 OK", "text/html; charset=utf-8", INDEX_HTML);
+        }
+        ("GET", "/manifest.webmanifest") => {
+            let _ = respond(s, "200 OK", "application/manifest+json", MANIFEST);
+        }
+        ("GET", "/icon.svg") => {
+            let _ = respond(s, "200 OK", "image/svg+xml", ICON_SVG);
+        }
+        ("GET", "/icon-192.png") => {
+            let _ = respond_bytes(s, "image/png", ICON_192);
+        }
+        ("GET", "/icon-512.png") => {
+            let _ = respond_bytes(s, "image/png", ICON_512);
         }
         ("GET", "/vendor/maplibre-gl.js") => {
             let _ = respond(s, "200 OK", "text/javascript; charset=utf-8", MAPLIBRE_JS);
