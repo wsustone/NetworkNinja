@@ -34,6 +34,20 @@ fn serves_index_and_state() {
     assert!(state.contains("{\"type\":\"state\"}"), "{state}");
 
     assert!(http_get(addr, "/nope").contains("404"));
+    // Add to home screen: the manifest and its icons, no session needed.
+    let manifest = http_get(addr, "/manifest.webmanifest");
+    assert!(
+        manifest.contains("application/manifest+json") && manifest.contains("\"display\":\"standalone\""),
+        "{manifest}"
+    );
+    for icon in ["/icon-192.png", "/icon-512.png"] {
+        let r = http_get(addr, icon);
+        assert!(
+            r.starts_with("HTTP/1.1 200") && r.contains("image/png") && r.contains("PNG"),
+            "{icon}"
+        );
+    }
+    assert!(http_get(addr, "/icon.svg").contains("image/svg+xml"));
     assert!(http_get(addr, "/api/state").contains("application/json"));
 }
 

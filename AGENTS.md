@@ -336,6 +336,14 @@ Time series carry their scale on the svg (`data-from/to/l/r/w`) for
 drag-to-zoom. The address holds `#dash?board|template=…&span&from&to&v.DIM=`
 (`dashLinkSync` on every bar render, `dashLinkRead` at load, applied in
 `dashLoaded`).
+Header: exercise selector (`exSel` in localStorage `nn_exercise`, `exOk(ex)`
+filters the entity table, map, log feed and `issueList`; decode errors carry
+no exercise and always show); sound toggle (`nn_sound`, WebAudio `chime()` on a
+live critical firing in the selected exercise, never the backlog). Home
+screen: `/manifest.webmanifest`, `/icon.svg`, `/icon-192.png`, `/icon-512.png`
+(`respond_bytes`), public like the map assets; the PNGs are drawn to match
+`web/icon.svg`. The dashboard bar's window label (`#dvAt`) always shows the
+window and opens the custom from/to on click.
 Dashboard Issues panel: tabs Problems (default) / Entities / Log
 (`boardView` in localStorage). A problem groups per-entity issues by
 (exercise, check `rule`, `finding`, simulation = entity site:app); its card

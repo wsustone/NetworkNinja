@@ -3,6 +3,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NetworkNinja</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="stylesheet" href="/vendor/maplibre-gl.css">
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --crit:#f85149; --warn:#d29922; --ok:#3fb950; }
@@ -332,7 +338,10 @@
   #dbar input[type=datetime-local] { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:.15em .3em; font:inherit; font-size:12px; color-scheme:dark; }
   #dgrid:not(.edit) .wbody svg[data-from] { cursor:crosshair; touch-action:pan-y; }
   .zoomsel { position:absolute; top:0; bottom:18px; background:rgba(88,166,255,.15); border:1px solid rgba(88,166,255,.6); pointer-events:none; }
-  #dvSeek { width:220px; margin:0 .2em; } #dvAt { min-width:9em; } #dvAt.paused { color:var(--warn); }
+  #dvSeek { width:220px; margin:0 .2em; }
+  #dvAt { cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px; }
+  header #exsel { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; font:inherit; font-size:12px; }
+  #sound.on { color:var(--warn); border-color:var(--warn); } #dvAt { min-width:9em; } #dvAt.paused { color:var(--warn); }
   @media (max-width:700px) { #dgrid { grid-template-columns:1fr; } .wcard { grid-column:span 1 !important; } }
 </style>
 
@@ -340,7 +349,8 @@
   <b>NetworkNinja</b>
   <span class="tabs"><button id="tabLive" class="on">Live</button><button id="tabConf">Conformance</button><button id="tabDash">Dashboards</button><button id="tabMon" title="Your own conditions: a federate going quiet, a rate out of range, a check firing too often">Monitors</button></span>
   <span id="conn" class="down">connecting…</span>
-  <span class="stat">exercise <b id="hEx">–</b></span>
+  <span class="stat">exercise <select id="exsel" title="Show one exercise, or all of them"><option value="">all</option></select></span>
+  <button id="sound" class="albtn" title="Sound a chime for each new critical alert (this browser only)">🔕 sound off</button>
   <span class="stat" id="hFrozen"></span>
   <span class="stat">run <select id="runsel"><option value="">live</option></select></span>
   <span class="stat">speed <select id="pspeed"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></span>
@@ -746,6 +756,7 @@ function issueList() {
   const now = state ? state.at : Date.now() / 1000;
   const out = [];
   for (const i of issues.values()) {
+    if (!exOk(i.exercise)) continue;
     i.open = openAlert(i);
     i.quiet = !i.open && now - i.last > QUIET;
     if (!i.open && now - i.last > DROP) continue;
@@ -771,6 +782,7 @@ function pushEntry(e, silent) {
   feed.push(e);
   if (feed.length > 2000) feed.shift();
   note(e);
+  if (!silent && e.kind === "alert" && e.state === "firing" && e.severity === "critical" && exOk(e.exercise)) chime();
   renderFeed();
   renderBoard();
   if (!$("dash").hidden) dashEventsRedraw();
@@ -806,6 +818,7 @@ function renderFeed() {
   const terms = $("filter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hay = e => [e.entity, e.rule, e.message, e.pack, e.state, e.sender, e.source, e.kind === "error" ? "decode-error" : ""].join(" ").toLowerCase();
   const items = feed
+    .filter(e => exOk(e.exercise))
     .filter(e => !terms.length || terms.every(t => hay(e).includes(t)))
     .slice(-500);
   $("alerts").innerHTML = items.map(e => {
@@ -1071,10 +1084,61 @@ function statusOf(e) {
   return "live";
 }
 
+// --- one exercise or all: the table, map, problems and log ---
+let exSel = "";
+try { exSel = localStorage.nn_exercise || ""; } catch (e) {}
+const exOk = ex => !exSel || ex === undefined || ex === null || String(ex) === exSel;
+function renderExercises(ids) {
+  const sel = $("exsel");
+  if (document.activeElement === sel) return;
+  const list = exSel && !ids.includes(exSel) ? [...ids, exSel] : ids;
+  const html = '<option value="">all</option>' + list.map(id => {
+    const fz = state.exercises[id] && state.exercises[id].frozen ? " (frozen)" : "";
+    return `<option value="${esc(id)}"${id === exSel ? " selected" : ""}>${esc(id)}${fz}</option>`;
+  }).join("");
+  if (sel.innerHTML !== html) sel.innerHTML = html;
+}
+$("exsel").onchange = () => {
+  exSel = $("exsel").value;
+  try { localStorage.nn_exercise = exSel; } catch (e) {}
+  render(); renderFeed(); renderBoard(); updateMap();
+};
+
+// --- a chime for each new critical alert, if this browser turned it on ---
+let soundOn = false, audio = null;
+try { soundOn = localStorage.nn_sound === "1"; } catch (e) {}
+function soundButton() {
+  $("sound").textContent = soundOn ? "🔔 sound on" : "🔕 sound off";
+  $("sound").classList.toggle("on", soundOn);
+}
+function chime() {
+  if (!soundOn) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const t = audio.currentTime;
+    for (const [f, at] of [[880, 0], [660, 0.18]]) {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = f; o.type = "sine";
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(0.25, t + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.16);
+      o.connect(g).connect(audio.destination);
+      o.start(t + at); o.stop(t + at + 0.17);
+    }
+  } catch (e) {}
+}
+$("sound").onclick = () => {
+  soundOn = !soundOn;
+  try { localStorage.nn_sound = soundOn ? "1" : "0"; } catch (e) {}
+  soundButton();
+  chime(); // browsers only allow sound after a click: this one unlocks it
+};
+soundButton();
+
 function render() {
   if (!state) return;
   const exIds = Object.keys(state.exercises);
-  $("hEx").textContent = exIds.join(", ") || "–";
+  renderExercises(exIds);
   const live = state.entities.filter(e => !e.removed && !e.stale).length;
   $("hEnt").textContent = live + " / " + state.entities.length;
   $("hRate").textContent = state.rates.pdu_1s.toFixed(1);
@@ -1086,6 +1150,7 @@ function render() {
   const ef = $("efilter").value.trim().toLowerCase();
   const rows = [...state.entities]
     .map(e => { e.age = Math.max(0, state.at - (e.seen || state.at)); e.status = statusOf(e); e.issues = iss[e.id] ? iss[e.id].n : 0; return e; })
+    .filter(e => exOk(e.exercise))
     .filter(e => !ef || [e.id, e.marking, e.etype, e.force, e.exercise].join(" ").toLowerCase().includes(ef))
     .sort((a,b) => {
     let x = a[sortKey], y = b[sortKey];
@@ -1206,7 +1271,7 @@ function initMap() {
 function updateMap() {
   if (!mapReady || !state) return;
   const iss = issuesByEntity();
-  const feats = state.entities.filter(e => !e.removed).map(e => ({
+  const feats = state.entities.filter(e => !e.removed && exOk(e.exercise)).map(e => ({
     type:"Feature",
     geometry:{type:"Point", coordinates:[e.lon, e.lat]},
     properties:{id:e.id, marking:e.marking, st:statusOf(e), k:e.ek||0, d:e.edom||0, f:e.force||0, iss:iss[e.id] ? iss[e.id].sev : 0},
@@ -2045,8 +2110,12 @@ function renderViewBar() {
   }
   const s = $("dvSeek"); s.min = Math.floor(a); s.max = Math.ceil(b);
   if (document.activeElement !== s) s.value = Math.round(to);
-  $("dvAt").textContent = v.to === null ? "live"
-    : custom ? `${hms(v.from)} – ${hms(v.to)} · paused` : "ending " + hms(v.to) + " · paused";
+  // The window on screen, always: click it to set its start and end.
+  if (v.span) {
+    const {from: wf, to: wt} = widgetRange({span: v.span});
+    $("dvAt").textContent = `${hms(wf)} – ${hms(wt)}` + (v.to === null ? " · live" : " · paused");
+  } else $("dvAt").textContent = v.to === null ? "per widget · live" : "per widget, ending " + hms(v.to) + " · paused";
+  $("dvAt").title = "click to set the window's start and end";
   $("dvAt").classList.toggle("paused", v.to !== null);
   $("dvNow").hidden = v.to === null;
   dashLinkSync();
@@ -2071,6 +2140,13 @@ $("dvSpan").onchange = () => {
   dash.view = {span, to: dash.view.span === "custom" ? null : dash.view.to};
   dash.zooms = [];
   dashReload();
+};
+$("dvAt").onclick = () => {
+  if (dash.view.span !== "custom") {
+    const {from, to} = widgetRange({span: dash.view.span || 3600});
+    viewSet(from, to, false);
+  }
+  $("dvFrom").focus();
 };
 $("dvFrom").onchange = $("dvTo").onchange = () => {
   const from = fromLocalInput($("dvFrom").value), to = fromLocalInput($("dvTo").value);
