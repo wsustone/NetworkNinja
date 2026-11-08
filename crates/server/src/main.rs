@@ -1011,6 +1011,11 @@ fn serve(
             recent.push_back(j);
         }
         if t >= next_state {
+            // Once a second, so a server stopped with Ctrl-C or SIGTERM
+            // loses at most the last second of a recording.
+            if let Some(w) = rec_w.as_mut() {
+                let _ = w.flush();
+            }
             if t >= next_full {
                 // Full frame every 30 s resyncs WebSocket clients.
                 let snap = state_json(&m, t, hub.client_count(), &packs.packs, &recent, replay_pos);
