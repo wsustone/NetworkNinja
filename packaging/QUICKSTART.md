@@ -77,4 +77,18 @@ The dashboard fills with entities, and with the faults the generator injects. Ru
 - **"Address already in use".** Another program (often a simulator on the same machine) holds
   the port. Add `--share` to share it, or choose another port.
 
+## Reporting a problem or feedback
+
+Open an issue at <https://github.com/wsustone/NetworkNinja/issues/new/choose>: **Something went
+wrong** for a crash, an error or a wrong or missing alert, **Feedback or idea** for anything else.
+The form asks for:
+
+- the version: `./nn-server --version`;
+- your operating system, and how you ran it (the command line, and where the traffic came from);
+- what happened and what you expected. For an alert, name the check and the entity or sender.
+
+A fix report helps with alerts: open the problem card in the dashboard and use **fix report**, or
+fetch `http://127.0.0.1:8080/api/report?sim=SITE:APP` and paste the Markdown. Please don't attach
+recordings, pcaps or screenshots from a real exercise unless you're allowed to share them.
+
 Copyright 2026 Juston Morgan. NetworkNinja is licensed under the Apache License, Version 2.0; see LICENSE and NOTICE.

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Quick start and first-launch help
+    url: https://github.com/wsustone/NetworkNinja/blob/main/packaging/QUICKSTART.md#if-it-wont-start
+    about: Programs blocked on first launch, ports in use, and other common start-up problems.

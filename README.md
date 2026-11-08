@@ -6,27 +6,30 @@ NetworkNinja catches exercise-breaking network and simulation faults live, such 
 
 ## Status
 
-The core loop works end to end on the console: synthetic or captured DIS traffic in, the three MVP alerts out.
+Testable end to end: DIS traffic in (live UDP, multicast, pcap, recordings), checks against the
+standard and the exercise's SISO enumerations, explained alerts, dashboards and monitors out.
+Releases for Windows, macOS and Linux are on the [Releases](https://github.com/wsustone/NetworkNinja/releases)
+page; per-PDU coverage is in [docs/pdu-coverage.md](docs/pdu-coverage.md).
 
 | Milestone | Status |
 | --- | --- |
-| 1. Generator + capture + decoder | Mostly done: codec, UDP and multicast capture, pcap and pcapng import, generator with every fault and control. Still to do: live libpcap capture, kernel drop counters, cargo-fuzz harness, dis-rs comparison (ADR 0001). |
-| 2. Entity state, metrics and monitor health | Core done: entity table per exercise and sender, heartbeat statistics, rolling PDU/byte/error rates, freeze periods, dead reckoning (algorithms 1–9), ECEF ↔ lat/lon. Tagged metrics and one query API (ADR 0008): split by sender/site/type, active-entity, heartbeat, DR-error and open-alert gauges, `/api/query`, 10 s SQLite rollups that survive restarts, a dashboard traffic chart with split and window pickers. Opt-in PDU capture tiered by entity type and speed under a byte budget (`--capture`, `--capture-budget`; ADR 0009): every report from fast movers, a thinned stream from slow and static entities, everything around open alerts. Still to do: `sender.clock_skew` and `capture.drops` gauges, performance measurement against the targets, kernel drop counts. |
-| 3. Rule packs + three alert rules | Done and proven against the generator (below): TOML packs validate, layer and load ([docs](docs/rule-packs.md)); enumeration checks run on every PDU; each alert cites its pack. Conformance view (ADR 0008): every alert and decode error is attributed to a sender, `/api/events/summary` pivots them by sender, rule, site or entity, and the dashboard's Conformance tab shows who is non-compliant, with what, how often and when last. Still to do: SISO-REF-010 tables generated rather than hand-authored, pack signing. |
-| 4. Dashboard + map | `nn-server serve` streams entities, rates and alerts over WebSocket to an embedded page (see Try it): MapLibre map with vendored offline assets, acknowledge + mute over the socket, entity search, a sequenced event log (`/api/log`, JSONL `--log` or SQLite `--db` store) across runs, delta updates for scale, run picker + seek/scrub for `.nnrec` replays (`--runs`), responsive layouts, local accounts (`--users`, `passwd` subcommand; PBKDF2 passwords, expiring bearer sessions, sign-out), HTTPS + WSS via rustls (`--cert/--key`, self-signed pairs from the `cert` subcommand; ADR 0006). Still to do: proper vector tiles. |
-| 5–7 | Not started. |
+| 1. Generator + capture + decoder | Done: codec for v6 and v7, UDP and multicast capture on chosen interfaces, pcap and pcapng import, a generator with valid traffic and faults for every check, a mutation fuzzer over the decoder and every rule. Still to do: live libpcap capture, kernel drop counters, a dis-rs comparison (ADR 0001). |
+| 2. Entity state, metrics and monitor health | Done: entity table per exercise and sender, dead reckoning (algorithms 1–9), freeze handling, tagged metrics and one query API (ADR 0008) with SQLite rollups, per-sender clock skew, tiered PDU capture (ADR 0009). Still to do: `capture.drops`, performance measurement against the targets. |
+| 3. Rule packs + alert rules | Well past the MVP's three rules: structure, enumerations (SISO-REF-010 read from SISO's own XML with `--siso`), heartbeats, entity lifecycle, fire/detonation, collisions and damage, emissions, designators, IFF, radio, SIMAN handshakes, logistics, transfer ownership, aggregates, timestamps and PDU Status, each citing its clause and explained in the dashboard. Still to do: IsGroupOf, the rest of the [deep-check plan](docs/deep-check-plan.md), pack signing. |
+| 4. Dashboard + map | Done: live entities, map with offline assets, alerts grouped into explained problems with fixes and fix reports, sender names, PDU evidence, dashboards (templates, variables, custom time windows, drag to zoom, shareable links), user monitors, accounts and HTTPS. Still to do: proper vector tiles. |
+| 5. Record and replay | Recording (`--record`) and replay into the dashboard with seek and speed; pcap import. Still to do: replay onto the network (an opt-in feature). |
+| 6. Demo | `scripts/nn up demo`: four vendor profiles side by side plus a faulty vendor that runs every fault. |
+| 7. Release readiness | Release builds with checksums, no runtime dependencies, macOS signed and notarized. Still to do: Windows signing (SignPath review pending), license files, SBOM, audit log, diagnostic bundle, air-gapped install guide. |
 
 **What the tests prove** (`cargo test --workspace`):
 
-- Each injected fault raises exactly one alert, on the right entity: timeout within 0.6 s of the 12 s deadline, ID conflict by the original sender's next report, position jump on the very next report.
-- Control scenarios raise nothing: clean Remove Entity, simulators restarting on new ports, and a 20 s freeze (with simulators that keep heartbeating and ones that go silent).
+- Each injected fault raises exactly its own finding, on the right entity or sender, and nothing else.
+- Clean traffic from four vendor profiles (absolute and relative timestamps, body-axis dead reckoning, a gateway) raises nothing, on v6 and v7.
+- Control scenarios raise nothing: clean removals, simulators restarting on new ports, freezes with simulators that keep heartbeating and ones that go silent.
 - Only running exercise time counts towards a timeout; frozen time doesn't.
-- A 30-minute clean run with 75 entities raises nothing.
 - Entity counts and rolling rates match generator ground truth exactly.
-- Disabling any suppression (freeze, restart grace, dead reckoning) makes the tests fail.
-- Mutated pcap files and PDUs never crash the readers.
-
-**Known issues** (`cargo test --workspace -- --include-ignored`): `crates/rules/tests/field_scenarios.rs` and one decoder test cover traffic the generator doesn't produce yet: body-axis dead reckoning, host clock steps, long outages, single-application freezes, gateway duplicates, tracked munitions, wildcard Entity IDs and padded PDUs. They assert the correct behaviour and currently fail, so they are `#[ignore]`d with the review finding they belong to; remove the attribute when the fix lands.
+- Every alert any preset raises has an explanation and its evidence.
+- Malformed and hostile datagrams and pcap files never crash the monitor, and its state stays bounded.
 
 ## Docs
 
