@@ -97,7 +97,9 @@ impl Reader {
         }
         let mut payload = vec![0u8; plen];
         self.r.read_exact(&mut payload)?;
-        let at = UNIX_EPOCH + Duration::from_micros(micros);
+        let at = UNIX_EPOCH
+            .checked_add(Duration::from_micros(micros))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "time out of range"))?;
         self.first_at.get_or_insert(at);
         Ok(Some(Datagram {
             received_at: at,
@@ -133,14 +135,21 @@ fn scan(path: &Path) -> io::Result<(f64, u64)> {
         let micros = u64::from_be_bytes(b);
         first.get_or_insert(micros);
         last = micros;
+        // Source address (its length first), then the payload (its length
+        // first): skip both.
         r.read_exact(&mut l)?;
-        let skip = u16::from_be_bytes(l) as u64;
+        let src = u16::from_be_bytes(l) as u64;
+        if io::copy(&mut r.by_ref().take(src), &mut io::sink())? < src {
+            break;
+        }
         r.read_exact(&mut pl)?;
         let plen = u32::from_be_bytes(pl) as u64;
-        let mut sink = io::sink();
-        io::copy(&mut r.by_ref().take(skip + plen), &mut sink)?;
+        if io::copy(&mut r.by_ref().take(plen), &mut io::sink())? < plen {
+            break;
+        }
         n += 1;
     }
-    let dur = first.map(|f| (last - f) as f64 / 1e6).unwrap_or(0.0);
+    // A damaged file's times may run backwards: no negative length.
+    let dur = first.map(|f| last.saturating_sub(f) as f64 / 1e6).unwrap_or(0.0);
     Ok((dur, n))
 }
