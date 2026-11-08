@@ -240,7 +240,7 @@ impl Lifecycle {
         }
         // Ten minutes unheard (the entity table's expiry): gone, forgotten.
         self.lives
-            .retain(|_, l| now - l.last_seen < 600.0 || l.removed_at.is_some());
+            .retain(|_, l| now - l.last_seen < 600.0 || l.removed_at.is_some_and(|r| now - r < crate::FORGET));
         out
     }
 }
