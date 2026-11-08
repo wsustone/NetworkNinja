@@ -1788,6 +1788,55 @@ fn header_faults_each_fire_on_their_own() {
 }
 
 #[test]
+fn aggregates_told_right_are_silent_and_each_fault_fires_on_its_own() {
+    let base = Config {
+        duration: 400.0,
+        sites: 2,
+        aggregate_every: Some(45.0),
+        all_types: Some(10.0),
+        ..Default::default()
+    };
+    for version in [6, 7] {
+        let (_, events) = monitor(&generate(&Config {
+            version,
+            ..base.clone()
+        }));
+        assert!(events.is_empty(), "v{version}\n{}", describe(&events));
+    }
+    // Unknown IDs after the monitor's startup grace (144 s).
+    let faults = [
+        (EventKind::AggregateStaleMember, 60.0, "stale-member"),
+        (EventKind::AggregateUnknownMember, 200.0, "unknown-member"),
+        (EventKind::AggregateStaleSubaggregate, 200.0, "stale-subaggregate"),
+        (EventKind::AggregateAppearances, 60.0, "appearance-count"),
+        (EventKind::PartOfUnknown, 200.0, "unknown-part"),
+        (EventKind::PartOfRangeBearing, 60.0, "range-bearing"),
+        (EventKind::PartOfType, 60.0, "part-type"),
+    ];
+    for (kind, at, finding) in faults {
+        let cfg = Config {
+            events: vec![Event {
+                kind,
+                target: Target::Exercise,
+                at,
+            }],
+            ..base.clone()
+        };
+        let (_, events) = monitor(&generate(&cfg));
+        let fired = firing(&events);
+        assert!(
+            !fired.is_empty()
+                && fired
+                    .iter()
+                    .all(|e| e.alert.rule == Rule::EntityManagement && e.alert.kind == finding),
+            "{}: {}",
+            kind.name(),
+            describe(&events)
+        );
+    }
+}
+
+#[test]
 fn user_monitors_open_alerts_through_the_normal_path() {
     use nn_rules::monitors::MonitorDef;
     // Site 2's simulator restarts on a new port at 60 s: its old address

@@ -58,6 +58,8 @@ EXERCISE
     --designator-every SECS An entity lases another for 30 s (default off)
     --logistics-every SECS  A resupply or repair between site 1 and another site
                             (alternating; default off)
+    --aggregate-every SECS  A platoon aggregate on site 1 (Aggregate State every
+                            30 s), and an IsPartOf every SECS (default off)
     --transfer-every SECS   An entity's owner pushes it to another site's simulator
                             (Transfer Ownership; needs 2 sites; default off)
     --iff-every SECS        Site 1's first entity carries a Mark XIIA transponder
@@ -195,6 +197,21 @@ HEADER FAULTS (a site's simulator)
                             It sends one PDU (a Comment) with the next exercise ID
     --all-header-faults     One of each, on the first site
 
+ENTITY MANAGEMENT FAULTS (need --aggregate-every)
+    --aggregate-stale-member T
+                            The aggregate's first member is removed and stays listed
+    --aggregate-unknown-member T
+                            The next Aggregate State lists an entity that doesn't exist
+    --aggregate-stale-subaggregate T
+                            The aggregate lists a subaggregate that never reports
+    --aggregate-appearances T
+                            The next Aggregate State has more appearance records than entities
+    --part-of-unknown T     The next IsPartOf names a part that doesn't exist
+    --part-of-range-bearing T
+                            The next IsPartOf gives range and bearing with a third component
+    --part-of-type T        The next IsPartOf gives the wrong Part Type
+    --all-aggregate-faults  One of each (turns on --aggregate-every 45 if not set)
+
 CONTROLS (alerts must stay quiet)
     --remove ID[@T]         Clean Remove Entity, then silence
     --restart-port SITE[@T] Site's simulator restarts on a new source port
@@ -251,6 +268,7 @@ fn parse_args() -> Result<Options, String> {
     let mut all_logistics = false;
     let mut all_transfer = false;
     let mut all_header = false;
+    let mut all_aggregate = false;
     let mut defects: Vec<String> = Vec::new();
 
     // The profile sets defaults that explicit flags then override, wherever
@@ -398,6 +416,17 @@ fn parse_args() -> Result<Options, String> {
             "--status-bits" => pending.push((EventKind::StatusBits, val()?)),
             "--exercise-switch" => pending.push((EventKind::ExerciseSwitch, val()?)),
             "--all-header-faults" => all_header = true,
+            "--aggregate-every" => cfg.aggregate_every = Some(num(val()?)?),
+            "--aggregate-stale-member" => pending.push((EventKind::AggregateStaleMember, format!("@{}", val()?))),
+            "--aggregate-unknown-member" => pending.push((EventKind::AggregateUnknownMember, format!("@{}", val()?))),
+            "--aggregate-stale-subaggregate" => {
+                pending.push((EventKind::AggregateStaleSubaggregate, format!("@{}", val()?)))
+            }
+            "--aggregate-appearances" => pending.push((EventKind::AggregateAppearances, format!("@{}", val()?))),
+            "--part-of-unknown" => pending.push((EventKind::PartOfUnknown, format!("@{}", val()?))),
+            "--part-of-range-bearing" => pending.push((EventKind::PartOfRangeBearing, format!("@{}", val()?))),
+            "--part-of-type" => pending.push((EventKind::PartOfType, format!("@{}", val()?))),
+            "--all-aggregate-faults" => all_aggregate = true,
             "--bundle" => cfg.bundle = true,
             "--silent-when-frozen" => cfg.silent_when_frozen = true,
             "--seed" => cfg.seed = val()?.parse().map_err(|e| format!("--seed: {e}"))?,
@@ -431,6 +460,7 @@ fn parse_args() -> Result<Options, String> {
         logistics: all_logistics,
         transfer: all_transfer,
         header: all_header,
+        aggregate: all_aggregate,
     };
     nn_generator::presets::schedule(&mut cfg, &presets, pending, defects)?;
     Ok(Options {

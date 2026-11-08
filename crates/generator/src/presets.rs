@@ -23,6 +23,7 @@ pub struct Presets {
     pub logistics: bool,
     pub transfer: bool,
     pub header: bool,
+    pub aggregate: bool,
 }
 
 impl Presets {
@@ -43,6 +44,7 @@ impl Presets {
             logistics: true,
             transfer: true,
             header: true,
+            aggregate: true,
         }
     }
 }
@@ -190,6 +192,22 @@ pub fn schedule(
             (EventKind::TimestampFlip, 0.8),
         ] {
             pending.push((kind, format!("{first}@{}", d * at)));
+        }
+    }
+    if p.aggregate {
+        cfg.aggregate_every.get_or_insert(45.0);
+        // The unknown IDs after the monitor's startup grace (144 s); the
+        // removed member last, as it stays listed.
+        for (kind, at) in [
+            (EventKind::AggregateAppearances, 0.1),
+            (EventKind::PartOfRangeBearing, 0.2),
+            (EventKind::PartOfType, 0.35),
+            (EventKind::AggregateUnknownMember, 0.55),
+            (EventKind::PartOfUnknown, 0.65),
+            (EventKind::AggregateStaleSubaggregate, 0.75),
+            (EventKind::AggregateStaleMember, 0.85),
+        ] {
+            pending.push((kind, format!("@{}", d * at)));
         }
     }
     if p.transfer {
@@ -366,6 +384,13 @@ pub fn schedule(
             | EventKind::TransferConcurrent
             | EventKind::TransferInactive
             | EventKind::TransferStalled
+            | EventKind::AggregateStaleMember
+            | EventKind::AggregateUnknownMember
+            | EventKind::AggregateStaleSubaggregate
+            | EventKind::AggregateAppearances
+            | EventKind::PartOfUnknown
+            | EventKind::PartOfRangeBearing
+            | EventKind::PartOfType
             | EventKind::OneSidedCollision
             | EventKind::DuplicateCollision
             | EventKind::StaleAppearance

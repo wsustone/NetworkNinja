@@ -12,13 +12,14 @@
 #   clean  four vendors side by side (standard, legacy, body-axis, gateway;
 #          sites 1-8), every PDU type, SIMAN handshakes, radios, collisions,
 #          damage, DE shots, radar emissions, laser designators, IFF
-#          transponders, resupply and repair, and ownership transfers. A clean
-#          exercise: the dashboard should stay quiet.
+#          transponders, resupply and repair, ownership transfers, and an
+#          aggregate with IsPartOf requests. A clean exercise: the dashboard
+#          should stay quiet.
 #   demo   the same, plus a "faulty vendor" on sites 9-12 that runs every
 #          fault, PDU defect, handshake, radio, lifecycle, warfare,
-#          interaction, emission, designator, IFF, logistics, transfer and
-#          header (timestamp, PDU Status) fault, then starts over, every 5
-#          minutes.
+#          interaction, emission, designator, IFF, logistics, transfer, header
+#          (timestamp, PDU Status) and aggregate fault, then starts over,
+#          every 5 minutes.
 #
 # Environment:
 #   NN_CONFIG a serve --config file (listeners, dashboard, database...); the
@@ -93,6 +94,7 @@ up() {
             --seed $((11 + p)) --fire-every 10 --all-types 10 --siman-every 3 --radio-every 6 \
             --collision-every 20 --damage-every 60 --de-every 30 --emission-every 45 \
             --designator-every 50 --iff-every 60 --logistics-every 40 --transfer-every 45 \
+            --aggregate-every 60 \
             --truth /dev/null
         p=$((p + 1))
     done
@@ -108,6 +110,7 @@ up() {
             --all-iff-faults --iff-every 60 \
             --all-logistics-faults --logistics-every 20 \
             --all-transfer-faults --transfer-every 25 --all-header-faults \
+            --all-aggregate-faults --aggregate-every 30 \
             --collision-every 20 --damage-every 60 --de-every 30 --emission-every 30 --truth /dev/null; done"
     fi
     echo "$scenario" >"$state/scenario"

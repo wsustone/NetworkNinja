@@ -302,6 +302,19 @@ Rule `exercise-id` (`Header::exercise`, `[rules.exercise-id] window` 60 s):
 `switched` once per (sender, exercise); `--exercise-switch SITE[@T]` sends one
 Comment with the next exercise ID (no entity to time out).
 
+Entity management (`nn_rules::aggregate`, rule `entity-management`, raw bytes
+in `check_interactions`): Aggregate State (aggregate @12, counts @124 subs /
+@126 entities / @128 silent aggs / @130 silent entity systems, IDs from 132,
+6 bytes each, padded to 4, silent agg systems 12 bytes, silent entity systems
+12 + 4 per appearance): stale-member (removed, deactivated or silent past
+`timeout_of`), unknown-member (after grace), stale-subaggregate (no own
+Aggregate State within its heartbeat × multiplier), appearance-count; IsPartOf
+(host @12, part @18, location C @36, station @40, part type @44):
+unknown-host / unknown-part, range-bearing (station 15, C ≠ 0), part-type.
+IDs with entity number 0/65535 aren't judged. Generator `--aggregate-every
+SECS` (platoon 1001 + section 1002 on the first site, Aggregate State every
+30 s, IsPartOf every SECS), seven faults, `--all-aggregate-faults`.
+
 Explanations (alerts work): every `Alert` carries `kind` (the finding type)
 and `facts` (named evidence, in order); JSON adds `rule_name`, `finding` and
 `facts` (`[[name, value], ...]`). **Not `kind`** in JSON: log entries already

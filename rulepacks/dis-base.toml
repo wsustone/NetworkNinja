@@ -245,6 +245,15 @@ behind = 5.0
 backwards_tolerance = 1.0
 severity = "warning"
 
+[rules.entity-management]
+# Aggregate State lists only entities still sending Entity States and
+# subaggregates still sending their own Aggregate State (heartbeat ×
+# multiplier, [rules.heartbeat] aggregate_state); a silent entity system has
+# no more appearance records than entities. IsPartOf names known entities,
+# a Part Type matching the part's own, and range-and-bearing placements with
+# a zero third component.
+severity = "warning"
+
 [rules.exercise-id]
 # A sender that carried one exercise ID for window seconds sends a PDU with
 # another: a warning (a gateway may carry several on purpose).

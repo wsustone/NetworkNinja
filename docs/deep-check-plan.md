@@ -351,7 +351,8 @@ silence and exact-detection tests, coverage-table update and docs.
 7. **Designator, IFF.** *Done:* rules `designator`, `iff`.
 8. **Logistics**, built on the SIMAN tracker. *Done:* rule `logistics`.
 9. **Entity management**, including Transfer Ownership and its interaction with ID conflict.
-   *Transfer Ownership done:* rule `transfer-ownership`; aggregates and IsPartOf left.
+   *Done:* rules `transfer-ownership`, `entity-management` (Aggregate State, IsPartOf); IsGroupOf
+   left (its GED sizes need SISO).
 10. **Timestamps and PDU Status bits** (cross-cutting). *Done:* rules `timestamp`, `pdu-status`.
 11. **Attribute, Intercom, UA/SEES.**
 12. **Wave 4 families**, as customers need them.

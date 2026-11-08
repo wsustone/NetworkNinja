@@ -7,6 +7,7 @@ use crate::world::{Tick, World};
 use crate::{Event, Sender};
 use nn_decode::Pdu;
 
+pub(crate) mod aggregates;
 pub(crate) mod coverage;
 pub(crate) mod designator;
 pub(crate) mod emission;
@@ -73,5 +74,6 @@ pub(crate) fn all(w: &World) -> Vec<Box<dyn Family>> {
         Box::new(iff::Iff::default()),
         Box::new(logistics::Logistics::default()),
         Box::new(transfer::Transfers::default()),
+        Box::new(aggregates::Aggregates::default()),
     ]
 }
